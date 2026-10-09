@@ -1,4 +1,4 @@
-//! Material channels. See docs/reference/channels.md.
+//! Material channels. See Painter-docs/reference/channels.md.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Channel {

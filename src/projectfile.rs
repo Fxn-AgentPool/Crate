@@ -1,4 +1,4 @@
-//! Saving and loading `.painter` project directories. See docs/reference/project-format.md.
+//! Saving and loading `.painter` project directories. See Painter-docs/reference/project-format.md.
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};

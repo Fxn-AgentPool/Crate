@@ -1,5 +1,5 @@
 //! Stencils: images pinned to the viewport, shown over the mesh and sampled by the Paint
-//! Through tool. See docs/reference/brushes-tools-stencils.md "Stencils".
+//! Through tool. See Painter-docs/reference/brushes-tools-stencils.md "Stencils".
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};

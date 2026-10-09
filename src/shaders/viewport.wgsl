@@ -1,5 +1,5 @@
 // Viewport: shades the mesh with the compiled material graph, once per screen pixel.
-// See docs/explanation/about-realtime-evaluation.md.
+// See Painter-docs/explanation/about-realtime-evaluation.md.
 
 struct Frame {
     view_proj: mat4x4f,

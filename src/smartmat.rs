@@ -1,5 +1,5 @@
-//! Smart materials: saved Group / Graph layers. See docs/how-to/create-a-smart-material.md
-//! and docs/reference/project-format.md "Smart material files".
+//! Smart materials: saved Group / Graph layers. See Painter-docs/how-to/create-a-smart-material.md
+//! and Painter-docs/reference/project-format.md "Smart material files".
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};

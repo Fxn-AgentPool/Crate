@@ -1,4 +1,4 @@
-# docs/tutorials/01-texture-your-first-asset.md, replayed step by step.
+# Painter-docs/tutorials/01-texture-your-first-asset.md, replayed step by step.
 new assets/crate.glb 2048
 bake ao curvature thickness id
 size 960x720

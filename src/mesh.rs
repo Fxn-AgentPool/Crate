@@ -1,5 +1,5 @@
 //! Mesh import (glTF 2.0, OBJ), UDIM tile detection and import diagnostics.
-//! See docs/reference/mesh-and-udims.md.
+//! See Painter-docs/reference/mesh-and-udims.md.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

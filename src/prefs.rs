@@ -1,7 +1,7 @@
 //! User preferences (Edit > Preferences), stored in the user configuration directory:
 //! `%APPDATA%\Painter` on Windows, `~/Library/Application Support/Painter` on macOS and
 //! `$XDG_CONFIG_HOME/painter` (usually `~/.config/painter`) on Linux.
-//! See docs/reference/limits.md "Memory budgets".
+//! See Painter-docs/reference/limits.md "Memory budgets".
 
 use std::path::PathBuf;
 

@@ -3,9 +3,10 @@
 A realtime 3D texture painting application for UDIM assets: a multi-channel layer stack on top
 of a node graph, painted through a projection paint buffer with stencils.
 
-The user documentation lives in [`docs/`](docs/README.md) (organized with
-[Diátaxis](https://diataxis.fr/)). It was written first, as the MVP specification, and kept in
-sync with the implementation.
+The user documentation lives in its own repository, **Painter-docs** (organized with
+[Diátaxis](https://diataxis.fr/)): tutorials, how-to guides, reference and explanation. It was
+written first, as the MVP specification, and is kept in sync with the implementation. Source
+comments cite it as `Painter-docs/<section>/<page>.md`.
 
 ## Building
 

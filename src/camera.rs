@@ -1,4 +1,4 @@
-//! Orbit camera with Maya-style navigation. See docs/reference/keyboard-shortcuts.md.
+//! Orbit camera with Maya-style navigation. See Painter-docs/reference/keyboard-shortcuts.md.
 
 use glam::{Mat4, Vec2, Vec3};
 

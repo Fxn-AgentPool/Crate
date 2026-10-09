@@ -1,4 +1,4 @@
-//! Texture export. See docs/reference/export.md.
+//! Texture export. See Painter-docs/reference/export.md.
 //!
 //! Each tile is evaluated in UV space with the compiled material, height is converted to
 //! normals and combined with the Normal channel, padding is filled by jump flooding, and

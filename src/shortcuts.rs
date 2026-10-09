@@ -1,4 +1,4 @@
-//! Remappable keyboard shortcuts. See docs/reference/keyboard-shortcuts.md.
+//! Remappable keyboard shortcuts. See Painter-docs/reference/keyboard-shortcuts.md.
 
 use std::collections::BTreeMap;
 

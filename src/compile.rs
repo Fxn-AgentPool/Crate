@@ -1,4 +1,4 @@
-//! Compiles the node graph into WGSL. See docs/explanation/about-realtime-evaluation.md.
+//! Compiles the node graph into WGSL. See Painter-docs/explanation/about-realtime-evaluation.md.
 //!
 //! Every Stack node becomes a function `stack_N(s, below) -> Mat`, every Mask Stack node
 //! `mstack_N(s) -> f32`, and `eval_material` evaluates the Material Output. Other nodes are

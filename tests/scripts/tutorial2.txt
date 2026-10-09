@@ -1,4 +1,4 @@
-# docs/tutorials/02-project-a-decal-with-a-stencil.md, continuing from tutorial 1.
+# Painter-docs/tutorials/02-project-a-decal-with-a-stencil.md, continuing from tutorial 1.
 new assets/crate.glb 2048
 bake ao curvature thickness id
 size 960x720

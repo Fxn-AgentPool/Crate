@@ -1,5 +1,5 @@
 // Ray-traced mesh maps: Ambient Occlusion, Curvature and Thickness.
-// See docs/reference/mesh-maps.md.
+// See Painter-docs/reference/mesh-maps.md.
 
 struct Params {
     layer: u32,

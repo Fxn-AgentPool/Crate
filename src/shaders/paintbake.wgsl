@@ -1,5 +1,5 @@
 // Projects the paint buffer through the bake camera into one UDIM tile of a paint target.
-// See docs/reference/paint-buffer.md "Bake algorithm".
+// See Painter-docs/reference/paint-buffer.md "Bake algorithm".
 //
 // Reads the target's contents from `base` (a copy of the target slot, one layer per tile,
 // taken at stroke start) and writes the result into `out`, so Live mode can re-bake the
