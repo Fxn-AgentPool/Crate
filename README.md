@@ -1,13 +1,14 @@
 # Painter documentation
 
-> **Status: MVP implemented.** The application in this repository implements these documents
-> (see the repository README for building and running it). The docs were written first, as the
-> specification; where the implementation made a different choice, the docs were updated to
-> match. When the software and these docs disagree, either the software has a bug or the docs
-> need a deliberate update — never silently both.
+> **Status: MVP implemented.** These are the user docs for the Painter application, which
+> lives in its own repository (see its README for building and running it). The docs were
+> written first, as the specification; where the implementation made a different choice, the
+> docs were updated to match. When the software and these docs disagree, either the software
+> has a bug or the docs need a deliberate update — never silently both.
 >
-> Both tutorials are replayed automatically by `tests/scripts/tutorial1.txt` and
-> `tutorial2.txt`.
+> Both tutorials are replayed automatically by the application repository's
+> `tests/scripts/tutorial1.txt` and `tutorial2.txt`; the sample files they use are in its
+> `assets/` folder.
 >
 > "Painter" is a working title.
 
