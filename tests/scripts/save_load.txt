@@ -1,0 +1,28 @@
+# Round trip: build a project, save, reopen, render both and compare.
+new assets/crate.glb 1024
+bake ao curvature thickness id
+size 640x480
+camera 35 22
+add-fill
+rename Blue paint
+set base_color=#2A4C7D roughness=0.6
+add-fill
+rename Bare metal
+set base_color=#B4B4B4 roughness=0.3 metallic=1
+add-black-mask
+add-generator edge-wear
+set amount=0.4
+add-paint
+rename Grime
+brush-values base_color=#3B2F22 roughness=0.9 metallic=off
+brush size=60 hardness=0.2 flow=0.5
+stroke 0.3,0.8 0.5,0.85 0.7,0.8
+stencil-add assets/D_BasicDecals01_015.png
+stencil visible=false
+render target/saveload/before.png
+save target/saveload/Crate.painter
+open target/saveload/Crate.painter
+render target/saveload/after.png
+expect-same target/saveload/before.png target/saveload/after.png
+# Saving again without changes writes no pages.
+save target/saveload/Crate.painter

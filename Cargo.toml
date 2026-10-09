@@ -1,0 +1,27 @@
+[package]
+name = "painter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "persistence"] }
+egui = "0.36.2"
+egui-wgpu = "0.36.2"
+env_logger = "0.11.11"
+exr = "1.74.2"
+glam = { version = "0.34.1", features = ["serde", "bytemuck"] }
+gltf = "1.4.1"
+half = { version = "2.7.1", features = ["bytemuck"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tga", "tiff", "exr", "hdr"] }
+log = "0.4.34"
+mikktspace = "0.3.0"
+pollster = "1.0.1"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tobj = "4.0.5"
+wgpu = "30"
+zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
+zstd = "0.14.1"

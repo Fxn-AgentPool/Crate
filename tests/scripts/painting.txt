@@ -1,0 +1,57 @@
+new assets/crate.glb 2048
+bake ao curvature
+size 960x720
+camera 35 22
+add-fill
+rename Blue paint
+set base_color=#2A4C7D roughness=0.6
+add-paint
+rename Grime
+tool paint
+brush-values base_color=#3B2F22 roughness=0.9 metallic=off
+brush size=60 hardness=0.2 flow=0.3
+stroke 0.3,0.82 0.45,0.86 0.6,0.88 0.72,0.8
+render target/tests/paint/a_one_stroke.png
+stroke 0.3,0.82 0.45,0.86 0.6,0.88 0.72,0.8
+render target/tests/paint/b_two_strokes.png
+view roughness
+render target/tests/paint/c_roughness.png
+view material
+undo
+render target/tests/paint/d_undo.png
+redo
+camera 215 22
+render target/tests/paint/e_back.png
+camera 35 22
+# Manual mode with a transform
+mode manual
+brush-values base_color=#FFDD00 roughness=0.3
+brush size=40 hardness=0.9 flow=1
+stroke 0.45,0.4 0.55,0.45
+expect-unbaked true
+render target/tests/paint/f_unbaked.png
+buffer-transform 0 -80 15 1
+render target/tests/paint/g_transformed.png
+bake-buffer
+expect-unbaked false
+render target/tests/paint/h_baked.png
+
+# Mask paint: painting black into a white mask hides the layer there.
+mode live
+tool paint
+add-fill
+rename Red
+set base_color=#C03020
+add-mask
+add-mask-paint
+render target/tests/paint/m_before.png
+brush-values mask=0
+brush size=80 hardness=0.8 flow=1
+stroke 0.3,0.5 0.7,0.5
+render target/tests/paint/m_black.png
+expect-different target/tests/paint/m_before.png target/tests/paint/m_black.png
+# ...and white paints it back (soft edges blend, so compare with the black result).
+brush-values mask=1
+stroke 0.3,0.5 0.7,0.5
+render target/tests/paint/m_white.png
+expect-different target/tests/paint/m_black.png target/tests/paint/m_white.png

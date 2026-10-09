@@ -1,0 +1,8 @@
+# Build output, test renders and exports
+/target/
+
+# Local Claude Code settings
+/.claude/settings.local.json
+
+# Projects saved inside the repository while testing
+*.painter/

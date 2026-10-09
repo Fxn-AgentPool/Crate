@@ -1,0 +1,49 @@
+# docs/tutorials/01-texture-your-first-asset.md, replayed step by step.
+new assets/crate.glb 2048
+bake ao curvature thickness id
+size 960x720
+camera 35 22
+
+# Paint the crate blue
+add-fill
+rename Blue paint
+set base_color=#2A4C7D roughness=0.6 metallic=0
+render target/tutorial1/01_blue.png
+
+# Reveal metal on the edges
+add-fill
+rename Bare metal
+set base_color=#B4B4B4 roughness=0.3 metallic=1
+render target/tutorial1/02_metal_everywhere.png
+add-black-mask
+render target/tutorial1/03_black_mask.png
+add-generator edge-wear
+render target/tutorial1/04_edge_wear_default.png
+set amount=0.4
+render target/tutorial1/05_edge_wear_04.png
+expect-layers "Bare metal" "Blue paint"
+
+# Paint grime by hand
+add-paint
+rename Grime
+tool paint
+brush-values base_color=#3B2F22 roughness=0.9 metallic=off
+brush size=60 hardness=0.2 flow=0.3
+camera 30 5
+stroke 0.32,0.78 0.45,0.83 0.55,0.84
+stroke 0.32,0.78 0.45,0.83 0.55,0.84
+render target/tutorial1/06a_grime.png
+expect-layers Grime "Bare metal" "Blue paint"
+camera 35 22
+
+# Look at the result
+view roughness
+render target/tutorial1/06_roughness.png
+view metallic
+render target/tutorial1/07_metallic.png
+view material
+layers
+
+# Export the textures
+export target/tutorial1/export
+expect-files target/tutorial1/export crate_BaseColor.1001.png crate_BaseColor.1002.png crate_ORM.1001.png crate_ORM.1002.png crate_Normal.1001.png crate_Normal.1002.png

@@ -1,0 +1,25 @@
+new assets/crate.glb 1024
+bake ao curvature
+size 640x480
+camera 35 22
+add-fill
+rename Paint coat
+set base_color=#7D2A2A roughness=0.5
+add-fill
+rename Metal
+set base_color=#B4B4B4 roughness=0.3 metallic=1
+add-black-mask
+add-generator edge-wear
+set amount=0.4
+group "Paint coat" Metal
+rename Worn Red Paint
+render target/tests/smart/a_original.png
+save-smart "Worn Red Paint"
+# New project: add it from the library
+new assets/crate.glb 1024
+bake ao curvature
+camera 35 22
+add-smart "Worn Red Paint"
+render target/tests/smart/b_inserted.png
+expect-same target/tests/smart/a_original.png target/tests/smart/b_inserted.png
+delete-smart "Worn Red Paint"

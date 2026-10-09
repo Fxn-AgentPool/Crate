@@ -1,0 +1,48 @@
+# docs/tutorials/02-project-a-decal-with-a-stencil.md, continuing from tutorial 1.
+new assets/crate.glb 2048
+bake ao curvature thickness id
+size 960x720
+add-fill
+rename Blue paint
+set base_color=#2A4C7D roughness=0.6 metallic=0
+add-paint
+rename Grime
+
+# Open the project and frame the side: look straight at one side, zoomed in.
+camera 0 0 1.4
+render target/tutorial2/01_framed.png
+
+# Add a layer for the decal, below Grime
+add-paint
+rename Decal
+move-below Grime
+expect-layers Grime Decal "Blue paint"
+
+# Load the stencil
+stencil-add assets/D_BasicDecals01_015.png
+render target/tutorial2/02_stencil.png
+
+# Line it up: arrows inside the recessed panel, two-thirds of its height
+stencil-transform 0 0 0 0.75
+render target/tutorial2/03_lined_up.png
+
+# Manual mode, paint through
+mode manual
+tool paint-through
+brush size=150 hardness=0.9 flow=1
+stroke 0.38,0.2 0.62,0.2 0.62,0.35 0.38,0.35 0.38,0.5 0.62,0.5 0.62,0.65 0.38,0.65 0.38,0.8 0.62,0.8
+expect-unbaked true
+stencil visible=false
+render target/tutorial2/04_painted_unbaked.png
+
+# Adjust before baking: move up a little
+buffer-transform 0 -30 0 1
+render target/tutorial2/05_moved.png
+
+# Bake
+bake-buffer
+expect-unbaked false
+render target/tutorial2/06_baked.png
+camera 35 22
+render target/tutorial2/07_orbit.png
+mode live
