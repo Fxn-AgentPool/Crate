@@ -31,5 +31,6 @@ inserted as one layer above the selected layer, with its exposed parameters list
 
 ## Share it
 
-Smart materials are stored as `.psmat` files in the user library directory
+Smart materials are stored as `.psmat` files in the user library directory, under
+`library/smart-materials` in the user configuration directory
 (**Library → Show in file browser**). Copy the file to another machine's library directory.
