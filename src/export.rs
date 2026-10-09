@@ -110,8 +110,7 @@ pub fn builtin_presets() -> Vec<Preset> {
 
 /// Custom presets live in the user preferences directory.
 pub fn presets_dir() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("Painter").join("export-presets")
+    crate::prefs::dir().join("export-presets")
 }
 
 pub fn all_presets() -> Vec<Preset> {

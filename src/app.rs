@@ -47,6 +47,8 @@ pub struct PainterApp {
     viewport_material: u64,
     /// Transient message in the status bar.
     message: Option<(String, f64)>,
+    /// The GPU lacks something Painter needs; shown instead of the UI.
+    gpu_error: Option<String>,
     paint: PaintEngine,
     stencil_overlay: crate::stencil::StencilOverlay,
     /// Whether S / V was used for a drag since it was pressed (tap S toggles visibility).
@@ -97,6 +99,7 @@ impl PainterApp {
             error: None,
             viewport_material: u64::MAX,
             message: None,
+            gpu_error: crate::gpu::check_adapter(&rs.adapter).err(),
             stencil_overlay: crate::stencil::StencilOverlay::new(&paint_gpu),
             evaluator: crate::export::UvEvaluator::new(&paint_gpu),
             paint,
@@ -112,6 +115,9 @@ impl PainterApp {
             bindings: crate::shortcuts::Bindings::new(&prefs_for_bindings.shortcuts),
             thumbs: crate::thumbs::Thumbnails::new(&paint_gpu),
         };
+        if app.gpu_error.is_some() {
+            return app;
+        }
         if let Some(path) = initial_mesh {
             app.open_mesh(path, ImportSettings::default());
         }
@@ -181,6 +187,17 @@ impl PainterApp {
 
 impl eframe::App for PainterApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(e) = &self.gpu_error {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() * 0.35);
+                    ui.heading("Unsupported GPU");
+                    ui.add_space(8.0);
+                    ui.label(e);
+                });
+            });
+            return;
+        }
         if let Some(doc) = &mut self.doc {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
@@ -1277,7 +1294,7 @@ impl Library {
             if ui.small_button("Show in file browser").clicked() {
                 let dir = crate::smartmat::library_dir();
                 let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                crate::prefs::open_folder(&dir);
             }
         });
         chosen

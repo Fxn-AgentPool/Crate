@@ -116,7 +116,7 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
                     continue;
                 }
                 z.start_file(format!("paint/n{}/{udim}/{px}_{py}.page", n.id), opts)?;
-                z.write_all(&zstd::encode_all(&slices.concat()[..], 3)?)?;
+                z.write_all(&crate::projectfile::compress(&slices.concat()))?;
             }
         }
     }
@@ -213,7 +213,7 @@ pub fn insert(gpu: &Gpu, p: &mut Project, path: &Path, above: Option<LayerRef>) 
         let slot_i = p.paint_slot(gpu, new);
         let mut bytes = Vec::new();
         z.by_name(name)?.read_to_end(&mut bytes)?;
-        let raw = zstd::decode_all(&bytes[..])?;
+        let raw = crate::projectfile::decompress(&bytes)?;
         let planes_n = if mask { 1 } else { crate::scene::PAINT_PLANES };
         if raw.len() != planes_n * page_bytes() {
             continue;

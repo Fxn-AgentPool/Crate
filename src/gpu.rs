@@ -8,6 +8,38 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
 }
 
+/// Checks that the adapter can run Painter. Painting and baking read and write half-float
+/// textures in place, which needs read-write storage support for Rgba16Float.
+pub fn check_adapter(adapter: &wgpu::Adapter) -> Result<(), String> {
+    let info = adapter.get_info();
+    let mut missing = Vec::new();
+    if !adapter.features().contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+        || !adapter
+            .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::STORAGE_READ_WRITE)
+    {
+        missing.push("read-write storage textures (Rgba16Float)");
+    }
+    if !adapter.features().contains(wgpu::Features::FLOAT32_FILTERABLE) {
+        missing.push("filterable 32-bit float textures");
+    }
+    if !adapter.features().contains(wgpu::Features::CLEAR_TEXTURE) {
+        missing.push("texture clearing");
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "The GPU \"{}\" ({:?}, driver {}) does not support: {}. Painter needs a Vulkan 1.2 or Direct3D 12 GPU with current drivers.",
+            info.name,
+            info.backend,
+            info.driver_info,
+            missing.join(", ")
+        ))
+    }
+}
+
 /// Features Painter uses when the adapter has them.
 pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features()
@@ -43,6 +75,7 @@ impl Gpu {
         }))
         .context("No suitable GPU adapter (Vulkan 1.2 or Direct3D 12 required).")?;
         log::info!("Adapter: {:?}", adapter.get_info());
+        check_adapter(&adapter).map_err(|e| anyhow::anyhow!(e))?;
         if std::env::var("PAINTER_PROBE").is_ok() {
             for f in [wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::R32Float, wgpu::TextureFormat::Rgba8Unorm] {
                 println!("{f:?}: {:?}", adapter.get_texture_format_features(f).flags);

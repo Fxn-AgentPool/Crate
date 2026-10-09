@@ -5,12 +5,17 @@
 | | Minimum | Recommended |
 |---|---|---|
 | OS | Windows 10 64-bit, Linux (x86-64, glibc 2.31+) | Windows 11, recent Linux |
-| GPU API | Vulkan 1.2 or Direct3D 12 | — |
+| GPU API | Vulkan 1.2 or Direct3D 12, with read-write storage support for 16-bit float textures | — |
 | GPU memory | 4 GB | 8 GB or more |
 | System memory | 8 GB | 32 GB |
 | Input | Mouse | Pen tablet with pressure (Windows Ink, Wacom WinTab, libinput) |
 
-macOS is not supported in the MVP.
+macOS is not supported in the MVP. On Linux, Painter runs under X11 or Wayland; native file
+dialogs need an XDG desktop portal. If the GPU lacks a required feature, Painter shows which one
+at startup instead of opening a project.
+
+User files (preferences, export presets, the smart material library) live in `%APPDATA%\Painter`
+on Windows and `$XDG_CONFIG_HOME/painter` (usually `~/.config/painter`) on Linux.
 
 ## Project limits
 

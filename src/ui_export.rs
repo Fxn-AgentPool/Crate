@@ -147,7 +147,7 @@ impl ExportDialog {
                         ui.colored_label(egui::Color32::from_rgb(230, 180, 70), w);
                     }
                     if ui.button("Show in file browser").clicked() {
-                        let _ = std::process::Command::new("explorer").arg(&s.output_dir).spawn();
+                        crate::prefs::open_folder(&s.output_dir);
                     }
                 }
                 Some(Err(e)) => {
@@ -160,7 +160,7 @@ impl ExportDialog {
             let s = self.settings.clone().unwrap();
             self.result = Some(export::export(gpu, p, eval, &s).map_err(|e| format!("{e:#}")));
             if let Some(Ok(_)) = &self.result {
-                let _ = std::process::Command::new("explorer").arg(&s.output_dir).spawn();
+                crate::prefs::open_folder(&s.output_dir);
             }
         }
         self.open = open;

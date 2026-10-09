@@ -418,7 +418,7 @@ fn save_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<usize> {
                 }
                 std::fs::create_dir_all(&tile_dir)?;
                 let raw: Vec<u8> = slices.concat();
-                let compressed = zstd::encode_all(&raw[..], 3)?;
+                let compressed = compress(&raw);
                 let tmp = file.with_extension("tmp");
                 std::fs::write(&tmp, compressed)?;
                 std::fs::rename(&tmp, &file)?;
@@ -459,7 +459,7 @@ fn load_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<()> {
                 let Some(stem) = name.strip_suffix(".page") else { continue };
                 let Some((px, py)) = stem.split_once('_') else { continue };
                 let (px, py): (u32, u32) = (px.parse()?, py.parse()?);
-                let raw = zstd::decode_all(&std::fs::read(f.path())?[..])?;
+                let raw = decompress(&std::fs::read(f.path())?)?;
                 if raw.len() != page_bytes * planes_n {
                     bail!("{} has the wrong size", f.path().display());
                 }
@@ -537,6 +537,20 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
     p.clear_history();
     p.saved_version = p.edit_version;
     Ok(Loaded { project: p, viewport: file.viewport, export: file.export })
+}
+
+/// Zstandard compression of paint pages (pure Rust, no C toolchain needed to build).
+pub fn compress(data: &[u8]) -> Vec<u8> {
+    ruzstd::encoding::compress_to_vec(data, ruzstd::encoding::CompressionLevel::Fastest)
+}
+
+pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut src = data;
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut src).map_err(|e| anyhow::anyhow!("corrupt page: {e}"))?;
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out)?;
+    Ok(out)
 }
 
 /// Adds the `.painter` extension if missing.

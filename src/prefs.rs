@@ -1,4 +1,6 @@
-//! User preferences (Edit > Preferences), stored in %APPDATA%/Painter/preferences.json.
+//! User preferences (Edit > Preferences), stored in the user configuration directory:
+//! `%APPDATA%\Painter` on Windows, `~/Library/Application Support/Painter` on macOS and
+//! `$XDG_CONFIG_HOME/painter` (usually `~/.config/painter`) on Linux.
 //! See docs/reference/limits.md "Memory budgets".
 
 use std::path::PathBuf;
@@ -24,8 +26,33 @@ impl Default for Preferences {
     }
 }
 
+/// Per-user directory for preferences, export presets and the library.
 pub fn dir() -> PathBuf {
-    std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("Painter")
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        env("APPDATA").unwrap_or_else(|| PathBuf::from(".")).join("Painter")
+    } else if cfg!(target_os = "macos") {
+        env("HOME").unwrap_or_else(|| PathBuf::from(".")).join("Library/Application Support/Painter")
+    } else {
+        env("XDG_CONFIG_HOME")
+            .or_else(|| env("HOME").map(|h| h.join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("painter")
+    }
+}
+
+/// Opens a folder in the platform's file browser.
+pub fn open_folder(path: &std::path::Path) {
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if let Err(e) = std::process::Command::new(program).arg(path).spawn() {
+        log::warn!("Could not open {}: {e}", path.display());
+    }
 }
 
 impl Preferences {
