@@ -465,14 +465,14 @@ impl CrateApp {
                         }
                     }
                 });
-                ui.menu_button("Viewport", |ui| {
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_salt("view transform").selected_text(self.view.view_transform.name()).show_ui(ui, |ui| {
-                            for t in crate::viewport::ViewTransform::ALL {
-                                ui.selectable_value(&mut self.view.view_transform, t, t.name());
-                            }
-                        });
-                        ui.label("View transform");
+                // Sliders and the transform list: only a click outside closes this menu (egui's
+                // default closes on any click, including on a slider).
+                let keep_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+                egui::containers::menu::MenuButton::new("Viewport").config(keep_open).ui(ui, |ui| {
+                    ui.menu_button(format!("View transform: {}", self.view.view_transform.name()), |ui| {
+                        for t in crate::viewport::ViewTransform::ALL {
+                            ui.radio_value(&mut self.view.view_transform, t, t.name());
+                        }
                     });
                     ui.add(egui::Slider::new(&mut self.view.exposure, -5.0..=5.0).text("Exposure (EV)"));
                     ui.add(egui::Slider::new(&mut self.view.env_rotation, -3.15..=3.15).text("Environment rotation"));
