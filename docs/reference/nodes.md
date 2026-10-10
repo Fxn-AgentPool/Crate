@@ -41,7 +41,7 @@ Every node has:
 | Paint Mask | Float | Holds single-channel paint pages. |
 | Constant | Float / Color | Value. |
 | Image | Color, Float (alpha) | Image file, projection (UV / Triplanar), scale, rotation, offset. |
-| Mesh Map | Float or Color | Map: AO, Curvature, Thickness, World Normal, Position, ID. |
+| Mesh Map | Float or Color | Map: AO, Curvature, Thickness, World Normal, Position, ID, Normal, Height. Normal outputs the tangent-space normal as a color (`n * 0.5 + 0.5`). |
 
 ### Procedural
 

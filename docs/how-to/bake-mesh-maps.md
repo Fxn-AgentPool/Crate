@@ -3,7 +3,8 @@
 This guide shows you how to bake the mesh maps that generators and ID masks rely on.
 
 Position and World Normal are baked on import. Ambient Occlusion, Curvature, Thickness and ID
-must be baked by you.
+must be baked by you. To bake them, and a Normal and Height map, from a detailed sculpt, see
+[How to bake from a high-poly mesh](bake-from-a-high-poly-mesh.md).
 
 ## Bake
 

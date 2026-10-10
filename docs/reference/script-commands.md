@@ -44,7 +44,10 @@ set base_color=${color}
 | `open <project>` | Open a `.crate` project. |
 | `save [project]` | Save. Without a path, saves to where the project was opened or last saved. |
 | `reimport <mesh>` | Replace the mesh, keeping layers and paint. Mesh maps become out of date. |
-| `bake [maps]` | Bake mesh maps: `all` (AO, curvature, thickness, ID), `outdated`, or names: `ao`, `curvature`, `thickness`, `id`, `position`, `worldnormal`. |
+| `bake [maps]` | Bake mesh maps: `all` (AO, curvature, thickness, ID, and Normal and Height when a high poly is set), `outdated`, or names: `ao`, `curvature`, `thickness`, `id`, `normal` (or `normal-map`), `height` (or `height-map`), `position`, `worldnormal`. |
+| `high-poly <mesh>` | Set the high-poly mesh to bake from. `high-poly off` removes it. |
+| `bake-settings key=value...` | Change [bake settings](mesh-maps.md#bake-settings): `resolution` (0 = tile resolution), `samples`, `max_distance`, `spread_angle`, `ignore_backfaces`, `curvature_radius`, `padding`, and for the high poly `frontal`, `rear`, `match_by_name`, `apply_normal` (`on`/`off`). |
+| `save-map <map> <file.png> [udim]` | Save one tile of a mesh map (default: the first tile) as a 16-bit PNG, encoded as in [Mesh maps](mesh-maps.md#maps). Map names as for `bake`. |
 | `export <dir> [key=value]...` | Export textures. Keys: `preset`, `format`, `normal`, `padding`, `resolution`, `tiles`, `template` (as in [Command line](command-line.md#export-options)). |
 | `info` | Print the project summary. |
 
@@ -115,7 +118,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 |---|---|
 | `size <W>x<H>` | Size of renders and of the screen strokes are painted on (default `960x720`). |
 | `camera <yaw> <pitch> [zoom]` | Degrees around and above the mesh; `zoom` > 1 moves closer. |
-| `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. |
+| `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. `normal` and `height` are channels; the mesh maps are `normal-map` and `height-map`. |
 | `tiles on\|off` | Tint by UDIM tile. |
 | `environment <file.hdr\|exr>`, `exposure <ev>` | Lighting. |
 | `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
@@ -133,3 +136,4 @@ For tests; each fails the script when its condition does not hold.
 | `expect-same <a.png> <b.png> [tolerance]` | The images differ by at most `tolerance` per channel (default 2). |
 | `expect-different <a.png> <b.png> [minimum]` | The images differ by at least `minimum` somewhere (default 20). |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
+| `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |

@@ -15,7 +15,6 @@ design, is left out.
 |---|---|
 | Opening Substance Painter (`.spp`) files | Proprietary format. Planned as a separate export plugin that runs inside Substance Painter, rather than a file parser. |
 | Substance (`.sbsar`) materials | Requires Adobe's licensed engine. The node graph covers the MVP's procedural needs. |
-| High-poly to low-poly baking | Mesh maps from the low-poly mesh are enough for generators. High-poly baking is a large, separate subsystem. |
 | Multiple texture sets | One set with UDIMs covers the core workflow. Multiple sets mostly add bookkeeping. |
 | Symmetry painting | Needs mirrored projection in the bake. Fits the existing design, but isn't needed to prove it. |
 | Clone and smudge tools | Paint Through covers the main projection use case. |
