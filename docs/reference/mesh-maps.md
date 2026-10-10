@@ -129,10 +129,10 @@ baked surface. A Missing Normal map is flat and changes nothing.
 
 ### Bake preview
 
-**Mesh Maps → High poly → Show preview** extends the Mesh Maps window with a preview pane: its
-own view of the meshes a high-poly bake uses, so you can check the cage before baking. The
-viewport is not affected. With the pane, the window can be resized by its edges (980 × 620 points
-at first); the settings scroll in a column on the left and the view fills the rest.
+The right part of the Mesh Maps window is the bake preview: its own view of the meshes a
+high-poly bake uses, so you can check the cage before baking. The viewport is not affected. The
+window can be resized by its edges (980 × 620 points at first). The settings take the left 35%
+of its width and scroll when they don't fit; the preview takes the rest.
 
 | Part | Color | Default opacity | Shows |
 |---|---|---|---|
@@ -151,7 +151,7 @@ see-through and drawn without wireframes:
   at a grazing angle, it is up to twice as opaque, so outlines stay visible. At opacity 1 a part
   is opaque.
 
-**Navigation**, with the pointer over the pane:
+**Navigation**, with the pointer over the preview:
 
 | Input | Action |
 |---|---|
@@ -160,12 +160,12 @@ see-through and drawn without wireframes:
 | Scroll | Zoom |
 | Double-click | Frame the mesh |
 
-The pane's camera starts at the viewport's view each time the pane is shown, and then moves
+The preview's camera starts at the viewport's view each time the window opens, and then moves
 independently of it.
 
 - **High poly** and **Cage** need a high-poly mesh and are disabled without one.
-- While the pane shows **High poly** or **Cage**, the high-poly file is read in the background;
-  meanwhile the pane shows **Loading preview…**. With **Auto cage** on, the cage is measured as
+- While the window is open and **High poly** or **Cage** is on, the high-poly file is read in
+  the background; meanwhile the preview shows **Loading preview…**. With **Auto cage** on, the cage is measured as
   for a bake. The file is read again when it changes, or when **Auto cage** or (with Auto cage
   on) **Match by name** changes. Changes to **Frontal distance** show immediately.
 - High-poly detail that pokes out of the red cage lies outside it. The rays start on the cage,
@@ -173,9 +173,9 @@ independently of it.
 - At hard edges, where a low-poly vertex has several normals, the cage has gaps, just as the
   rays do.
 - The rear side (**Rear distance**) is not shown.
-- If the high poly can't be read, or needs larger GPU buffers than the GPU allows, the pane
+- If the high poly can't be read, or needs larger GPU buffers than the GPU allows, the preview
   shows the error, and **High poly** and **Cage** show nothing.
-- The pane, checkboxes and opacities are not saved. Opening a project or reimporting its mesh
+- The checkboxes and opacities are not saved. Opening a project or reimporting its mesh
   resets them.
 
 ## Bake status

@@ -33,9 +33,9 @@ Add `--auto-cage` to bake with [Auto cage](../reference/mesh-maps.md#auto-cage).
 
 ## Check the cage
 
-1. Under **High poly**, click **Show preview**. The preview pane opens next to the settings,
-   with the low poly in blue, the high poly in white and the cage in red.
-2. Drag in the pane to orbit around the asset. Where white high-poly detail pokes out of the
+1. In the Mesh Maps window, look at the preview on the right: the low poly in blue, the high
+   poly in white and the cage in red.
+2. Drag in the preview to orbit around the asset. Where white high-poly detail pokes out of the
    red cage, raise **Frontal distance** or turn on **Auto cage** until the cage covers it.
 3. To see one part more clearly, lower the others' opacity or turn them off.
 
