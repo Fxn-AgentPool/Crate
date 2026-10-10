@@ -59,3 +59,8 @@ expect-same target/tests/bake_preview/viewport.png target/tests/bake_preview/vie
 # Bad arguments.
 expect-error bake-preview cage=2
 expect-error bake-preview mid=on
+
+# A preview too wide to supersample within the GPU's texture size limit (twice 9000 px is above
+# 16384) still renders, without supersampling.
+size 9000x64
+render-bake-preview target/tests/bake_preview/wide.png

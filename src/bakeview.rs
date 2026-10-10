@@ -10,7 +10,8 @@ use crate::camera::Camera;
 use crate::gpu::{self, Gpu};
 use crate::viewport::{GpuMesh, OUTPUT_FORMAT};
 
-/// Samples per pixel along each axis.
+/// Samples per pixel along each axis, when the supersampled targets fit the GPU's texture size
+/// limit (1 otherwise).
 const SUPERSAMPLE: u32 = 2;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DIST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -40,6 +41,7 @@ struct CompositeUniform {
 struct Targets {
     width: u32,
     height: u32,
+    supersample: u32,
     /// One layer per part, at the supersampled size.
     color_layers: [wgpu::TextureView; 3],
     dist_layers: [wgpu::TextureView; 3],
@@ -172,7 +174,9 @@ impl BakeView {
             return;
         }
         let d = &gpu.device;
-        let (sw, sh) = (width * SUPERSAMPLE, height * SUPERSAMPLE);
+        let max = d.limits().max_texture_dimension_2d;
+        let supersample = if width.max(height) * SUPERSAMPLE <= max { SUPERSAMPLE } else { 1 };
+        let (sw, sh) = (width * supersample, height * supersample);
         let texture = |label, format, layers| {
             d.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -215,6 +219,7 @@ impl BakeView {
         self.targets = Some(Targets {
             width,
             height,
+            supersample,
             color_layers: layer_views(&colors),
             dist_layers: layer_views(&dists),
             depth,
@@ -241,8 +246,9 @@ impl BakeView {
             };
             gpu.queue.write_buffer(&self.part_buffers[k], 0, bytemuck::bytes_of(&u));
         }
+        let supersample = self.targets.as_ref().map_or(1, |t| t.supersample);
         let comp = CompositeUniform {
-            params: [SUPERSAMPLE, 0, 0, 0],
+            params: [supersample, 0, 0, 0],
             // The viewport's background, in linear values.
             background_top: [0.073, 0.078, 0.089, 1.0],
             background_bottom: [0.022, 0.023, 0.026, 1.0],

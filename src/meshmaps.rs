@@ -599,8 +599,6 @@ impl MeshMaps {
         }
     }
 
-    /// Starts baking `maps`. Raster maps are always baked first, since every other map
-    /// reads them.
     /// Advances the bake preview; doesn't block (see `bakepreview::Preview::update`).
     pub fn update_preview(&mut self, gpu: &Gpu, import: &ImportSettings) {
         let src = crate::bakepreview::Source {
@@ -614,6 +612,8 @@ impl MeshMaps {
         self.preview.update(gpu, src);
     }
 
+    /// Starts baking `maps`. Raster maps are always baked first, since every other map
+    /// reads them.
     pub fn start_bake(&mut self, gpu: &Gpu, tile_resolution: u32, maps: &[MeshMap], import: &ImportSettings) -> BakeJob {
         let res = if self.settings.resolution == 0 { tile_resolution } else { self.settings.resolution };
         self.settings.high_poly = crate::highpoly::stamp(self.high_poly.as_ref());
