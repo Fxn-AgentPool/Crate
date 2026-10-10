@@ -11,8 +11,11 @@ use crate::meshmaps::{MapStatus, MeshMap};
 use crate::project::Project;
 
 const THUMB: usize = 64;
-/// Size library image thumbnails are made at (shown at 72 points).
-const LIBRARY_THUMB: u32 = 128;
+/// Tiles: square for images, 2:1 for environments (equirectangular panoramas).
+const TILE: egui::Vec2 = egui::vec2(72.0, 72.0);
+const WIDE_TILE: egui::Vec2 = egui::vec2(144.0, 72.0);
+/// Thumbnails are made at about twice the tile size, for high-DPI screens.
+const THUMB_SCALE: f32 = 2.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Category {
@@ -40,10 +43,44 @@ enum Thumb {
     Unreadable,
 }
 
-/// A scanned library folder, with thumbnails arriving from a background thread.
+/// A list of image files, with thumbnails arriving from a background thread.
 struct FolderView {
     items: Vec<(library::Item, Thumb)>,
     thumbs: Option<mpsc::Receiver<(usize, Option<egui::ColorImage>)>>,
+}
+
+impl FolderView {
+    /// `tile`: thumbnails fitting this tile are made in the background; None lists names only.
+    fn new(ctx: &egui::Context, items: Vec<library::Item>, tile: Option<egui::Vec2>) -> Self {
+        let thumbs = tile.map(|t| {
+            let max = [(t.x * THUMB_SCALE) as u32, (t.y * THUMB_SCALE) as u32];
+            spawn_thumbnails(ctx, items.iter().map(|it| it.path.clone()).collect(), max)
+        });
+        Self { items: items.into_iter().map(|it| (it, Thumb::Loading)).collect(), thumbs }
+    }
+
+    /// Takes the thumbnails that are ready.
+    fn poll(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.thumbs else { return };
+        loop {
+            match rx.try_recv() {
+                Ok((i, img)) => {
+                    self.items[i].1 = match img {
+                        Some(img) => {
+                            let name = format!("library {}", self.items[i].0.path.display());
+                            Thumb::Ready(ctx.load_texture(name, img, egui::TextureOptions::LINEAR))
+                        }
+                        None => Thumb::Unreadable,
+                    };
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.thumbs = None;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 pub struct Library {
@@ -52,13 +89,15 @@ pub struct Library {
     /// Folders the user added, scanned when first shown and on Refresh.
     extra: Option<Vec<String>>,
     folders: HashMap<String, FolderView>,
+    /// Project images (name, source) and their thumbnails; rebuilt when the list changes.
+    images: Option<(Vec<(String, PathBuf)>, FolderView)>,
     /// Mesh map thumbnails with the maps version they were made from.
     map_thumbs: [Option<(u64, egui::TextureHandle)>; 8],
 }
 
 impl Default for Library {
     fn default() -> Self {
-        Self { category: Category::MeshMaps, smart: None, extra: None, folders: HashMap::new(), map_thumbs: Default::default() }
+        Self { category: Category::MeshMaps, smart: None, extra: None, folders: HashMap::new(), images: None, map_thumbs: Default::default() }
     }
 }
 
@@ -74,6 +113,7 @@ impl Library {
     /// Forgets per-project state (thumbnails) when another project is opened.
     pub fn project_changed(&mut self) {
         self.map_thumbs = Default::default();
+        self.images = None;
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &Project) -> Option<LibraryAction> {
@@ -100,7 +140,7 @@ impl Library {
         match self.category.clone() {
             Category::MeshMaps => self.mesh_maps(ui, gpu, p),
             Category::Images => {
-                images(ui, p);
+                self.images(ui, p);
                 None
             }
             Category::Library(folder) => {
@@ -233,32 +273,13 @@ impl Library {
     /// Any library folder other than smart materials.
     fn folder(&mut self, ui: &mut egui::Ui, folder: &str) -> Option<LibraryAction> {
         let kind = library::kind(folder);
-        let thumbnails = matches!(kind, Kind::Alphas | Kind::Stencils | Kind::Images);
-        let view = self.folders.entry(folder.to_string()).or_insert_with(|| {
-            let items = library::scan(folder);
-            let thumbs = thumbnails.then(|| spawn_thumbnails(ui.ctx(), items.iter().map(|it| it.path.clone()).collect()));
-            FolderView { items: items.into_iter().map(|it| (it, Thumb::Loading)).collect(), thumbs }
-        });
-        if let Some(rx) = &view.thumbs {
-            loop {
-                match rx.try_recv() {
-                    Ok((i, img)) => {
-                        view.items[i].1 = match img {
-                            Some(img) => {
-                                let name = format!("library {}", view.items[i].0.path.display());
-                                Thumb::Ready(ui.ctx().load_texture(name, img, egui::TextureOptions::LINEAR))
-                            }
-                            None => Thumb::Unreadable,
-                        };
-                    }
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        view.thumbs = None;
-                        break;
-                    }
-                }
-            }
-        }
+        let tile = match kind {
+            Kind::Alphas | Kind::Stencils | Kind::Images => Some(TILE),
+            Kind::Environments => Some(WIDE_TILE),
+            Kind::SmartMaterials | Kind::Reserved => None,
+        };
+        let view = self.folders.entry(folder.to_string()).or_insert_with(|| FolderView::new(ui.ctx(), library::scan(folder), tile));
+        view.poll(ui.ctx());
         if view.items.is_empty() {
             ui.label(egui::RichText::new("Empty. Add files to the folder (Show in file browser), then Refresh.").weak());
             return None;
@@ -288,28 +309,10 @@ impl Library {
                 }
             });
         };
-        if thumbnails {
+        if let Some(tile) = tile {
             ui.horizontal_wrapped(|ui| {
                 for (it, thumb) in &view.items {
-                    let resp = ui
-                        .vertical(|ui| {
-                            ui.set_width(72.0);
-                            let size = egui::vec2(72.0, 72.0);
-                            match thumb {
-                                Thumb::Ready(t) => {
-                                    ui.add(egui::Image::new(t).fit_to_exact_size(size).corner_radius(3.0));
-                                }
-                                Thumb::Loading | Thumb::Unreadable => {
-                                    let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                                    ui.painter().rect_filled(r, 3.0, egui::Color32::from_gray(30));
-                                    let text = if matches!(thumb, Thumb::Unreadable) { "unreadable" } else { "…" };
-                                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(10.0), egui::Color32::from_gray(110));
-                                }
-                            }
-                            ui.add(egui::Label::new(egui::RichText::new(&it.name).small()).truncate());
-                        })
-                        .response
-                        .interact(egui::Sense::click());
+                    let resp = thumbnail_tile(ui, thumb, tile, &it.name).interact(egui::Sense::click());
                     item_ui(resp, it);
                 }
             });
@@ -323,17 +326,15 @@ impl Library {
     }
 }
 
-/// Makes thumbnails of `paths` in the background; each arrives as (index, image, or None when
-/// the file can't be read). The thread stops early when the receiver is dropped.
-fn spawn_thumbnails(ctx: &egui::Context, paths: Vec<PathBuf>) -> mpsc::Receiver<(usize, Option<egui::ColorImage>)> {
+/// Makes thumbnails of `paths`, at most `max` pixels, in the background; each arrives as
+/// (index, image, or None when the file can't be read). The thread stops early when the
+/// receiver is dropped.
+fn spawn_thumbnails(ctx: &egui::Context, paths: Vec<PathBuf>, max: [u32; 2]) -> mpsc::Receiver<(usize, Option<egui::ColorImage>)> {
     let (tx, rx) = mpsc::channel();
     let ctx = ctx.clone();
     let spawned = std::thread::Builder::new().name("library thumbnails".into()).spawn(move || {
         for (i, path) in paths.iter().enumerate() {
-            let img = image::open(path).ok().map(|img| {
-                let t = img.thumbnail(LIBRARY_THUMB, LIBRARY_THUMB).to_rgba8();
-                egui::ColorImage::from_rgba_unmultiplied([t.width() as usize, t.height() as usize], t.as_raw())
-            });
+            let img = image::open(path).ok().map(|img| thumbnail(&img, max));
             if tx.send((i, img)).is_err() {
                 return;
             }
@@ -346,17 +347,52 @@ fn spawn_thumbnails(ctx: &egui::Context, paths: Vec<PathBuf>) -> mpsc::Receiver<
     rx
 }
 
-fn images(ui: &mut egui::Ui, p: &Project) {
-    if p.image_sizes.is_empty() {
-        ui.label(egui::RichText::new("No images imported.").weak());
-        return;
-    }
-    for (name, (w, h)) in &p.image_sizes {
-        let r = ui.label(format!("{name}  ({w}×{h})"));
-        if let Some(src) = p.image_sources.get(name) {
-            r.on_hover_text(src.display().to_string());
+impl Library {
+    fn images(&mut self, ui: &mut egui::Ui, p: &Project) {
+        if p.image_sizes.is_empty() {
+            ui.label(egui::RichText::new("No images imported.").weak());
+            return;
         }
+        // Sorted by name (a BTreeMap); an image without a source shows as unreadable.
+        let list: Vec<(String, PathBuf)> =
+            p.image_sizes.keys().map(|n| (n.clone(), p.image_sources.get(n).cloned().unwrap_or_default())).collect();
+        if self.images.as_ref().is_none_or(|(l, _)| *l != list) {
+            let items = list.iter().map(|(name, path)| library::Item { name: name.clone(), path: path.clone() }).collect();
+            self.images = Some((list, FolderView::new(ui.ctx(), items, Some(TILE))));
+        }
+        let Some((_, view)) = &mut self.images else { return };
+        view.poll(ui.ctx());
+        ui.horizontal_wrapped(|ui| {
+            for (it, thumb) in &view.items {
+                let (w, h) = p.image_sizes.get(&it.name).copied().unwrap_or_default();
+                let source = if it.path.as_os_str().is_empty() { "no source file".to_string() } else { it.path.display().to_string() };
+                thumbnail_tile(ui, thumb, TILE, &it.name).on_hover_text(format!("{w}×{h}\n{source}"));
+            }
+        });
     }
+}
+
+/// A thumbnail fitted into `tile` (keeping its aspect ratio) with the name below.
+fn thumbnail_tile(ui: &mut egui::Ui, thumb: &Thumb, tile: egui::Vec2, name: &str) -> egui::Response {
+    ui.vertical(|ui| {
+        ui.set_width(tile.x);
+        let (r, _) = ui.allocate_exact_size(tile, egui::Sense::hover());
+        ui.painter().rect_filled(r, 3.0, egui::Color32::from_gray(30));
+        match thumb {
+            Thumb::Ready(t) => {
+                let size = t.size_vec2();
+                let fit = (tile.x / size.x).min(tile.y / size.y);
+                let rect = egui::Rect::from_center_size(r.center(), size * fit);
+                egui::Image::new(t).corner_radius(3.0).paint_at(ui, rect);
+            }
+            Thumb::Loading | Thumb::Unreadable => {
+                let text = if matches!(thumb, Thumb::Unreadable) { "unreadable" } else { "…" };
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(10.0), egui::Color32::from_gray(110));
+            }
+        }
+        ui.add(egui::Label::new(egui::RichText::new(name).small()).truncate());
+    })
+    .response
 }
 
 /// Reads the first tile of a mesh map back and shrinks it to a thumbnail.
@@ -409,4 +445,104 @@ fn map_thumbnail(gpu: &Gpu, p: &Project, m: MeshMap) -> egui::ColorImage {
         }
     }
     egui::ColorImage::from_rgb([THUMB, THUMB], &px)
+}
+
+/// Shrinks an image to fit `max`, keeping its aspect ratio. HDR images (float pixels: HDR, EXR)
+/// are tone-mapped as the viewport shows a material, at exposure 0 (shaders/tonemap.wgsl).
+fn thumbnail(img: &image::DynamicImage, max: [u32; 2]) -> egui::ColorImage {
+    if !matches!(img, image::DynamicImage::ImageRgb32F(_) | image::DynamicImage::ImageRgba32F(_)) {
+        let small = img.thumbnail(max[0], max[1]).to_rgba8();
+        return egui::ColorImage::from_rgba_unmultiplied([small.width() as usize, small.height() as usize], small.as_raw());
+    }
+    // image's thumbnail() offsets float pixels by 0.5 and resize() clamps them to 1, so float
+    // images are box-filtered here, in linear light.
+    let small = match img {
+        image::DynamicImage::ImageRgb32F(i) => shrink(i.dimensions(), max, |x, y| {
+            let p = i.get_pixel(x, y);
+            [p[0], p[1], p[2], 1.0]
+        }),
+        image::DynamicImage::ImageRgba32F(i) => shrink(i.dimensions(), max, |x, y| i.get_pixel(x, y).0),
+        _ => unreachable!(),
+    };
+    let size = [small.width() as usize, small.height() as usize];
+    let px: Vec<u8> = small
+        .pixels()
+        .flat_map(|p| {
+            let c = |v: f32| (srgb_encode(aces(v.max(0.0) * 0.8)) * 255.0 + 0.5) as u8;
+            [c(p[0]), c(p[1]), c(p[2]), (p[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8]
+        })
+        .collect();
+    egui::ColorImage::from_rgba_unmultiplied(size, &px)
+}
+
+/// Box-filters a `w`×`h` image, read through `pixel` (so large images aren't copied), down to
+/// fit `max`, keeping its aspect ratio (never enlarges).
+fn shrink((w, h): (u32, u32), max: [u32; 2], pixel: impl Fn(u32, u32) -> [f32; 4]) -> image::Rgba32FImage {
+    let scale = (max[0] as f64 / w as f64).min(max[1] as f64 / h as f64).min(1.0);
+    let (tw, th) = (((w as f64 * scale).round() as u32).max(1), ((h as f64 * scale).round() as u32).max(1));
+    image::Rgba32FImage::from_fn(tw, th, |x, y| {
+        let (x0, x1) = (x * w / tw, ((x + 1) * w / tw).max(x * w / tw + 1));
+        let (y0, y1) = (y * h / th, ((y + 1) * h / th).max(y * h / th + 1));
+        let mut sum = [0.0f32; 4];
+        for sy in y0..y1 {
+            for sx in x0..x1 {
+                let p = pixel(sx, sy);
+                for c in 0..4 {
+                    sum[c] += p[c];
+                }
+            }
+        }
+        let n = ((x1 - x0) * (y1 - y0)) as f32;
+        image::Rgba(sum.map(|s| s / n))
+    })
+}
+
+/// Narkowicz 2015 ACES fit, as in shaders/tonemap.wgsl.
+fn aces(x: f32) -> f32 {
+    ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+}
+
+fn srgb_encode(c: f32) -> f32 {
+    if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thumbnails_keep_the_aspect_ratio() {
+        let img = image::DynamicImage::new_rgb8(400, 100);
+        assert_eq!(thumbnail(&img, [144, 144]).size, [144, 36]);
+        let pano = image::DynamicImage::new_rgb32f(2048, 1024);
+        assert_eq!(thumbnail(&pano, [288, 144]).size, [288, 144]);
+    }
+
+    #[test]
+    fn shrink_averages_without_clamping() {
+        let img = image::Rgba32FImage::from_fn(4, 2, |x, _| image::Rgba([[0.0, 2.0, 10.0, 30.0][x as usize], 0.0, 0.0, 1.0]));
+        let s = shrink(img.dimensions(), [2, 2], |x, y| img.get_pixel(x, y).0);
+        assert_eq!(s.dimensions(), (2, 1));
+        assert_eq!((s.get_pixel(0, 0)[0], s.get_pixel(1, 0)[0]), (1.0, 20.0));
+        // Never enlarges.
+        assert_eq!(shrink(img.dimensions(), [100, 100], |x, y| img.get_pixel(x, y).0).dimensions(), (4, 2));
+    }
+
+    #[test]
+    fn hdr_thumbnails_are_tone_mapped() {
+        // Uniform images, so resampling doesn't mix the values.
+        let r: Vec<u8> = [0.0, 0.18, 1.0, 50.0]
+            .iter()
+            .map(|&v| {
+                let img = image::Rgb32FImage::from_pixel(8, 4, image::Rgb([v; 3]));
+                thumbnail(&image::DynamicImage::ImageRgb32F(img), [4, 2]).pixels[0].r()
+            })
+            .collect();
+        // Black stays black, very bright saturates, mid-gray is brighter than linear 0.18 * 255.
+        assert_eq!(r[0], 0);
+        assert_eq!(r[3], 255);
+        assert!(r[1] > 46 && r[1] < r[2] && r[2] < 255, "{r:?}");
+        // Same curve as the viewport: aces(0.8) encoded.
+        assert_eq!(r[2], (srgb_encode(aces(0.8)) * 255.0 + 0.5) as u8);
+    }
 }
