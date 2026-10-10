@@ -5,6 +5,7 @@
 /.claude/settings.local.json
 
 # Projects saved inside the repository while testing
+*.crate/
 *.painter/
 
 # Python bytecode (Blender add-on tests)

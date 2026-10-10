@@ -1,4 +1,4 @@
-//! File > Export Textures dialog and the export preset editor. See Painter-docs/reference/export.md.
+//! File > Export Textures dialog and the export preset editor. See docs/reference/export.md.
 
 use egui::RichText;
 

@@ -17,7 +17,7 @@ const VIEWPORT_WGSL: &str = include_str!("shaders/viewport.wgsl");
 const TONEMAP_WGSL: &str = include_str!("shaders/tonemap.wgsl");
 pub const SURFACE_WGSL: &str = include_str!("shaders/surface.wgsl");
 
-/// What the viewport shows. See Painter-docs/reference/channels.md "Viewport channel display".
+/// What the viewport shows. See docs/reference/channels.md "Viewport channel display".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayMode {
     Material,

@@ -1,4 +1,4 @@
-//! Saving and loading `.painter` project directories. See Painter-docs/reference/project-format.md.
+//! Saving and loading `.crate` project directories. See docs/reference/project-format.md.
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -19,7 +19,9 @@ use crate::paint::{PAGE, read_pages, write_pages};
 use crate::project::Project;
 use crate::stencil::StencilSet;
 
-pub const FORMAT: &str = "painter-project";
+pub const FORMAT: &str = "crate-project";
+/// Projects saved before the rename.
+const LEGACY_FORMAT: &str = "painter-project";
 pub const VERSION: u32 = 1;
 
 /// State saved with the project that lives outside `Project`.
@@ -225,7 +227,7 @@ fn copy_mesh(src: &Path, dir: &Path) -> Result<String> {
     Ok(format!("mesh/{name}"))
 }
 
-/// Writes a project to `dir` (a `.painter` directory). Returns the number of paint pages written.
+/// Writes a project to `dir` (a `.crate` directory). Returns the number of paint pages written.
 pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, export: Option<&ExportSettings>) -> Result<usize> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     p.finish_background_work(gpu);
@@ -483,10 +485,10 @@ pub struct Loaded {
 }
 
 pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
-    let text = std::fs::read_to_string(dir.join("project.json")).with_context(|| format!("{} is not a Painter project", dir.display()))?;
+    let text = std::fs::read_to_string(dir.join("project.json")).with_context(|| format!("{} is not a Crate project", dir.display()))?;
     let file: ProjectFile = serde_json::from_str(&text).context("project.json is invalid")?;
-    if file.format != FORMAT {
-        bail!("not a Painter project (format {:?})", file.format);
+    if file.format != FORMAT && file.format != LEGACY_FORMAT {
+        bail!("not a Crate project (format {:?})", file.format);
     }
     if file.version > VERSION {
         bail!("this project was saved by a newer version (format version {})", file.version);
@@ -554,7 +556,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Adds the `.painter` extension if missing.
+/// Adds the `.crate` extension if missing (`.painter`, from before the rename, is kept).
 pub fn with_extension(path: PathBuf) -> PathBuf {
-    if path.extension().is_some_and(|e| e == "painter") { path } else { path.with_extension("painter") }
+    if path.extension().is_some_and(|e| e == "crate" || e == "painter") { path } else { path.with_extension("crate") }
 }

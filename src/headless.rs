@@ -1,6 +1,6 @@
 //! Headless commands, used for verification and scripted runs.
 //!
-//! painter --headless render <mesh> <out.png> [--size WxH] [--yaw deg] [--pitch deg]
+//! crate --headless render <mesh> <out.png> [--size WxH] [--yaw deg] [--pitch deg]
 //!         [--tiles] [--wire] [--up z] [--bake] [--show map|channel] [--res N]
 
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub fn run(args: &[String]) -> Result<()> {
             let mut session = crate::script::Session::new(std::env::current_dir()?)?;
             session.run_file(&script)
         }
-        _ => bail!("usage: painter --headless render <mesh> <out.png> [options] | run <script.txt>"),
+        _ => bail!("usage: crate --headless render <mesh> <out.png> [options] | run <script.txt>"),
     }
 }
 

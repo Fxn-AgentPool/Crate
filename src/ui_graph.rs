@@ -1,4 +1,4 @@
-//! Node Editor. See Painter-docs/reference/nodes.md and Painter-docs/how-to/edit-a-layer-as-a-graph.md.
+//! Node Editor. See docs/reference/nodes.md and docs/how-to/edit-a-layer-as-a-graph.md.
 //!
 //! Shows either the subgraph behind one layer (its content and mask, plus a virtual "Layer"
 //! sink node whose inputs are the layer's content and mask) or, with no layer in focus, the

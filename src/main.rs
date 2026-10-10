@@ -42,7 +42,7 @@ fn init_logging(default: &str) {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Older form used by the test scripts: painter --headless run|render ...
+    // Older form used by the test scripts: crate --headless run|render ...
     if args.first().map(String::as_str) == Some("--headless") {
         init_logging("error");
         return match headless::run(&args[1..]) {
@@ -57,18 +57,18 @@ fn main() -> ExitCode {
     if cli.command.is_some() {
         init_logging(match cli.verbose {
             0 => "error",
-            1 => "error,painter=info",
-            _ => "warn,painter=debug",
+            1 => "error,crate_app=info",
+            _ => "warn,crate_app=debug",
         });
         return ExitCode::from(cli::main(cli));
     }
 
-    init_logging("warn,painter=info");
+    init_logging("warn,crate_app=info");
     let initial = cli.path.clone();
     let script = cli.script.clone();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Painter")
+            .with_title("Crate")
             .with_inner_size([1600.0, 960.0]),
         ..Default::default()
     };
@@ -76,9 +76,9 @@ fn main() -> ExitCode {
         create.device_descriptor = Arc::new(gpu::device_descriptor);
     }
     match eframe::run_native(
-        "Painter",
+        "Crate",
         options,
-        Box::new(move |cc| Ok(Box::new(app::PainterApp::new(cc, initial, script)))),
+        Box::new(move |cc| Ok(Box::new(app::CrateApp::new(cc, initial, script)))),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

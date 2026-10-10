@@ -1,4 +1,4 @@
-//! Layers and Properties panels. See Painter-docs/reference/layers.md and windows-and-panels.md.
+//! Layers and Properties panels. See docs/reference/layers.md and windows-and-panels.md.
 
 use egui::{Color32, RichText};
 

@@ -1,5 +1,5 @@
 //! Cached node evaluation and non-local filters.
-//! See Painter-docs/explanation/about-realtime-evaluation.md.
+//! See docs/explanation/about-realtime-evaluation.md.
 //!
 //! A cached node is evaluated in UV space once per tile into a texture, padded, optionally
 //! filtered, and the material shader reads that texture instead of re-evaluating the

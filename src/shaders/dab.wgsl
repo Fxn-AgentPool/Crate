@@ -1,5 +1,5 @@
 // Draws brush dabs into the screen-space paint buffer.
-// See Painter-docs/reference/paint-buffer.md and brushes-tools-stencils.md.
+// See docs/reference/paint-buffer.md and brushes-tools-stencils.md.
 //
 // Buffer planes store premultiplied values with per-channel coverage, in the same layout
 // as paint pools (scene.rs). `stroke` holds the current stroke's own coverage, so Opacity

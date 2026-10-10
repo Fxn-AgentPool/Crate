@@ -1,7 +1,7 @@
-//! Headless script runner: `painter run <script.txt>` (and `painter --headless run`).
+//! Headless script runner: `crate run <script.txt>` (and `crate --headless run`).
 //!
 //! Each line is a command mirroring a user action, so the tutorials can be replayed and
-//! checked automatically, and pipelines can drive Painter. Lines starting with `#` are
+//! checked automatically, and pipelines can drive Crate. Lines starting with `#` are
 //! comments; `${name}` is replaced by a variable (`--set name=value` or the environment).
 
 use std::sync::Mutex;
@@ -538,14 +538,14 @@ impl Session {
                 anyhow::ensure!(found == want, "expected files {want:?}, found {found:?}");
             }
             "save" => {
-                // save [dir.painter]: without a path, saves where the project was opened or saved.
+                // save [dir.crate]: without a path, saves where the project was opened or saved.
                 let dir = match rest.first() {
                     Some(d) => crate::projectfile::with_extension(self.path(d)),
                     None => self
                         .project
                         .as_ref()
                         .and_then(|p| p.path.clone())
-                        .context("the project has never been saved; use save <dir.painter>")?,
+                        .context("the project has never been saved; use save <dir.crate>")?,
                 };
                 let vs = crate::projectfile::ViewportState { camera: Some(self.camera), ..Default::default() };
                 let p = self.project.as_mut().context("no project")?;
@@ -576,7 +576,7 @@ impl Session {
                 say!("{}", serde_json::to_string_pretty(&project_info(p))?);
             }
             "open" => {
-                let dir = self.path(rest.first().context("open <dir.painter>")?);
+                let dir = self.path(rest.first().context("open <dir.crate>")?);
                 let t = std::time::Instant::now();
                 let loaded = crate::projectfile::load(&gpu, &dir)?;
                 if let Some(c) = loaded.viewport.camera {
@@ -681,10 +681,10 @@ impl Session {
             }
             "add-smart" => {
                 let name = rest.first().context("add-smart <name or path>")?;
-                let path = if name.ends_with(".psmat") {
+                let path = if name.ends_with(".smat") || name.ends_with(".psmat") {
                     self.path(name)
                 } else {
-                    crate::smartmat::library_dir().join(format!("{name}.psmat"))
+                    crate::smartmat::library_dir().join(format!("{name}.{}", crate::smartmat::EXT))
                 };
                 let p = self.project.as_mut().context("no project")?;
                 let above = p.selection.map(|s| s.layer());
@@ -693,7 +693,7 @@ impl Session {
             }
             "delete-smart" => {
                 let name = rest.first().context("delete-smart <name>")?;
-                let path = crate::smartmat::library_dir().join(format!("{name}.psmat"));
+                let path = crate::smartmat::library_dir().join(format!("{name}.{}", crate::smartmat::EXT));
                 std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
             }
             "expect-same" => {
@@ -975,7 +975,7 @@ fn set_value(p: &mut Project, gpu: &Gpu, key: &str, v: &str) -> Result<()> {
     Ok(())
 }
 
-/// Summary of a project for `painter info` and the `info` command.
+/// Summary of a project for `crate info` and the `info` command.
 pub fn project_info(p: &Project) -> serde_json::Value {
     fn layers(p: &Project, stack: crate::graph::NodeId) -> Vec<serde_json::Value> {
         p.graph

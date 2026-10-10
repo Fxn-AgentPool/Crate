@@ -1,7 +1,13 @@
 [package]
-name = "painter"
+name = "crate-app"
+description = "Crate: realtime UDIM texture painting with layers, nodes and stencils"
 version = "0.1.0"
 edition = "2024"
+
+# `crate` is a Rust keyword, so the package is crate-app and the program is `crate`.
+[[bin]]
+name = "crate"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"

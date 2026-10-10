@@ -1,5 +1,5 @@
 //! Brush, Brush Values and Paint Buffer panels.
-//! See Painter-docs/reference/brushes-tools-stencils.md and paint-buffer.md.
+//! See docs/reference/brushes-tools-stencils.md and paint-buffer.md.
 
 use egui::RichText;
 

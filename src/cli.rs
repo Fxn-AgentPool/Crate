@@ -1,6 +1,6 @@
-//! Command-line interface for pipelines. See Painter-docs/reference/command-line.md.
+//! Command-line interface for pipelines. See docs/reference/command-line.md.
 //!
-//! `painter` with no subcommand opens the application. Subcommands run headless:
+//! `crate` with no subcommand opens the application. Subcommands run headless:
 //! new, reimport, export, run, batch, watch and info.
 
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ pub const EXIT_GPU: u8 = 3;
 
 #[derive(Parser)]
 #[command(
-    name = "painter",
+    name = "crate",
     version,
     about = "Realtime UDIM texture painting. Without a subcommand, opens the application.",
     args_conflicts_with_subcommands = true
@@ -28,7 +28,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Mesh or .painter project to open in the application.
+    /// Mesh or .crate project to open in the application.
     pub path: Option<PathBuf>,
 
     /// Script to run in the application after it starts.
@@ -102,7 +102,7 @@ pub enum Command {
     New {
         /// Mesh to import (.glb, .gltf or .obj).
         mesh: PathBuf,
-        /// Project directory to save (.painter).
+        /// Project directory to save (.crate).
         #[arg(short, long)]
         output: PathBuf,
         /// Tile resolution: 1024, 2048 or 4096.
@@ -124,7 +124,7 @@ pub enum Command {
     },
     /// Replace a project's mesh (for example after a new export from Blender) and save it.
     Reimport {
-        /// The .painter project.
+        /// The .crate project.
         project: PathBuf,
         /// The new mesh.
         mesh: PathBuf,
@@ -139,7 +139,7 @@ pub enum Command {
     },
     /// Export a project's textures.
     Export {
-        /// The .painter project.
+        /// The .crate project.
         project: PathBuf,
         /// Output directory.
         #[arg(short, long)]
@@ -167,7 +167,7 @@ pub enum Command {
     Batch {
         /// Script run once per project. ${project} holds the project's name.
         script: PathBuf,
-        /// Projects (.painter); wildcards are expanded (e.g. projects/*.painter).
+        /// Projects (.crate); wildcards are expanded (e.g. projects/*.crate).
         #[arg(required = true)]
         projects: Vec<String>,
         /// Save each project after its script.
@@ -181,7 +181,7 @@ pub enum Command {
     },
     /// Watch a mesh file; when it changes, reimport, rebake, save and optionally export.
     Watch {
-        /// The .painter project.
+        /// The .crate project.
         project: PathBuf,
         /// Mesh file to watch (the file your DCC exports).
         #[arg(long)]
@@ -200,7 +200,7 @@ pub enum Command {
     },
     /// Print a project's summary: mesh, tiles, layers, mesh maps.
     Info {
-        /// The .painter project.
+        /// The .crate project.
         project: PathBuf,
     },
 }

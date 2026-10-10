@@ -1,5 +1,5 @@
 # Tests the Blender add-on in background mode:
-#   blender --background --factory-startup --python tests/blender_bridge_test.py -- <painter> <project.painter> <out dir>
+#   blender --background --factory-startup --python tests/blender_bridge_test.py -- <crate> <project.crate> <out dir>
 # Imports the crate, stretches it, and runs the add-on's operator to reimport into the project.
 import os
 import sys
@@ -7,11 +7,11 @@ import sys
 import bpy
 
 args = sys.argv[sys.argv.index("--") + 1:]
-painter, project, out = args
+crate, project, out = args
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "integrations", "blender"))
-import painter_bridge  # noqa: E402
+import crate_bridge  # noqa: E402
 
-painter_bridge.register()
+crate_bridge.register()
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=os.path.join(os.path.dirname(__file__), "..", "assets", "crate.glb"))
 for ob in bpy.context.scene.objects:
@@ -19,8 +19,8 @@ for ob in bpy.context.scene.objects:
 
 # The add-on reads the executable from its preferences; outside an installed add-on, point
 # the helper at the given path.
-painter_bridge.painter_executable = lambda context: painter
-result = bpy.ops.export_scene.painter_reimport(
+crate_bridge.crate_executable = lambda context: crate
+result = bpy.ops.export_scene.crate_reimport(
     project=project,
     mesh_path=os.path.join(out, "from_blender.glb"),
     export_dir=os.path.join(out, "textures"),

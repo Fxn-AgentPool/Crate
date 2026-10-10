@@ -1,5 +1,5 @@
 //! Document operations on the layer stack, shared by the UI and the script runner.
-//! See Painter-docs/reference/layers.md "Layer operations".
+//! See docs/reference/layers.md "Layer operations".
 
 use crate::graph::{BlendMode, Graph, MaskSlot, MaskSource, NodeId, Slot, Value};
 

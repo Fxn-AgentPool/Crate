@@ -1,7 +1,8 @@
 //! User preferences (Edit > Preferences), stored in the user configuration directory:
-//! `%APPDATA%\Painter` on Windows, `~/Library/Application Support/Painter` on macOS and
-//! `$XDG_CONFIG_HOME/painter` (usually `~/.config/painter`) on Linux.
-//! See Painter-docs/reference/limits.md "Memory budgets".
+//! `%APPDATA%\Crate` on Windows, `~/Library/Application Support/Crate` on macOS and
+//! `$XDG_CONFIG_HOME/crate` (usually `~/.config/crate`) on Linux. Settings from before the
+//! rename (the `Painter` folder) are moved over on first start.
+//! See docs/reference/limits.md "Memory budgets".
 
 use std::path::PathBuf;
 
@@ -28,16 +29,31 @@ impl Default for Preferences {
 
 /// Per-user directory for preferences, export presets and the library.
 pub fn dir() -> PathBuf {
+    let dir = base_dir(if cfg!(any(windows, target_os = "macos")) { "Crate" } else { "crate" });
+    // Moves settings over from before the rename, once.
+    static MIGRATE: std::sync::Once = std::sync::Once::new();
+    MIGRATE.call_once(|| {
+        let old = base_dir(if cfg!(any(windows, target_os = "macos")) { "Painter" } else { "painter" });
+        if !dir.exists() && old.is_dir() {
+            if let Err(e) = std::fs::rename(&old, &dir) {
+                log::warn!("could not move settings from {} to {}: {e}", old.display(), dir.display());
+            }
+        }
+    });
+    dir
+}
+
+fn base_dir(name: &str) -> PathBuf {
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     if cfg!(windows) {
-        env("APPDATA").unwrap_or_else(|| PathBuf::from(".")).join("Painter")
+        env("APPDATA").unwrap_or_else(|| PathBuf::from(".")).join(name)
     } else if cfg!(target_os = "macos") {
-        env("HOME").unwrap_or_else(|| PathBuf::from(".")).join("Library/Application Support/Painter")
+        env("HOME").unwrap_or_else(|| PathBuf::from(".")).join("Library/Application Support").join(name)
     } else {
         env("XDG_CONFIG_HOME")
             .or_else(|| env("HOME").map(|h| h.join(".config")))
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("painter")
+            .join(name)
     }
 }
 

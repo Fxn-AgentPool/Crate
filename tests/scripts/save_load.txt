@@ -20,9 +20,9 @@ stroke 0.3,0.8 0.5,0.85 0.7,0.8
 stencil-add assets/D_BasicDecals01_015.png
 stencil visible=false
 render target/saveload/before.png
-save target/saveload/Crate.painter
-open target/saveload/Crate.painter
+save target/saveload/Crate.crate
+open target/saveload/Crate.crate
 render target/saveload/after.png
 expect-same target/saveload/before.png target/saveload/after.png
 # Saving again without changes writes no pages.
-save target/saveload/Crate.painter
+save target/saveload/Crate.crate

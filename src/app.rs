@@ -27,7 +27,7 @@ impl NewProjectDialog {
     }
 }
 
-pub struct PainterApp {
+pub struct CrateApp {
     gpu: Gpu,
     renderer: std::sync::Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>,
     viewport: Viewport,
@@ -47,7 +47,7 @@ pub struct PainterApp {
     viewport_material: u64,
     /// Transient message in the status bar.
     message: Option<(String, f64)>,
-    /// The GPU lacks something Painter needs; shown instead of the UI.
+    /// The GPU lacks something Crate needs; shown instead of the UI.
     gpu_error: Option<String>,
     paint: PaintEngine,
     stencil_overlay: crate::stencil::StencilOverlay,
@@ -74,10 +74,10 @@ enum Pending {
     Quit,
 }
 
-impl PainterApp {
+impl CrateApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_mesh: Option<PathBuf>, script: Option<PathBuf>) -> Self {
         apply_theme(&cc.egui_ctx);
-        let rs = cc.wgpu_render_state.as_ref().expect("Painter requires the wgpu renderer");
+        let rs = cc.wgpu_render_state.as_ref().expect("Crate requires the wgpu renderer");
         let gpu = Gpu { device: rs.device.clone(), queue: rs.queue.clone() };
         let viewport = Viewport::new(&gpu, &crate::scene::layout(&gpu));
         let paint = PaintEngine::new(&gpu);
@@ -119,7 +119,7 @@ impl PainterApp {
             return app;
         }
         if let Some(path) = initial_mesh {
-            // A .painter directory opens as a project; anything else is imported as a mesh.
+            // A .crate directory opens as a project; anything else is imported as a mesh.
             if path.is_dir() {
                 app.open_project(&path);
             } else {
@@ -168,7 +168,7 @@ impl PainterApp {
     }
 }
 
-impl PainterApp {
+impl CrateApp {
     /// Runs a script (see script.rs) and adopts the project it creates.
     fn run_startup_script(&mut self, path: &std::path::Path) {
         let base = std::env::current_dir().unwrap_or_default();
@@ -192,7 +192,7 @@ impl PainterApp {
     }
 }
 
-impl eframe::App for PainterApp {
+impl eframe::App for CrateApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Some(e) = &self.gpu_error {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -220,11 +220,11 @@ impl eframe::App for PainterApp {
         }
         let title = match &self.doc {
             Some(d) => format!(
-                "{}{} - Painter",
+                "{}{} - Crate",
                 d.name.clone().unwrap_or_else(|| "Untitled".into()),
                 if d.has_unsaved_changes() { " *" } else { "" }
             ),
-            None => "Painter".into(),
+            None => "Crate".into(),
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         self.unsaved_dialog(&ctx);
@@ -236,7 +236,7 @@ impl eframe::App for PainterApp {
     }
 }
 
-impl PainterApp {
+impl CrateApp {
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use crate::shortcuts::Action as A;
         if ctx.egui_wants_keyboard_input() || self.windows.capturing_shortcut() {
@@ -791,7 +791,7 @@ impl PainterApp {
     fn save_as(&mut self) -> bool {
         let Some(doc) = &self.doc else { return false };
         let stem = doc.mesh.source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
-        let default_name = format!("{}.painter", doc.name.clone().unwrap_or_else(|| capitalize(&stem)));
+        let default_name = format!("{}.crate", doc.name.clone().unwrap_or_else(|| capitalize(&stem)));
         let Some(path) = rfd::FileDialog::new().set_title("Save Project").set_file_name(default_name).save_file() else {
             return false;
         };
@@ -815,7 +815,7 @@ impl PainterApp {
     }
 
     fn open_project_dialog(&mut self) {
-        let Some(dir) = rfd::FileDialog::new().set_title("Open Project (select the .painter folder)").pick_folder() else { return };
+        let Some(dir) = rfd::FileDialog::new().set_title("Open Project (select the .crate folder)").pick_folder() else { return };
         self.open_project(&dir);
     }
 

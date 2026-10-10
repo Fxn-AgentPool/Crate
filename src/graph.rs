@@ -1,4 +1,4 @@
-//! Node graph data model. See Painter-docs/reference/nodes.md and Painter-docs/reference/layers.md.
+//! Node graph data model. See docs/reference/nodes.md and docs/reference/layers.md.
 //!
 //! Nodes are generic: a type name, a parameter map and named input links. Static
 //! `NodeDef`s describe each type's sockets and parameters, which drives the property UI,
@@ -143,7 +143,7 @@ impl BlendMode {
         }
     }
 
-    /// Modes available per channel, see Painter-docs/reference/blend-modes.md.
+    /// Modes available per channel, see docs/reference/blend-modes.md.
     pub fn for_channel(c: Channel) -> &'static [BlendMode] {
         use BlendMode::*;
         match c {

@@ -1,4 +1,4 @@
-//! Mesh map baking. See Painter-docs/reference/mesh-maps.md.
+//! Mesh map baking. See docs/reference/mesh-maps.md.
 //!
 //! Position, World Normal and ID come from a UV-space raster pass; Ambient Occlusion,
 //! Curvature and Thickness are ray traced on the GPU against a BVH. Padding is computed

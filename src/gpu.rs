@@ -8,7 +8,7 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
 }
 
-/// Checks that the adapter can run Painter. Painting and baking read and write half-float
+/// Checks that the adapter can run Crate. Painting and baking read and write half-float
 /// textures in place, which needs read-write storage support for Rgba16Float.
 pub fn check_adapter(adapter: &wgpu::Adapter) -> Result<(), String> {
     let info = adapter.get_info();
@@ -31,7 +31,7 @@ pub fn check_adapter(adapter: &wgpu::Adapter) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "The GPU \"{}\" ({:?}, driver {}) does not support: {}. Painter needs a Vulkan 1.2 or Direct3D 12 GPU with current drivers.",
+            "The GPU \"{}\" ({:?}, driver {}) does not support: {}. Crate needs a Vulkan 1.2 or Direct3D 12 GPU with current drivers.",
             info.name,
             info.backend,
             info.driver_info,
@@ -40,7 +40,7 @@ pub fn check_adapter(adapter: &wgpu::Adapter) -> Result<(), String> {
     }
 }
 
-/// Features Painter uses when the adapter has them.
+/// Features Crate uses when the adapter has them.
 pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features()
         & (wgpu::Features::FLOAT32_FILTERABLE
@@ -53,7 +53,7 @@ pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 /// compiled material shader uses.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     wgpu::DeviceDescriptor {
-        label: Some("painter device"),
+        label: Some("crate device"),
         required_features: wanted_features(adapter),
         required_limits: adapter.limits(),
         ..Default::default()

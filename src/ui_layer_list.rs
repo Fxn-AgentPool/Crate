@@ -1,6 +1,6 @@
 //! The Layers panel list: tall rows with content and mask thumbnails, blend mode and opacity
 //! readouts for a chosen channel, nested effects (mask layers), folders and drag-to-reorder.
-//! See Painter-docs/reference/layers.md.
+//! See docs/reference/layers.md.
 
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 

@@ -1,5 +1,5 @@
-//! Smart materials: saved Group / Graph layers. See Painter-docs/how-to/create-a-smart-material.md
-//! and Painter-docs/reference/project-format.md "Smart material files".
+//! Smart materials: saved Group / Graph layers. See docs/how-to/create-a-smart-material.md
+//! and docs/reference/project-format.md "Smart material files".
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -14,7 +14,11 @@ use crate::ops::{self, LayerRef};
 use crate::paint::{PAGE, read_pages, write_pages};
 use crate::project::Project;
 
-pub const FORMAT: &str = "painter-smart-material";
+pub const FORMAT: &str = "crate-smart-material";
+/// Smart materials saved before the rename (`.psmat` files).
+const LEGACY_FORMAT: &str = "painter-smart-material";
+pub const EXT: &str = "smat";
+const LEGACY_EXT: &str = "psmat";
 
 #[derive(Serialize, Deserialize)]
 struct MaterialFile {
@@ -44,7 +48,7 @@ pub fn list() -> Vec<LibraryItem> {
     let mut items = Vec::new();
     for e in std::fs::read_dir(library_dir()).into_iter().flatten().flatten() {
         let path = e.path();
-        if path.extension().is_some_and(|x| x == "psmat") {
+        if path.extension().is_some_and(|x| x == EXT || x == LEGACY_EXT) {
             let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let thumbnail = read_entry(&path, "thumbnail.png").ok().and_then(|bytes| {
                 let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
@@ -90,7 +94,7 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
     };
     let dir = library_dir();
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.psmat", name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")));
+    let path = dir.join(format!("{}.{EXT}", name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")));
     let mut z = zip::ZipWriter::new(std::fs::File::create(&path)?);
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     z.start_file("material.json", opts)?;
@@ -146,12 +150,12 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
 /// Inserts a smart material as a new layer above `above`. Returns the new layer.
 pub fn insert(gpu: &Gpu, p: &mut Project, path: &Path, above: Option<LayerRef>) -> Result<LayerRef> {
     let file: MaterialFile = serde_json::from_slice(&read_entry(path, "material.json")?).context("invalid smart material")?;
-    if file.format != FORMAT {
+    if file.format != FORMAT && file.format != LEGACY_FORMAT {
         bail!("not a smart material");
     }
     // Images first, so parameters resolve.
     let mut z = zip::ZipArchive::new(std::fs::File::open(path)?)?;
-    let tmp = std::env::temp_dir().join("painter-smart-material");
+    let tmp = std::env::temp_dir().join("crate-smart-material");
     std::fs::create_dir_all(&tmp)?;
     let names: Vec<String> = z.file_names().filter_map(|n| n.ok()).map(|n| n.into_owned()).collect();
     for name in names.iter().filter(|n| n.starts_with("images/")) {

@@ -25,9 +25,9 @@ pub const UNDO_LIMIT: usize = 64;
 pub const UNDO_BYTES: usize = 2 << 30;
 
 pub struct Project {
-    /// Project name (the .painter directory's stem) once saved.
+    /// Project name (the .crate directory's stem) once saved.
     pub name: Option<String>,
-    /// The .painter directory, once saved.
+    /// The .crate directory, once saved.
     pub path: Option<std::path::PathBuf>,
     /// The mesh file the user imported (the project keeps its own copy in mesh/). Its name is
     /// what {mesh} means in export file names.

@@ -1,6 +1,6 @@
 //! Paint buffer, brush strokes and projection baking.
-//! See Painter-docs/reference/paint-buffer.md, brushes-tools-stencils.md and
-//! Painter-docs/explanation/about-the-paint-buffer.md.
+//! See docs/reference/paint-buffer.md, brushes-tools-stencils.md and
+//! docs/explanation/about-the-paint-buffer.md.
 //!
 //! Strokes draw dabs into a screen-space buffer. Baking projects the buffer through the
 //! bake camera into the target's tiles. Before a bake the target slot is copied to a
