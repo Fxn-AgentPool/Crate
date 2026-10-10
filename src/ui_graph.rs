@@ -4,6 +4,9 @@
 //! sink node whose inputs are the layer's content and mask) or, with no layer in focus, the
 //! whole project graph. Connecting into the sink, into a Stack's layer sockets or into a Mask
 //! Stack's sockets edits those slots; the "+ New layer" / "+ New effect" sockets add slots.
+//!
+//! Nodes show their outputs, then their parameters (edited in place), then their inputs, and
+//! can be collapsed to their header. See docs/reference/node-editor.md "Nodes".
 
 use std::collections::BTreeSet;
 
@@ -15,10 +18,12 @@ use crate::ops::{self, LayerRef};
 use crate::project::Project;
 
 mod wrangler;
-use wrangler::MergeOp;
+use wrangler::{Edge, MergeOp};
 
 const SINK: NodeId = u32::MAX;
-const NODE_W: f32 = 170.0;
+const NODE_W: f32 = 200.0;
+/// Below this zoom, parameters are shown as text and can't be edited.
+const EDIT_ZOOM: f32 = 0.5;
 const HEADER: f32 = 22.0;
 const ROW: f32 = 20.0;
 const NEW_LAYER: &str = "slot_new";
@@ -54,6 +59,9 @@ enum Op {
     DeleteUnused,
     Duplicate,
     Align,
+    AlignEdges(Edge),
+    ToggleCollapse,
+    Copy,
     Reset,
     CopySettings,
     LinkToSelected,
@@ -98,6 +106,10 @@ pub struct NodeEditor {
     node_menu: Option<Pos2>,
     /// Socket chooser after a Shift+Alt lazy connect: (screen position, from, to).
     lazy_menu: Option<(Pos2, NodeId, NodeId)>,
+    /// Ramp or ID list editor opened from a parameter row: (node, parameter, screen position).
+    param_popup: Option<(NodeId, &'static str, Pos2)>,
+    /// Editable parameter rows this frame (screen), so presses on them don't drag the node.
+    param_rects: Vec<(NodeId, Rect)>,
     auto_layout_needed: bool,
     frame_needed: bool,
 }
@@ -118,6 +130,8 @@ impl Default for NodeEditor {
             add_menu: None,
             node_menu: None,
             lazy_menu: None,
+            param_popup: None,
+            param_rects: Vec::new(),
             auto_layout_needed: false,
             frame_needed: false,
         }
@@ -177,6 +191,22 @@ fn pretty(s: &str) -> String {
         out.replace_range(0..1, &f.to_uppercase());
     }
     out
+}
+
+fn param_rows(g: &Graph, id: NodeId) -> usize {
+    if id == SINK { 0 } else { g.node(id).def().params.len() }
+}
+
+fn is_collapsed(g: &Graph, id: NodeId) -> bool {
+    id != SINK && g.node(id).collapsed
+}
+
+/// Height in canvas units: the header, then outputs, parameters and inputs (one row each).
+fn node_height(g: &Graph, id: NodeId) -> f32 {
+    if is_collapsed(g, id) {
+        return HEADER;
+    }
+    HEADER + (outputs(g, id).len() + param_rows(g, id) + inputs(g, id).len()).max(1) as f32 * ROW + 6.0
 }
 
 /// The default output used when a node is referenced without an output name (slots).
@@ -495,7 +525,7 @@ impl NodeEditor {
 
     /// Whether one of the editor's menus is open (Esc closes it rather than the editor).
     pub fn has_popup(&self) -> bool {
-        self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some()
+        self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some() || self.param_popup.is_some()
     }
 
     fn set_focus(&mut self, focus: Focus) {
@@ -505,6 +535,7 @@ impl NodeEditor {
             self.selected.clear();
             self.primary = None;
             self.add_menu = None;
+            self.param_popup = None;
             self.drag = None;
         }
         self.auto_layout_needed = true;
@@ -564,7 +595,7 @@ impl NodeEditor {
         }
         for n in nodes {
             let pos = self.node_pos(g, n);
-            let h = HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0;
+            let h = node_height(g, n);
             lo = lo.min(Vec2::new(pos[0], pos[1]));
             hi = hi.max(Vec2::new(pos[0] + NODE_W, pos[1] + h));
         }
@@ -613,7 +644,7 @@ impl NodeEditor {
                 }
             }
         }
-        let height = |g: &Graph, n: NodeId| HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0;
+        let height = |g: &Graph, n: NodeId| node_height(g, n);
         let mut placed: Vec<NodeId> = nodes.iter().copied().filter(|n| !unplaced.contains(n)).collect();
         let mut order = unplaced;
         order.sort_by_key(|n| depth.get(n).copied().unwrap_or(1));
@@ -622,7 +653,7 @@ impl NodeEditor {
             let reader = placed.iter().copied().find_map(|r| {
                 let i = links_into(g, self.layer(), r).iter().position(|(_, src, _)| *src == n)?;
                 let input = &links_into(g, self.layer(), r)[i].0;
-                let row = outputs(g, r).len() + inputs(g, r).iter().position(|(name, _, _)| name == input).unwrap_or(0);
+                let row = outputs(g, r).len() + param_rows(g, r) + inputs(g, r).iter().position(|(name, _, _)| name == input).unwrap_or(0);
                 Some((r, row))
             });
             let (x, mut y) = match reader {
@@ -692,7 +723,7 @@ impl NodeEditor {
             }
             ui.label(
                 egui::RichText::new(
-                    "Tab / Shift+A / right-click: add · drag output: connect · drag: box select · right-drag, Alt+drag: pan · \
+                    "Tab / right-click: add · drag output: connect · drag: box select · right-drag, Alt+drag: pan · \
                      Ctrl+Shift+click: preview · Alt+right-drag: lazy connect · Ctrl+right-drag: cut links · right-click a node: more",
                 )
                 .weak(),
@@ -724,28 +755,40 @@ impl NodeEditor {
     }
 
     fn node_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
-        let rows = inputs(g, id).len() + outputs(g, id).len();
-        let h = HEADER + rows.max(1) as f32 * ROW + 6.0;
-        Rect::from_min_size(self.to_screen(origin, self.node_pos(g, id)), Vec2::new(NODE_W, h) * self.zoom)
+        Rect::from_min_size(self.to_screen(origin, self.node_pos(g, id)), Vec2::new(NODE_W, node_height(g, id)) * self.zoom)
     }
 
+    /// Where links attach to an input. On a collapsed node every input attaches to the middle of
+    /// the header's left edge.
     fn input_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
         let r = self.node_rect(g, origin, id);
         let i = inputs(g, id).iter().position(|(n, _, _)| n == name)?;
-        let row = outputs(g, id).len() + i;
+        if is_collapsed(g, id) {
+            return Some(r.left_center());
+        }
+        let row = outputs(g, id).len() + param_rows(g, id) + i;
         Some(Pos2::new(r.left(), r.top() + (HEADER + ROW * (row as f32 + 0.5)) * self.zoom))
     }
 
     fn output_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
         let r = self.node_rect(g, origin, id);
         let i = outputs(g, id).iter().position(|(n, _)| n == name)?;
+        if is_collapsed(g, id) {
+            return Some(r.right_center());
+        }
         Some(Pos2::new(r.right(), r.top() + (HEADER + ROW * (i as f32 + 0.5)) * self.zoom))
     }
 
-    /// The socket under a screen point: (socket, is output).
+    /// The collapse arrow's area in a node's header (screen).
+    fn arrow_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
+        let r = self.node_rect(g, origin, id);
+        Rect::from_min_size(r.min, Vec2::new(18.0, HEADER) * self.zoom)
+    }
+
+    /// The socket under a screen point: (socket, is output). Collapsed nodes have none.
     fn socket_at(&self, g: &Graph, origin: Pos2, nodes: &[NodeId], pt: Pos2) -> Option<(SocketRef, bool)> {
         let r = 10.0 * self.zoom.max(0.6);
-        for &n in nodes.iter().rev() {
+        for &n in nodes.iter().rev().filter(|n| !is_collapsed(g, **n)) {
             for (name, _) in outputs(g, n) {
                 if self.output_pos(g, origin, n, &name).is_some_and(|q| q.distance(pt) < r) {
                     return Some((SocketRef { node: n, name }, true));
@@ -789,7 +832,8 @@ impl NodeEditor {
         let layer = self.layer();
         let (secondary_pressed, secondary_down, ctrl) =
             ui.input(|i| (i.pointer.secondary_pressed(), i.pointer.secondary_down(), i.modifiers.command));
-        let menus_open = self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some();
+        let menus_open = self.has_popup();
+        self.param_rects.clear();
         let (pointer, mut pressed, primary_down, alt, shift, delta, scroll, middle) = ui.input(|i| {
             (
                 i.pointer.hover_pos(),
@@ -843,8 +887,10 @@ impl NodeEditor {
             Some(Drag::Link { ty, .. }) => Some(*ty),
             _ => None,
         };
-        for &n in &all {
-            let r = self.node_rect(&p.graph, origin, n);
+        let rects: Vec<Rect> = all.iter().map(|n| self.node_rect(&p.graph, origin, *n)).collect();
+        for (k, &n) in all.iter().enumerate() {
+            let r = rects[k];
+            let collapsed = is_collapsed(&p.graph, n);
             let selected = self.selected.contains(&n);
             let (title, cached) = if n == SINK {
                 (format!("Layer: {}", layer.and_then(|l| ops::slot(&p.graph, l)).map(|s| s.name.as_str()).unwrap_or("")), false)
@@ -855,7 +901,20 @@ impl NodeEditor {
             painter.rect_filled(r, 5.0, Color32::from_gray(if n == SINK { 50 } else { 42 }));
             let header = Rect::from_min_size(r.min, Vec2::new(r.width(), HEADER * self.zoom));
             painter.rect_filled(header, 5.0, if n == SINK { Color32::from_rgb(60, 80, 120) } else { Color32::from_rgb(60, 60, 75) });
-            painter.text(header.left_center() + Vec2::new(6.0, 0.0), egui::Align2::LEFT_CENTER, &title, font.clone(), Color32::WHITE);
+            let mut title_x = 6.0;
+            if n != SINK {
+                // Collapse arrow: pointing down when expanded, right when collapsed.
+                let c = self.arrow_rect(&p.graph, origin, n).center();
+                let s = 4.0 * self.zoom;
+                let pts = if collapsed {
+                    vec![c + Vec2::new(-s * 0.6, -s), c + Vec2::new(s * 0.8, 0.0), c + Vec2::new(-s * 0.6, s)]
+                } else {
+                    vec![c + Vec2::new(-s, -s * 0.6), c + Vec2::new(s, -s * 0.6), c + Vec2::new(0.0, s * 0.8)]
+                };
+                painter.add(egui::Shape::convex_polygon(pts, Color32::from_gray(200), Stroke::NONE));
+                title_x = 18.0;
+            }
+            painter.text(header.left_center() + Vec2::new(title_x * self.zoom, 0.0), egui::Align2::LEFT_CENTER, &title, font.clone(), Color32::WHITE);
             if cached {
                 painter.text(header.right_center() - Vec2::new(6.0, 0.0), egui::Align2::RIGHT_CENTER, "cached", egui::FontId::proportional(10.0 * self.zoom), Color32::from_rgb(120, 200, 230));
             }
@@ -874,6 +933,18 @@ impl NodeEditor {
                 }
             }
             painter.rect_stroke(r, 5.0, outline, egui::StrokeKind::Inside);
+            if collapsed {
+                // Only connected sockets, on the header's edges.
+                let linked_in = !links_into(&p.graph, layer, n).is_empty();
+                let linked_out = all.iter().any(|m| links_into(&p.graph, layer, *m).iter().any(|(_, src, _)| *src == n));
+                if linked_in {
+                    painter.circle_filled(r.left_center(), 5.0 * self.zoom, Color32::from_gray(170));
+                }
+                if linked_out {
+                    painter.circle_filled(r.right_center(), 5.0 * self.zoom, Color32::from_gray(170));
+                }
+                continue;
+            }
             for (name, ty) in outputs(&p.graph, n) {
                 let pos = self.output_pos(&p.graph, origin, n, &name).unwrap();
                 painter.circle_filled(pos, 5.0 * self.zoom, type_color(ty));
@@ -887,6 +958,10 @@ impl NodeEditor {
                 painter.circle_filled(pos, 5.0 * self.zoom, c);
                 let text = if name == NEW_LAYER || name == NEW_EFFECT { Color32::from_gray(140) } else { Color32::LIGHT_GRAY };
                 painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), text);
+            }
+            if n != SINK {
+                // Drawn before the next node, so a node on top covers these.
+                self.node_params(ui, gpu, p, n, r, rect, &rects[k + 1..]);
             }
         }
 
@@ -903,6 +978,30 @@ impl NodeEditor {
                     }
                 } else if ctrl {
                     self.drag = Some(Drag::Cut { points: vec![ptr] });
+                }
+            }
+        }
+
+        // Presses on a parameter row select its node; the widget handles the rest.
+        if pressed && self.drag.is_none() && !menus_open {
+            let hit = pointer.and_then(|ptr| self.param_rects.iter().rev().find(|(_, r)| r.contains(ptr)).map(|(n, _)| *n));
+            if let Some(n) = hit {
+                pressed = false;
+                if !self.selected.contains(&n) {
+                    self.selected = BTreeSet::from([n]);
+                }
+                self.primary = Some(n);
+            }
+        }
+        // The collapse arrow in a node's header.
+        if pressed && resp.hovered() && self.drag.is_none() && !menus_open {
+            if let Some(ptr) = pointer {
+                let top = self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK);
+                if let Some(n) = top.filter(|n| self.arrow_rect(&p.graph, origin, *n).contains(ptr)) {
+                    pressed = false;
+                    p.checkpoint("Collapse nodes");
+                    let node = p.graph.node_mut(n);
+                    node.collapsed = !node.collapsed;
                 }
             }
         }
@@ -1039,14 +1138,25 @@ impl NodeEditor {
             }
         }
 
-        // Node Wrangler shortcuts.
-        if resp.hovered() && !menus_open && !ui.ctx().egui_wants_keyboard_input() {
+        // Keys apply over the canvas, including its parameter rows, but not while typing.
+        let over_params = pointer.is_some_and(|q| self.param_rects.iter().any(|(_, r)| r.contains(q)));
+        let keys = (resp.hovered() || over_params) && !menus_open && !ui.ctx().egui_wants_keyboard_input();
+        if keys {
             if let Some(op) = ui.input(Self::shortcut_op) {
-                self.apply(gpu, p, op);
+                self.apply(ui.ctx(), gpu, p, op);
             }
-            if ui.input(|i| i.modifiers.matches_exact(egui::Modifiers::SHIFT) && i.key_pressed(egui::Key::A)) {
+            let pasted = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Paste(text) => Some(text.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(nodes) = pasted.as_deref().and_then(wrangler::parse_clipboard) {
                 let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
-                self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
+                let ids = p.edit(gpu, "Paste nodes", |g| wrangler::paste(g, &nodes, [at.x, at.y]));
+                self.extra.extend(ids.iter().copied());
+                self.primary = ids.first().copied();
+                self.selected = ids.into_iter().collect();
             }
         }
         // Ctrl+Plus / Minus / 0 are merges here, not UI zoom.
@@ -1055,11 +1165,11 @@ impl NodeEditor {
 
         // Keyboard: Tab adds a node, Delete removes the selected nodes.
         let (tab, del) = ui.input(|i| (i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Delete)));
-        if resp.hovered() && tab && !menus_open {
+        if keys && tab {
             let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
             self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
         }
-        if resp.hovered() && del && !menus_open {
+        if keys && del {
             let root = p.graph.root;
             let doomed: Vec<NodeId> = self
                 .selected
@@ -1112,6 +1222,122 @@ impl NodeEditor {
         self.add_menu_ui(ui, gpu, p, origin);
         self.node_menu_ui(ui, gpu, p);
         self.lazy_menu_ui(ui, gpu, p);
+        self.param_popup_ui(ui, gpu, p);
+    }
+
+    /// A node's parameter rows: editable widgets, or text when zoomed out or covered by a node
+    /// drawn on top (`above`).
+    #[allow(clippy::too_many_arguments)]
+    fn node_params(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId, r: Rect, canvas: Rect, above: &[Rect]) {
+        let def = p.graph.node(n).def();
+        let first = outputs(&p.graph, n).len();
+        let z = self.zoom;
+        for (k, pd) in def.params.iter().enumerate() {
+            let top = r.top() + (HEADER + ROW * (first + k) as f32) * z;
+            let row = Rect::from_min_size(Pos2::new(r.left() + 8.0 * z, top + 1.0 * z), Vec2::new(NODE_W - 16.0, ROW - 2.0) * z);
+            if !canvas.intersects(row) {
+                continue;
+            }
+            if z < EDIT_ZOOM || above.iter().any(|o| o.intersects(row)) {
+                let text = format!("{}: {}", pretty(pd.name), value_text(&p.graph.node(n).param(pd.name)));
+                ui.painter_at(canvas).text(row.left_center(), egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.0 * z), Color32::from_gray(150));
+                continue;
+            }
+            self.param_rects.push((n, row));
+            let mut child = ui.new_child(
+                egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("node param", n, pd.name)),
+            );
+            child.set_clip_rect(row.intersect(canvas));
+            let s = child.style_mut();
+            for f in s.text_styles.values_mut() {
+                f.size *= z;
+            }
+            s.spacing.interact_size *= z;
+            s.spacing.item_spacing *= z;
+            s.spacing.button_padding *= z;
+            s.spacing.icon_width *= z;
+            s.spacing.icon_width_inner *= z;
+            s.spacing.icon_spacing *= z;
+            s.spacing.combo_width = row.width();
+            self.param_editor(&mut child, gpu, p, n, pd, row);
+        }
+    }
+
+    /// One parameter, edited in place. See docs/reference/node-editor.md "Parameters".
+    fn param_editor(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId, pd: &'static graph::ParamDef, row: Rect) {
+        use crate::ui_layers::{param_value, track};
+        let name = pd.name;
+        let label = pretty(name);
+        let v = p.graph.node(n).param(name);
+        let size = row.size();
+        match pd.kind {
+            graph::ParamKind::Float { min, max } => {
+                let mut x = v.as_f32();
+                let speed = ((max - min) * 0.002).max(0.001);
+                let r = ui.add_sized(size, egui::DragValue::new(&mut x).range(min..=max).speed(speed).prefix(format!("{label}: ")));
+                track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Float(x)));
+            }
+            graph::ParamKind::Int { min, max } => {
+                let mut x = v.as_f32() as i32;
+                let r = ui.add_sized(size, egui::DragValue::new(&mut x).range(min..=max).prefix(format!("{label}: ")));
+                track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Float(x as f32)));
+            }
+            graph::ParamKind::Bool => {
+                let mut b = v.as_bool();
+                let r = ui.checkbox(&mut b, label);
+                track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Bool(b)));
+            }
+            graph::ParamKind::Color | graph::ParamKind::Vec3 | graph::ParamKind::Image => {
+                ui.label(label);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| param_value(ui, gpu, p, n, pd, name));
+            }
+            graph::ParamKind::Enum(_) => param_value(ui, gpu, p, n, pd, name),
+            graph::ParamKind::Stops => {
+                let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+                if let Value::Stops(stops) = &v {
+                    let strips = 32;
+                    for i in 0..strips {
+                        let (a, b) = (i as f32 / strips as f32, (i + 1) as f32 / strips as f32);
+                        let c = ramp_color(stops, (a + b) * 0.5);
+                        let x = |t: f32| r.left() + t * r.width();
+                        let strip = Rect::from_x_y_ranges(x(a)..=x(b), r.y_range());
+                        ui.painter().rect_filled(strip, 0.0, Color32::from(egui::Rgba::from_rgb(c[0], c[1], c[2])));
+                    }
+                }
+                ui.painter().rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_gray(90)), egui::StrokeKind::Inside);
+                if resp.on_hover_text("Click to edit the stops").clicked() {
+                    self.param_popup = Some((n, name, r.left_bottom()));
+                }
+            }
+            graph::ParamKind::Colors => {
+                let selected = if let Value::Colors(c) = &v { c.len() } else { 0 };
+                let total = if p.maps.id_names.is_empty() { p.mesh.materials.len() } else { p.maps.id_names.len() };
+                if ui.add_sized(size, egui::Button::new(format!("{selected} of {total} IDs"))).clicked() {
+                    self.param_popup = Some((n, name, row.left_bottom()));
+                }
+            }
+        }
+    }
+
+    /// The ramp stop editor or ID list opened from a parameter row.
+    fn param_popup_ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
+        let Some((n, name, at)) = self.param_popup else { return };
+        if p.graph.get(n).is_none() {
+            self.param_popup = None;
+            return;
+        }
+        let area = egui::Area::new(egui::Id::new("node param popup")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(280.0);
+                if name == "stops" { self.stops_editor(ui, gpu, p, n) } else { id_editor(ui, gpu, p, n) }
+            });
+        });
+        // A click outside closes it, unless it lands in a color picker opened from it.
+        let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pt| !area.response.rect.contains(pt)));
+        let picker_open = egui::Popup::is_any_open(ui.ctx());
+        if (outside && !picker_open) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.param_popup = None;
+        }
     }
 
     fn shortcut_op(i: &egui::InputState) -> Option<Op> {
@@ -1121,6 +1347,10 @@ impl NodeEditor {
         // Ctrl+X arrives as a Cut event rather than a key press.
         if i.events.iter().any(|e| matches!(e, egui::Event::Cut)) || k(ctrl, Key::X) {
             return Some(Op::Dissolve);
+        }
+        // Likewise Ctrl+C arrives as Copy (Ctrl+V as Paste, handled with its text).
+        if i.events.iter().any(|e| matches!(e, egui::Event::Copy)) || k(ctrl, Key::C) {
+            return Some(Op::Copy);
         }
         let ops = [
             (ctrl, Key::Num0, Op::Merge(MergeOp::Mix)),
@@ -1133,8 +1363,12 @@ impl NodeEditor {
             (ctrl, Key::Period, Op::Merge(MergeOp::Max)),
             (M::ALT, Key::S, Op::Swap),
             (M::ALT, Key::X, Op::DeleteUnused),
-            (M::SHIFT, Key::D, Op::Duplicate),
+            (M::SHIFT, Key::W, Op::AlignEdges(Edge::Top)),
+            (M::SHIFT, Key::A, Op::AlignEdges(Edge::Left)),
+            (M::SHIFT, Key::S, Op::AlignEdges(Edge::Bottom)),
+            (M::SHIFT, Key::D, Op::AlignEdges(Edge::Right)),
             (M::SHIFT, Key::Equals, Op::Align),
+            (M::NONE, Key::H, Op::ToggleCollapse),
             (M::NONE, Key::Backspace, Op::Reset),
             (M::SHIFT, Key::C, Op::CopySettings),
             (M::NONE, Key::K, Op::LinkToSelected),
@@ -1148,7 +1382,7 @@ impl NodeEditor {
         self.selected.iter().copied().filter(|n| *n != SINK).collect()
     }
 
-    fn apply(&mut self, gpu: &Gpu, p: &mut Project, op: Op) {
+    fn apply(&mut self, ctx: &egui::Context, gpu: &Gpu, p: &mut Project, op: Op) {
         let layer = self.layer();
         let sel: Vec<NodeId> = self.selection().into_iter().filter(|n| p.graph.get(*n).is_some()).collect();
         match op {
@@ -1212,6 +1446,26 @@ impl NodeEditor {
                 if sel.len() > 1 {
                     p.checkpoint("Align nodes");
                     wrangler::align(&mut p.graph, &sel);
+                }
+            }
+            Op::AlignEdges(edge) => {
+                if sel.len() > 1 {
+                    p.checkpoint("Align nodes");
+                    wrangler::align_edges(&mut p.graph, &sel, edge);
+                }
+            }
+            Op::ToggleCollapse => {
+                if !sel.is_empty() {
+                    let all_collapsed = sel.iter().all(|n| p.graph.node(*n).collapsed);
+                    p.checkpoint(if all_collapsed { "Expand nodes" } else { "Collapse nodes" });
+                    for n in &sel {
+                        p.graph.node_mut(*n).collapsed = !all_collapsed;
+                    }
+                }
+            }
+            Op::Copy => {
+                if let Some(text) = wrangler::copy_nodes(&p.graph, &sel) {
+                    ctx.copy_text(text);
                 }
             }
             Op::Reset => {
@@ -1319,6 +1573,8 @@ impl NodeEditor {
                         }
                     };
                     item(ui, "Preview output", "Ctrl+Shift+Click", true, None);
+                    item(ui, "Collapse / expand", "H", true, Some(Op::ToggleCollapse));
+                    item(ui, "Copy", "Ctrl+C", true, Some(Op::Copy));
                     ui.separator();
                     ui.label(egui::RichText::new("Merge selected").small().weak());
                     for m in MergeOp::ALL {
@@ -1330,8 +1586,12 @@ impl NodeEditor {
                     item(ui, "Copy settings to selected", "Shift+C", n_sel > 1, Some(Op::CopySettings));
                     item(ui, "Reset to defaults", "Backspace", true, Some(Op::Reset));
                     ui.separator();
-                    item(ui, "Duplicate", "Shift+D", true, Some(Op::Duplicate));
-                    item(ui, "Align", "Shift+=", n_sel > 1, Some(Op::Align));
+                    item(ui, "Duplicate", "", true, Some(Op::Duplicate));
+                    item(ui, "Align in a row or column", "Shift+=", n_sel > 1, Some(Op::Align));
+                    item(ui, "Align top edges", "Shift+W", n_sel > 1, Some(Op::AlignEdges(Edge::Top)));
+                    item(ui, "Align left edges", "Shift+A", n_sel > 1, Some(Op::AlignEdges(Edge::Left)));
+                    item(ui, "Align bottom edges", "Shift+S", n_sel > 1, Some(Op::AlignEdges(Edge::Bottom)));
+                    item(ui, "Align right edges", "Shift+D", n_sel > 1, Some(Op::AlignEdges(Edge::Right)));
                     item(ui, "Dissolve (delete and reconnect)", "Ctrl+X", true, Some(Op::Dissolve));
                     item(ui, "Delete unused nodes", "Alt+X", true, Some(Op::DeleteUnused));
                 });
@@ -1350,7 +1610,7 @@ impl NodeEditor {
             self.cycle_preview(gpu, p, n);
         }
         if let Some(op) = chosen {
-            self.apply(gpu, p, op);
+            self.apply(ui.ctx(), gpu, p, op);
         }
         if close {
             self.node_menu = None;
@@ -1547,12 +1807,14 @@ impl NodeEditor {
             }
             return;
         }
-        ui.separator();
-        for pd in &def.params {
-            match pd.kind {
-                graph::ParamKind::Stops => self.stops_editor(ui, gpu, p, n),
-                graph::ParamKind::Colors => id_editor(ui, gpu, p, n),
-                _ => crate::ui_layers::param_widget(ui, gpu, p, n, pd, pd.name),
+        if !def.params.is_empty() {
+            ui.separator();
+            ui.label(egui::RichText::new("Parameters (edit them on the node; the pin exposes one on the layer)").weak().small());
+            for pd in &def.params {
+                ui.horizontal(|ui| {
+                    crate::ui_layers::expose_pin(ui, gpu, p, n, pd.name);
+                    ui.label(pretty(pd.name));
+                });
             }
         }
     }
@@ -1615,6 +1877,35 @@ pub fn id_editor(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId) {
     if new != colors {
         p.edit(gpu, "Select IDs", |g| g.set(n, "colors", Value::Colors(new)));
     }
+}
+
+/// A parameter's value as short text (zoomed-out or covered rows).
+fn value_text(v: &Value) -> String {
+    match v {
+        Value::Bool(b) => if *b { "on" } else { "off" }.into(),
+        Value::Float(f) => format!("{f:.3}").trim_end_matches('0').trim_end_matches('.').to_string(),
+        Value::Vec3(c) => format!("{:.2}, {:.2}, {:.2}", c[0], c[1], c[2]),
+        Value::Text(t) if t.is_empty() => "(none)".into(),
+        Value::Text(t) => t.clone(),
+        Value::Stops(s) => format!("{} stops", s.len()),
+        Value::Colors(c) => format!("{} IDs", c.len()),
+    }
+}
+
+/// The ramp's linear color at `t`, interpolating between stops sorted by position.
+fn ramp_color(stops: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
+    let Some(first) = stops.first() else { return [0.0; 3] };
+    if t <= first.0 {
+        return first.1;
+    }
+    for w in stops.windows(2) {
+        let ((a, ca), (b, cb)) = (w[0], w[1]);
+        if t <= b {
+            let f = if b > a { (t - a) / (b - a) } else { 1.0 };
+            return [0, 1, 2].map(|k| ca[k] + (cb[k] - ca[k]) * f);
+        }
+    }
+    stops.last().map(|s| s.1).unwrap_or([0.0; 3])
 }
 
 /// Screen position of canvas (0, 0) before panning. Anchored at the top-left corner, so the

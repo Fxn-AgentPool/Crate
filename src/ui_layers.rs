@@ -222,7 +222,7 @@ pub fn properties_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
 }
 
 /// Tracks whether a widget interaction should start a new undo step.
-fn track(p: &mut Project, gpu: &Gpu, resp: &egui::Response, label: &str, apply: impl FnOnce(&mut Graph)) {
+pub fn track(p: &mut Project, gpu: &Gpu, resp: &egui::Response, label: &str, apply: impl FnOnce(&mut Graph)) {
     if resp.drag_started() || (resp.changed() && !resp.dragged()) {
         p.checkpoint(label);
     }
@@ -430,21 +430,26 @@ fn pretty(name: &str) -> String {
 /// Label + value editor for one node parameter, with an Expose toggle.
 pub fn param_widget(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, def: &ParamDef, label: &str) {
     ui.horizontal(|ui| {
-        let exposed = p.graph.node(node).exposed.contains(def.name);
-        let pin = ui
-            .add(egui::Button::new(RichText::new("•").color(if exposed { Color32::from_rgb(240, 190, 60) } else { Color32::from_gray(80) })).small().frame(false))
-            .on_hover_text(if exposed { "Exposed on the layer. Click to unexpose." } else { "Expose on the layer" });
-        if pin.clicked() {
-            p.edit(gpu, "Expose parameter", |g| {
-                let e = &mut g.node_mut(node).exposed;
-                if !e.remove(def.name) {
-                    e.insert(def.name.to_string());
-                }
-            });
-        }
+        expose_pin(ui, gpu, p, node, def.name);
         ui.label(pretty(label));
         param_value(ui, gpu, p, node, def, label);
     });
+}
+
+/// Toggles whether a node parameter is exposed on its layer.
+pub fn expose_pin(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, name: &str) {
+    let exposed = p.graph.node(node).exposed.contains(name);
+    let pin = ui
+        .add(egui::Button::new(RichText::new("•").color(if exposed { Color32::from_rgb(240, 190, 60) } else { Color32::from_gray(80) })).small().frame(false))
+        .on_hover_text(if exposed { "Exposed on the layer. Click to unexpose." } else { "Expose on the layer" });
+    if pin.clicked() {
+        p.edit(gpu, "Expose parameter", |g| {
+            let e = &mut g.node_mut(node).exposed;
+            if !e.remove(name) {
+                e.insert(name.to_string());
+            }
+        });
+    }
 }
 
 /// Value editor for one parameter.

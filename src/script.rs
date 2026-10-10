@@ -728,6 +728,13 @@ impl Session {
                 let p = self.project.as_mut().context("no project")?;
                 p.edit(&gpu, "cached", |g| g.node_mut(id).cached = on);
             }
+            "node-collapse" => {
+                let id = self.var(rest.first().context("node-collapse <var> on|off")?)?;
+                let on = rest.get(1).map(|s| s == "on").unwrap_or(true);
+                let p = self.project.as_mut().context("no project")?;
+                p.checkpoint("Collapse nodes");
+                p.graph.node_mut(id).collapsed = on;
+            }
             "layer-content" | "layer-mask" => {
                 let id = self.var(rest.first().context("layer-content <var>")?)?;
                 let p = self.project.as_mut().context("no project")?;

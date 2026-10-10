@@ -57,7 +57,7 @@ parameter selects its node and makes it the active node, but doesn't move the no
 box selection.
 
 Parameters scale with the zoom. Below 50 % zoom they show their values only and can't be
-edited; zoom in to edit them.
+edited; zoom in to edit them. Rows partly covered by another node show their values only too.
 
 ### Collapsing
 
@@ -200,8 +200,9 @@ nodes can be copied between layers, projects and Crate windows. Pasted nodes:
 
 - keep their parameters, label, **Cached** setting and collapsed state;
 - keep the links between pasted nodes; links from nodes that weren't copied are dropped;
-- keep their Stack layers and Mask Stack effects, but a layer's content or mask, or an effect's
-  source, is kept only if that node was copied too;
+- keep their Stack layers, but a layer's content or mask is kept only if that node was copied
+  too;
+- keep their Mask Stack effects whose source node was copied too; other effects are dropped;
 - are placed with the copied group's top-left corner at the pointer, selected, and stay visible
   until connected.
 

@@ -26,6 +26,10 @@ check "new saved the project" test -f "$OUT/Crate.crate/project.json"
 check "run -c" bash -c "'$P' run --project $OUT/Crate.crate --save -c 'add-fill; rename \"Base coat\"; set base_color=#2A4C7D' --json > $OUT/run.json"
 check "run added the layer" grep -q '"name":"Base coat"' "$OUT/run.json"
 
+# collapsed nodes survive save, open and save again
+check "collapsed node saved" bash -c "'$P' run --project $OUT/Crate.crate -c 'add-fill; node nz noise; layer-mask nz; node-collapse nz on; save $OUT/Collapsed.crate' > /dev/null && grep -q '\"collapsed\": *true' $OUT/Collapsed.crate/project.json"
+check "collapsed node reloaded" bash -c "'$P' run -c 'open $OUT/Collapsed.crate; save $OUT/Collapsed2.crate' > /dev/null && grep -q '\"collapsed\": *true' $OUT/Collapsed2.crate/project.json"
+
 # run from stdin
 check "run from stdin" bash -c "printf 'open $OUT/Crate.crate\ninfo\n' | '$P' run - --json | grep -q '\"ok\":true'"
 

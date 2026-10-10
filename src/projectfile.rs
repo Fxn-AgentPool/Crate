@@ -74,6 +74,8 @@ struct NodeFile {
     mask_slots: Vec<MaskSlot>,
     #[serde(default)]
     pos: [f32; 2],
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    collapsed: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -165,6 +167,7 @@ fn graph_to_file(g: &Graph) -> GraphFile {
                 slots: n.slots.iter().map(slot_to_json).collect(),
                 mask_slots,
                 pos: n.pos,
+                collapsed: n.collapsed,
             }
         })
         .collect();
@@ -192,6 +195,7 @@ fn graph_from_file(f: GraphFile, root: &str) -> Result<Graph> {
                 slots,
                 mask_slots: nf.mask_slots,
                 pos: nf.pos,
+                collapsed: nf.collapsed,
             },
         );
         g.next_id = g.next_id.max(id + 1);

@@ -251,6 +251,9 @@ pub struct Node {
     /// Node Editor position.
     #[serde(default)]
     pub pos: [f32; 2],
+    /// Collapsed to its header in the Node Editor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
 }
 
 impl Node {
@@ -311,6 +314,7 @@ impl Graph {
                 slots: Vec::new(),
                 mask_slots: Vec::new(),
                 pos: [0.0, 0.0],
+                collapsed: false,
             },
         );
         id

@@ -1,11 +1,14 @@
 //! Node Wrangler-style graph operations (after Blender's add-on): merge, lazy connect, swap,
-//! dissolve, duplicate, align, reset, copy settings. Each works on the graph only; the editor
-//! wraps them in an undo step and recompiles.
+//! dissolve, duplicate, align, reset, copy settings; plus Unreal-style edge alignment and
+//! copy/paste through the clipboard. Each works on the graph only; the editor wraps them in an
+//! undo step and recompiles.
 
 use std::collections::BTreeMap;
 
-use super::{HEADER, NEW_LAYER, NODE_W, ROW, SINK, SocketRef, compatible, connect, inputs, links_into, outputs};
-use crate::graph::{self, Graph, NodeId, SocketType, Value};
+use serde::{Deserialize, Serialize};
+
+use super::{NEW_LAYER, NODE_W, SINK, SocketRef, compatible, connect, inputs, links_into, node_height, outputs};
+use crate::graph::{self, Graph, MaskSource, Node, NodeId, SocketType, Value};
 use crate::ops::LayerRef;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +78,7 @@ impl MergeOp {
 }
 
 fn height(g: &Graph, n: NodeId) -> f32 {
-    HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0
+    node_height(g, n)
 }
 
 fn out_type(g: &Graph, n: NodeId, output: &str) -> SocketType {
@@ -318,6 +321,112 @@ pub fn align(g: &mut Graph, nodes: &[NodeId]) {
     }
 }
 
+/// Which edges Shift+W / A / S / D line up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge {
+    Top,
+    Left,
+    Bottom,
+    Right,
+}
+
+/// Moves the nodes so the given edges line up with the outermost one; only that coordinate
+/// changes. See docs/reference/node-editor.md "Other operations".
+pub fn align_edges(g: &mut Graph, nodes: &[NodeId], edge: Edge) {
+    let nodes: Vec<NodeId> = nodes.iter().copied().filter(|n| *n != SINK).collect();
+    if nodes.len() < 2 {
+        return;
+    }
+    let pos = |g: &Graph, n: NodeId| g.node(n).pos;
+    let target = match edge {
+        Edge::Top => nodes.iter().map(|n| pos(g, *n)[1]).fold(f32::MAX, f32::min),
+        Edge::Left => nodes.iter().map(|n| pos(g, *n)[0]).fold(f32::MAX, f32::min),
+        Edge::Bottom => nodes.iter().map(|n| pos(g, *n)[1] + height(g, *n)).fold(f32::MIN, f32::max),
+        Edge::Right => nodes.iter().map(|n| pos(g, *n)[0] + NODE_W).fold(f32::MIN, f32::max),
+    };
+    for n in nodes {
+        let h = height(g, n);
+        let p = &mut g.node_mut(n).pos;
+        match edge {
+            Edge::Top => p[1] = target,
+            Edge::Left => p[0] = target,
+            Edge::Bottom => p[1] = target - h,
+            Edge::Right => p[0] = target - NODE_W,
+        }
+    }
+}
+
+const CLIPBOARD_FORMAT: &str = "crate-nodes";
+
+/// Copied nodes, as text on the system clipboard.
+#[derive(Serialize, Deserialize)]
+struct Clipboard {
+    format: String,
+    version: u32,
+    nodes: Vec<Node>,
+}
+
+/// The selected nodes as clipboard text; None if nothing can be copied (the Material Output,
+/// the root Stack and the Layer node never are).
+pub fn copy_nodes(g: &Graph, nodes: &[NodeId]) -> Option<String> {
+    let nodes: Vec<Node> = nodes
+        .iter()
+        .filter(|n| **n != SINK && **n != g.root)
+        .filter_map(|n| g.get(*n))
+        .filter(|n| n.ty != "material_output")
+        .cloned()
+        .collect();
+    if nodes.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&Clipboard { format: CLIPBOARD_FORMAT.into(), version: 1, nodes }).ok()
+}
+
+/// Nodes from clipboard text, or None when it isn't copied nodes (or names unknown types).
+pub fn parse_clipboard(text: &str) -> Option<Vec<Node>> {
+    let c: Clipboard = serde_json::from_str(text.trim()).ok()?;
+    let known = c.nodes.iter().all(|n| graph::def(&n.ty).is_some());
+    (c.format == CLIPBOARD_FORMAT && c.version == 1 && known && !c.nodes.is_empty()).then_some(c.nodes)
+}
+
+/// Adds copies of `nodes` with their top-left corner at `at`. Links, layer contents and masks
+/// are kept only between pasted nodes; mask effects whose source wasn't pasted are dropped.
+/// Paint isn't copied. Returns the new nodes.
+pub fn paste(g: &mut Graph, nodes: &[Node], at: [f32; 2]) -> Vec<NodeId> {
+    let min = [0, 1].map(|k| nodes.iter().map(|n| n.pos[k]).fold(f32::MAX, f32::min));
+    let map: BTreeMap<NodeId, NodeId> = nodes.iter().map(|n| (n.id, g.add(&n.ty))).collect();
+    for src in nodes {
+        let node = g.node_mut(map[&src.id]);
+        node.label = src.label.clone();
+        node.params = src.params.clone();
+        node.cached = src.cached;
+        node.collapsed = src.collapsed;
+        node.pos = [at[0] + src.pos[0] - min[0], at[1] + src.pos[1] - min[1]];
+        node.inputs = src
+            .inputs
+            .iter()
+            .filter_map(|(i, l)| Some((i.clone(), graph::Link { node: *map.get(&l.node)?, output: l.output.clone() })))
+            .collect();
+        node.slots = src.slots.clone();
+        for s in &mut node.slots {
+            s.content = s.content.and_then(|c| map.get(&c).copied());
+            s.mask = s.mask.and_then(|m| map.get(&m).copied());
+        }
+        node.mask_slots = src
+            .mask_slots
+            .iter()
+            .filter_map(|m| {
+                let mut m = m.clone();
+                if let MaskSource::Node(s) = m.source {
+                    m.source = MaskSource::Node(*map.get(&s)?);
+                }
+                Some(m)
+            })
+            .collect();
+    }
+    nodes.iter().map(|n| map[&n.id]).collect()
+}
+
 /// Resets parameters to their defaults.
 pub fn reset(g: &mut Graph, n: NodeId) {
     if n == SINK {
@@ -355,6 +464,73 @@ pub fn link_to_selected(g: &mut Graph, layer: Option<LayerRef>, active: NodeId, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn align_edges_moves_one_coordinate() {
+        let mut g = Graph::new();
+        let (a, b) = (g.add("noise"), g.add("levels"));
+        g.node_mut(a).pos = [0.0, 50.0];
+        g.node_mut(b).pos = [300.0, 10.0];
+        align_edges(&mut g, &[a, b], Edge::Top);
+        assert_eq!((g.node(a).pos, g.node(b).pos), ([0.0, 10.0], [300.0, 10.0]));
+        align_edges(&mut g, &[a, b], Edge::Right);
+        assert_eq!((g.node(a).pos[0], g.node(b).pos[0]), (300.0, 300.0));
+        align_edges(&mut g, &[a, b], Edge::Bottom);
+        let bottom = |g: &Graph, n| g.node(n).pos[1] + height(g, n);
+        assert_eq!(bottom(&g, a), bottom(&g, b));
+        assert_ne!(height(&g, a), height(&g, b), "different heights, so tops differ");
+        // A collapsed node is only as tall as its header.
+        g.node_mut(b).collapsed = true;
+        align_edges(&mut g, &[a, b], Edge::Bottom);
+        assert_eq!(bottom(&g, a), bottom(&g, b));
+        align_edges(&mut g, &[a, b, SINK], Edge::Left);
+        assert_eq!((g.node(a).pos[0], g.node(b).pos[0]), (300.0, 300.0));
+    }
+
+    #[test]
+    fn copy_and_paste_keeps_internal_links_only() {
+        let mut g = Graph::new();
+        let (n, lv, r) = (g.add("noise"), g.add("levels"), g.add("ramp"));
+        g.connect(n, "out", lv, "in");
+        g.connect(lv, "float", r, "in");
+        g.set(lv, "gamma", Value::Float(2.0));
+        g.node_mut(lv).collapsed = true;
+        g.node_mut(lv).pos = [100.0, 40.0];
+        g.node_mut(r).pos = [300.0, 60.0];
+        let text = copy_nodes(&g, &[lv, r]).unwrap();
+        let nodes = parse_clipboard(&text).unwrap();
+        let mut h = Graph::new();
+        let pasted = paste(&mut h, &nodes, [0.0, 0.0]);
+        let (lv2, r2) = (pasted[0], pasted[1]);
+        assert_eq!(h.node(lv2).params["gamma"], Value::Float(2.0));
+        assert!(h.node(lv2).collapsed);
+        assert!(h.node(lv2).inputs.is_empty(), "the Noise wasn't copied");
+        assert_eq!(link(&h, r2, "in"), Some((lv2, "float".into())));
+        assert_eq!((h.node(lv2).pos, h.node(r2).pos), ([0.0, 0.0], [200.0, 20.0]));
+    }
+
+    #[test]
+    fn paste_drops_outside_layers_and_effects() {
+        let mut g = Graph::new();
+        let (fill, mask, ms, st) = (g.add("fill"), g.add("noise"), g.add("mask_stack"), g.add("stack"));
+        g.node_mut(ms).mask_slots.push(graph::MaskSlot { name: "n".into(), visible: true, opacity: 1.0, mode: graph::BlendMode::Normal, source: MaskSource::Node(mask) });
+        g.node_mut(st).slots.push(graph::Slot { mask: Some(ms), ..graph::Slot::new("Layer", fill) });
+        let nodes = parse_clipboard(&copy_nodes(&g, &[ms, st]).unwrap()).unwrap();
+        let pasted = paste(&mut g, &nodes, [0.0, 0.0]);
+        let (ms2, st2) = (pasted[0], pasted[1]);
+        assert!(g.node(ms2).mask_slots.is_empty());
+        assert_eq!((g.node(st2).slots[0].content, g.node(st2).slots[0].mask), (None, Some(ms2)));
+    }
+
+    #[test]
+    fn clipboard_rejects_other_text() {
+        assert!(parse_clipboard("hello").is_none());
+        assert!(parse_clipboard(r#"{"format":"crate-nodes","version":1,"nodes":[]}"#).is_none());
+        assert!(parse_clipboard(r#"{"format":"other","version":1,"nodes":[{"id":1,"type":"noise"}]}"#).is_none());
+        assert!(parse_clipboard(r#"{"format":"crate-nodes","version":1,"nodes":[{"id":1,"type":"nope"}]}"#).is_none());
+        let g = Graph::new();
+        assert!(copy_nodes(&g, &[g.root, SINK]).is_none());
+    }
 
     fn link(g: &Graph, n: NodeId, input: &str) -> Option<(NodeId, String)> {
         g.node(n).inputs.get(input).map(|l| (l.node, l.output.clone()))
