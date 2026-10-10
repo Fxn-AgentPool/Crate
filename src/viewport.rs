@@ -15,7 +15,6 @@ pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub const MSAA: u32 = 4;
 
 const VIEWPORT_WGSL: &str = include_str!("shaders/viewport.wgsl");
-const BAKE_PREVIEW_WGSL: &str = include_str!("shaders/bake_preview.wgsl");
 const TONEMAP_WGSL: &str = include_str!("shaders/tonemap.wgsl");
 const AGX_FIT_WGSL: &str = include_str!("shaders/agx_fit.wgsl");
 const VIEW_TRANSFORM_WGSL: &str = include_str!("shaders/view_transform.wgsl");
@@ -218,62 +217,6 @@ pub struct Viewport {
     tile_map: Option<wgpu::Buffer>,
     lut_aces13: wgpu::TextureView,
     lut_aces20: wgpu::TextureView,
-    preview: PreviewPipelines,
-}
-
-/// Bake preview: high poly, cage surface and cage edges (shaders/bake_preview.wgsl).
-struct PreviewPipelines {
-    high: wgpu::RenderPipeline,
-    cage: wgpu::RenderPipeline,
-    line: wgpu::RenderPipeline,
-}
-
-impl PreviewPipelines {
-    fn new(gpu: &Gpu, frame_layout: &wgpu::BindGroupLayout) -> Self {
-        let d = &gpu.device;
-        let module = gpu::shader(d, "bake preview", BAKE_PREVIEW_WGSL);
-        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bake preview"),
-            bind_group_layouts: &[Some(frame_layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |label, vs, fs, topology, depth_write, blend| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some(vs),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(crate::bakepreview::vertex_layout())],
-                },
-                primitive: wgpu::PrimitiveState { topology, cull_mode: None, ..Default::default() },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format: HDR_FORMAT, blend, write_mask: wgpu::ColorWrites::ALL })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let tri = wgpu::PrimitiveTopology::TriangleList;
-        let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-        Self {
-            high: pipeline("bake preview high", "vs_main", "fs_high", tri, true, None),
-            cage: pipeline("bake preview cage", "vs_main", "fs_cage", tri, false, blend),
-            line: pipeline("bake preview cage edges", "vs_line", "fs_line", wgpu::PrimitiveTopology::LineList, false, blend),
-        }
-    }
 }
 
 pub const DEFAULT_MATERIAL_WGSL: &str = r#"
@@ -353,9 +296,7 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
-        let preview = PreviewPipelines::new(gpu, &frame_layout);
         Self {
-            preview,
             frame_buffer: d.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("frame uniform"),
                 size: std::mem::size_of::<FrameUniform>() as u64,
@@ -523,18 +464,9 @@ impl Viewport {
                 module: &module,
                 entry_point: Some("fs_line"),
                 compilation_options: Default::default(),
-                // Alpha (coverage, see tonemap.wgsl) is left alone: the wireframe only draws
-                // over the mesh, never over the background.
                 targets: &[Some(wgpu::ColorTargetState {
                     format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendState::ALPHA_BLENDING.color,
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -603,7 +535,6 @@ impl Viewport {
         gpu_mesh: &GpuMesh,
         scene_bind: &wgpu::BindGroup,
         view: &ViewSettings,
-        preview: Option<&crate::bakepreview::Preview>,
         width: u32,
         height: u32,
     ) {
@@ -646,9 +577,8 @@ impl Viewport {
                     view: &targets.hdr_msaa,
                     depth_slice: None,
                     resolve_target: Some(&targets.hdr),
-                    // Alpha is coverage, for the translucent cage (tonemap.wgsl).
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -667,36 +597,14 @@ impl Viewport {
             if let Some(frame_bind) = &self.frame_bind {
                 pass.set_bind_group(0, frame_bind, &[]);
                 pass.set_bind_group(1, scene_bind, &[]);
-                let parts = preview.map(|p| p.parts).unwrap_or_default();
-                if parts.low {
-                    pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-                    pass.set_pipeline(self.mesh_pipeline.as_ref().unwrap());
-                    pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-                    if view.wireframe {
-                        pass.set_pipeline(self.line_pipeline.as_ref().unwrap());
-                        pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
-                    }
-                }
-                if let Some(p) = preview {
-                    if let (true, Some(high)) = (parts.high, &p.high) {
-                        pass.set_pipeline(&self.preview.high);
-                        pass.set_vertex_buffer(0, high.vertices.slice(..));
-                        pass.set_index_buffer(high.indices.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..high.index_count, 0, 0..1);
-                    }
-                    // Translucent, after everything opaque. The cage has the low poly's vertex
-                    // order, so the low poly's index and edge buffers draw it.
-                    if let (true, Some(cage)) = (parts.cage, &p.cage) {
-                        pass.set_vertex_buffer(0, cage.slice(..));
-                        pass.set_pipeline(&self.preview.cage);
-                        pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-                        pass.set_pipeline(&self.preview.line);
-                        pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
-                    }
+                pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+                pass.set_pipeline(self.mesh_pipeline.as_ref().unwrap());
+                pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+                if view.wireframe {
+                    pass.set_pipeline(self.line_pipeline.as_ref().unwrap());
+                    pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
                 }
             }
         }

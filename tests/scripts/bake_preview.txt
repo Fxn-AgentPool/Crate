@@ -1,46 +1,61 @@
-# Bake preview (docs/reference/mesh-maps.md#bake-preview): the low poly, the high poly and the
-# outer cage in renders. The plane hp_low.obj, the sine wave hp_high.obj (tests/data).
+# Bake preview (docs/reference/mesh-maps.md#bake-preview): the low poly (blue), high poly (white)
+# and outer cage (red) in their own see-through view. The plane hp_low.obj, the sine wave
+# hp_high.obj (tests/data).
 
 new tests/data/hp_low.obj 1024
 size 512x384
 camera 30 20 1.2
-render target/tests/bake_preview/low.png
+render target/tests/bake_preview/viewport.png
 
 # Without a high poly, the high poly and the cage can't be shown.
-bake-preview low
-render target/tests/bake_preview/low_only.png
-expect-same target/tests/bake_preview/low.png target/tests/bake_preview/low_only.png 0
+bake-preview high=off cage=off
+render-bake-preview target/tests/bake_preview/low.png
+bake-preview cage=on
+expect-error render-bake-preview target/tests/bake_preview/none.png
 
 high-poly tests/data/hp_high.obj
-bake-preview high
-render target/tests/bake_preview/high.png
+bake-preview low=off high=on cage=off
+render-bake-preview target/tests/bake_preview/high.png
 expect-different target/tests/bake_preview/low.png target/tests/bake_preview/high.png 40
-bake-preview low,high
-render target/tests/bake_preview/low_high.png
-expect-different target/tests/bake_preview/high.png target/tests/bake_preview/low_high.png 40
 
-# The cage follows Frontal distance without reloading, and the auto cage replaces it.
+# Opacity: more opaque is brighter over the dark background.
+bake-preview high=1
+render-bake-preview target/tests/bake_preview/high_opaque.png
+expect-different target/tests/bake_preview/high.png target/tests/bake_preview/high_opaque.png 30
+
+# All three at the default opacities. The cage follows Frontal distance without reloading, and
+# the auto cage replaces it.
+bake-preview low=0.5 high=0.5 cage=0.3
 bake-settings frontal=0.01
-bake-preview low,high,cage
-render target/tests/bake_preview/cage_small.png
-expect-different target/tests/bake_preview/low_high.png target/tests/bake_preview/cage_small.png 20
+render-bake-preview target/tests/bake_preview/cage_small.png
 bake-settings frontal=0.08
-render target/tests/bake_preview/cage_large.png
+render-bake-preview target/tests/bake_preview/cage_large.png
 expect-different target/tests/bake_preview/cage_small.png target/tests/bake_preview/cage_large.png 20
 bake-settings auto_cage=on
-render target/tests/bake_preview/cage_auto.png
+render-bake-preview target/tests/bake_preview/cage_auto.png
 expect-different target/tests/bake_preview/cage_large.png target/tests/bake_preview/cage_auto.png 20
 # Frontal distance doesn't matter with auto cage on.
 bake-settings frontal=0.01
-render target/tests/bake_preview/cage_auto2.png
+render-bake-preview target/tests/bake_preview/cage_auto2.png
 expect-same target/tests/bake_preview/cage_auto.png target/tests/bake_preview/cage_auto2.png 0
 
-# The cage alone, over the background.
-bake-preview cage
-render target/tests/bake_preview/cage_only.png
-expect-different target/tests/bake_preview/cage_auto.png target/tests/bake_preview/cage_only.png 20
+# Layering is by distance, not by list order: with both opaque, the cage (listed last) covers
+# the low poly from above, where it's nearer, and the low poly covers the cage from below.
+# Expected: the part's color lit at sin(80°) facing, sRGB-encoded.
+bake-settings auto_cage=off frontal=0.05
+bake-preview low=1 high=off cage=1
+camera 0 80
+render-bake-preview target/tests/bake_preview/order_above.png
+expect-color target/tests/bake_preview/order_above.png 254,79,63 3
+camera 0 -80
+render-bake-preview target/tests/bake_preview/order_below.png
+expect-color target/tests/bake_preview/order_below.png 79,148,254 3
+camera 30 20 1.2
 
-# Off shows the low poly as before.
-bake-preview off
-render target/tests/bake_preview/off.png
-expect-same target/tests/bake_preview/low.png target/tests/bake_preview/off.png 0
+# The viewport is not affected by the preview.
+render target/tests/bake_preview/viewport_after.png
+expect-same target/tests/bake_preview/viewport.png target/tests/bake_preview/viewport_after.png 0
+
+# Bad arguments.
+expect-error bake-preview cage=2
+expect-error bake-preview mid=on

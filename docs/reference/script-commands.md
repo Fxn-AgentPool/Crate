@@ -153,6 +153,7 @@ For tests; each fails the script when its condition does not hold.
 | `expect-same <a.png> <b.png> [tolerance]` | The images differ by at most `tolerance` per channel (default 2). |
 | `expect-different <a.png> <b.png> [minimum]` | The images differ by at least `minimum` somewhere (default 20). |
 | `expect-color <file.png> <r,g,b> [tolerance]` | The image's center pixel has these 8-bit values, within `tolerance` per channel (default 2). |
+| `expect-error <command...>` | The command fails. |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
 | `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |
 | `expect-library <folder> <name>...` | The Library lists exactly these items, in this order, for that library folder (e.g. `environments`). |

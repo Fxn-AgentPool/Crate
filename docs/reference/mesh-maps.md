@@ -146,8 +146,9 @@ see-through and drawn without wireframes:
   insides don't show.
 - Where parts overlap, they're layered by distance at each pixel: a nearer part covers the
   parts behind it by its opacity, whatever the order of the list.
-- Surfaces are lit from the camera, and are more opaque where they're seen at a grazing angle,
-  so outlines stay visible.
+- Surfaces are lit from the camera. The opacity applies where a surface faces the camera; seen
+  at a grazing angle, it is up to twice as opaque, so outlines stay visible. At opacity 1 a part
+  is opaque.
 
 **Navigation**, with the pointer over the pane:
 

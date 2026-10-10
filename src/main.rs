@@ -1,5 +1,6 @@
 mod app;
 mod bakepreview;
+mod bakeview;
 mod bvh;
 mod cache;
 mod cage;
@@ -28,6 +29,7 @@ mod script;
 mod stencil;
 mod thumbs;
 mod ui_library;
+mod ui_bake_preview;
 mod ui_export;
 mod ui_graph;
 mod ui_layer_list;

@@ -38,6 +38,7 @@ pub struct CrateApp {
     new_project: Option<NewProjectDialog>,
     show_import_log: bool,
     show_mesh_maps: bool,
+    bake_pane: crate::ui_bake_preview::BakePane,
     /// Diagnostics of an import that failed, shown in the Import Log.
     failed_import_log: Option<Vec<Diagnostic>>,
     /// Maps checked in the Mesh Maps window.
@@ -98,6 +99,7 @@ impl CrateApp {
             viewport_texture: None,
             doc: None,
             camera: Camera::default(),
+            bake_pane: crate::ui_bake_preview::BakePane::new(),
             view: ViewSettings::default(),
             new_project: None,
             show_import_log: false,
@@ -245,10 +247,11 @@ impl eframe::App for CrateApp {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
             }
-            doc.update_preview(&self.gpu);
-            if doc.maps.preview.loading() {
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            // The preview pane is part of the Mesh Maps window.
+            if !self.show_mesh_maps {
+                doc.maps.preview.open = false;
             }
+            doc.update_preview(&self.gpu);
             match doc.maps.report.take() {
                 Some(Ok(msg)) => self.message = Some((msg, ui.input(|i| i.time))),
                 Some(Err(e)) => self.error = Some(e),
@@ -744,7 +747,6 @@ impl CrateApp {
             &doc.gpu_mesh,
             doc.scene.bind_group.as_ref().unwrap(),
             &self.view,
-            Some(&doc.maps.preview),
             w,
             h,
         );
@@ -1193,7 +1195,15 @@ impl CrateApp {
 
         if self.show_mesh_maps {
             let mut open = true;
-            egui::Window::new("Mesh Maps").open(&mut open).show(ctx, |ui| self.mesh_maps_ui(ui));
+            egui::Window::new("Mesh Maps").open(&mut open).show(ctx, |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| self.mesh_maps_ui(ui));
+                    if let Some(doc) = self.doc.as_mut().filter(|d| d.maps.preview.open) {
+                        ui.separator();
+                        ui.vertical(|ui| self.bake_pane.ui(ui, &self.gpu, &self.renderer, doc));
+                    }
+                });
+            });
             self.show_mesh_maps = open;
         }
     }
@@ -1349,23 +1359,13 @@ impl CrateApp {
                 ui.label("Apply Normal map");
                 ui.checkbox(&mut s.apply_normal, "");
                 ui.end_row();
-                ui.label("Preview");
-                let has_high = doc.maps.high_poly.is_some();
-                let p = &mut doc.maps.preview.parts;
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut p.low, "Low poly");
-                    ui.add_enabled(has_high, egui::Checkbox::new(&mut p.high, "High poly"))
-                        .on_disabled_hover_text("Needs a high-poly mesh.");
-                    ui.add_enabled(has_high, egui::Checkbox::new(&mut p.cage, "Cage"))
-                        .on_hover_text("The outer cage: where the rays start")
-                        .on_disabled_hover_text("Needs a high-poly mesh.");
-                });
-                ui.end_row();
             });
-            if doc.maps.preview.loading() {
-                ui.label("Loading preview…");
-            } else if let Some(e) = doc.maps.preview.error() {
-                ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+            let preview = &mut doc.maps.preview;
+            if ui.toggle_value(&mut preview.open, "Show preview").on_hover_text("Low poly, high poly and cage in their own view").changed()
+                && preview.open
+            {
+                // The pane starts at the viewport's view.
+                self.bake_pane.camera = self.camera;
             }
             if (doc.maps.settings, doc.maps.high_poly.clone()) != before {
                 if doc.maps.high_poly != before.1 {

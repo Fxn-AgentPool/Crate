@@ -74,6 +74,8 @@ pub struct Session {
     pub gpu: Gpu,
     pub project: Option<Project>,
     pub viewport: Option<Viewport>,
+    /// Renders the bake preview (`render-bake-preview`), created on first use.
+    pub bake_view: Option<crate::bakeview::BakeView>,
     pub camera: Camera,
     pub view: ViewSettings,
     pub base_dir: PathBuf,
@@ -102,6 +104,7 @@ impl Session {
             gpu,
             project: None,
             viewport: None,
+            bake_view: None,
             camera: Camera::default(),
             view: ViewSettings::default(),
             base_dir,
@@ -240,20 +243,17 @@ impl Session {
                 p.maps.refresh_status();
             }
             "bake-preview" => {
-                let parts = crate::bakepreview::Parts::parse(rest.first().context("bake-preview low,high,cage | off")?)?;
+                anyhow::ensure!(!rest.is_empty(), "bake-preview low|high|cage=on|off|<opacity>...");
                 let p = self.project()?;
-                if parts.needs_high() && p.maps.high_poly.is_none() {
-                    bail!("the bake preview's high poly and cage need a high-poly mesh (high-poly <mesh>)");
+                for arg in rest {
+                    p.maps.preview.parts.set(arg)?;
                 }
-                p.maps.preview.parts = parts;
-                p.update_preview(&gpu);
-                while p.maps.preview.loading() {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                    p.update_preview(&gpu);
-                }
-                if let Some(e) = p.maps.preview.error() {
-                    bail!("{e}");
-                }
+            }
+            "render-bake-preview" => {
+                let out = self.path(rest.first().context("render-bake-preview <out.png>")?);
+                self.render_bake_preview(&out)?;
+                say!("  wrote {}", out.display());
+                report(|r| r.files.push(norm(&out)));
             }
             "bake-settings" => {
                 let p = self.project()?;
@@ -855,6 +855,15 @@ impl Session {
                 let got: Vec<String> = crate::library::scan(folder).into_iter().map(|it| it.name).collect();
                 anyhow::ensure!(got == rest[1..], "library folder {folder} lists {got:?}");
             }
+            "expect-error" => {
+                // expect-error <command...>: the command must fail.
+                anyhow::ensure!(!rest.is_empty(), "expect-error <command...>");
+                let line = rest.iter().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() }).collect::<Vec<_>>().join(" ");
+                match self.run(&line) {
+                    Ok(()) => bail!("expected {line:?} to fail, but it succeeded"),
+                    Err(e) => say!("  failed as expected: {e:#}"),
+                }
+            }
             "expect-color" => {
                 // expect-color <file.png> <r,g,b> [tolerance]: the center pixel, 8-bit sRGB values.
                 let usage = "expect-color <file.png> <r,g,b> [tolerance]";
@@ -922,17 +931,38 @@ impl Session {
         self.vars.get(name).copied().with_context(|| format!("unknown node variable {name}"))
     }
 
-    pub fn render(&mut self, out: &Path) -> Result<()> {
+    /// Renders the bake preview pane's view (docs/reference/mesh-maps.md#bake-preview).
+    pub fn render_bake_preview(&mut self, out: &Path) -> Result<()> {
         let gpu = self.gpu.clone();
         let p = self.project.as_mut().context("no project")?;
+        if p.maps.preview.parts.needs_high() && p.maps.high_poly.is_none() {
+            bail!("the bake preview's high poly and cage need a high-poly mesh (high-poly <mesh>, or bake-preview high=off cage=off)");
+        }
         p.finish_background_work(&gpu);
-        // Settings may have changed since `bake-preview`: bring the preview up to date.
+        p.maps.preview.open = true;
         p.update_preview(&gpu);
         while p.maps.preview.loading() {
             std::thread::sleep(std::time::Duration::from_millis(10));
             p.update_preview(&gpu);
         }
-        let vp =self.viewport.as_mut().unwrap();
+        if let Some(e) = p.maps.preview.error() {
+            bail!("{e}");
+        }
+        let view = self.bake_view.get_or_insert_with(|| crate::bakeview::BakeView::new(&gpu));
+        view.render(&gpu, &self.camera, p.mesh.radius(), &p.maps.preview, &p.gpu_mesh, self.size.0, self.size.1);
+        let pixels = gpu.read_texture(view.output_texture().unwrap(), 0, 4);
+        if let Some(dir) = out.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        image::save_buffer(out, &pixels, self.size.0, self.size.1, image::ColorType::Rgba8)?;
+        Ok(())
+    }
+
+    pub fn render(&mut self, out: &Path) -> Result<()> {
+        let gpu = self.gpu.clone();
+        let p = self.project.as_mut().context("no project")?;
+        p.finish_background_work(&gpu);
+        let vp = self.viewport.as_mut().unwrap();
         if let Err(e) = vp.set_material(&gpu, p.viewport_code()) {
             bail!("material shader failed to compile:\n{e}");
         }
@@ -943,7 +973,6 @@ impl Session {
             &p.gpu_mesh,
             p.scene.bind_group.as_ref().unwrap(),
             &self.view,
-            Some(&p.maps.preview),
             self.size.0,
             self.size.1,
         );

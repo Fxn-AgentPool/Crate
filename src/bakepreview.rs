@@ -1,5 +1,5 @@
-//! Bake preview: the low poly, the high poly and the outer cage of a high-poly bake, shown in
-//! the viewport (drawn by viewport.rs with shaders/bake_preview.wgsl).
+//! Bake preview: the low poly, the high poly and the outer cage of a high-poly bake, loaded for
+//! the preview pane of the Mesh Maps window (drawn by bakeview.rs).
 //! See docs/reference/mesh-maps.md#bake-preview.
 
 use std::path::{Path, PathBuf};
@@ -16,45 +16,61 @@ use crate::gpu::Gpu;
 use crate::meshmaps::BakeSettings;
 use crate::mesh::ImportSettings;
 
+/// One mesh of the preview.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Part {
+    pub show: bool,
+    /// 0 to 1.
+    pub opacity: f32,
+}
+
 /// What the preview shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Parts {
-    pub low: bool,
-    pub high: bool,
-    pub cage: bool,
+    pub low: Part,
+    pub high: Part,
+    pub cage: Part,
 }
 
 impl Default for Parts {
     fn default() -> Self {
-        Self { low: true, high: false, cage: false }
+        let on = |opacity| Part { show: true, opacity };
+        Self { low: on(0.5), high: on(0.5), cage: on(0.3) }
     }
 }
 
 impl Parts {
     /// High poly and cage need the high-poly file.
     pub fn needs_high(&self) -> bool {
-        self.high || self.cage
+        self.high.show || self.cage.show
     }
 
-    /// `off`, or a comma-separated list of `low`, `high` and `cage` (script command).
-    pub fn parse(s: &str) -> Result<Self> {
-        if s.eq_ignore_ascii_case("off") {
-            return Ok(Self::default());
-        }
-        let mut p = Self { low: false, high: false, cage: false };
-        for part in s.split(',').map(str::trim) {
-            match part.to_ascii_lowercase().as_str() {
-                "low" => p.low = true,
-                "high" => p.high = true,
-                "cage" => p.cage = true,
-                _ => bail!("unknown bake preview part {part:?} (use low, high, cage or off)"),
+    /// Applies `key=value` (script command): keys `low`, `high`, `cage`; values `on`, `off` or
+    /// an opacity, which also turns the part on.
+    pub fn set(&mut self, arg: &str) -> Result<()> {
+        let Some((key, value)) = arg.split_once('=') else { bail!("expected key=value, got {arg:?}") };
+        let part = match key {
+            "low" => &mut self.low,
+            "high" => &mut self.high,
+            "cage" => &mut self.cage,
+            _ => bail!("unknown bake preview part {key:?} (use low, high or cage)"),
+        };
+        match value {
+            "on" => part.show = true,
+            "off" => part.show = false,
+            v => {
+                let o: f32 = v.parse().map_err(|_| anyhow::anyhow!("expected on, off or an opacity, got {v:?}"))?;
+                if !(0.0..=1.0).contains(&o) {
+                    bail!("opacity {o} is outside 0 to 1");
+                }
+                *part = Part { show: true, opacity: o };
             }
         }
-        Ok(p)
+        Ok(())
     }
 }
 
-/// Vertex of the high poly and the cage: position and normal.
+/// Vertex of the preview meshes: position and normal.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct PreviewVertex {
@@ -111,11 +127,15 @@ pub struct Source<'a> {
 }
 
 pub struct Preview {
+    /// The preview pane is shown.
+    pub open: bool,
     pub parts: Parts,
     state: State,
+    /// The low poly, in the preview's vertex format; drawn with the low poly's index buffer.
+    pub low: Option<wgpu::Buffer>,
     pub high: Option<HighMesh>,
-    /// The cage's vertices, in the low poly's vertex order, so the low poly's index and edge
-    /// buffers draw it.
+    /// The cage's vertices, in the low poly's vertex order, so the low poly's index buffer draws
+    /// it.
     pub cage: Option<wgpu::Buffer>,
     /// Auto cage frontal distances of the loaded data.
     frontal: Option<Vec<f32>>,
@@ -127,7 +147,17 @@ pub struct Preview {
 
 impl Default for Preview {
     fn default() -> Self {
-        Self { parts: Parts::default(), state: State::Idle, high: None, cage: None, frontal: None, generation: 0, cage_built: None }
+        Self {
+            open: false,
+            parts: Parts::default(),
+            state: State::Idle,
+            low: None,
+            high: None,
+            cage: None,
+            frontal: None,
+            generation: 0,
+            cage_built: None,
+        }
     }
 }
 
@@ -143,14 +173,10 @@ impl Preview {
         }
     }
 
-    /// Starts reading the high poly when the shown parts need it and it's missing or stale,
-    /// picks up a finished read, and rebuilds the cage when its distances changed. Call every
-    /// frame; it doesn't block.
+    /// While the pane is open: starts reading the high poly when the shown parts need it and
+    /// it's missing or stale, picks up a finished read, and rebuilds the cage when its distances
+    /// changed. Call every frame; it doesn't block.
     pub fn update(&mut self, gpu: &Gpu, src: Source) {
-        let Some(path) = src.high_poly else {
-            *self = Self { parts: Parts { high: false, cage: false, ..self.parts }, ..Self::default() };
-            return;
-        };
         if let State::Loading(key, handle) = &self.state {
             if handle.is_finished() {
                 let key = *key;
@@ -167,6 +193,25 @@ impl Preview {
                 };
             }
         }
+        if !self.open {
+            return;
+        }
+        if self.low.is_none() {
+            let vertices = cage_vertices(src.low, |_| 0.0);
+            self.low = Some(gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("bake preview low vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }));
+        }
+        let Some(path) = src.high_poly else {
+            // Nothing to show of a high poly that was removed.
+            if !matches!(self.state, State::Idle) {
+                self.state = State::Idle;
+                (self.high, self.cage, self.frontal, self.cage_built) = (None, None, None, None);
+            }
+            return;
+        };
         if !self.parts.needs_high() {
             return;
         }
@@ -185,7 +230,7 @@ impl Preview {
                 (path.to_path_buf(), src.import.clone(), src.low.clone(), src.low_groups.to_vec(), src.diagonal);
             self.state = State::Loading(key, std::thread::spawn(move || load(&path, &import, &low, &groups, key, diagonal)));
         }
-        if self.parts.cage && matches!(self.state, State::Ready(_)) {
+        if self.parts.cage.show && matches!(self.state, State::Ready(_)) {
             // The uniform distance only matters without auto cage.
             let uniform = if self.frontal.is_some() { 0.0 } else { s.frontal * src.diagonal };
             let built = (self.generation, uniform.to_bits());
@@ -235,7 +280,8 @@ fn load(path: &PathBuf, import: &ImportSettings, low: &LowMesh, low_groups: &[St
     Ok(Loaded { vertices, indices: mesh.indices, frontal })
 }
 
-/// The outer cage: every low-poly vertex moved outward along its normal by `frontal(vertex)`.
+/// The low poly with every vertex moved outward along its normal by `frontal(vertex)`: the
+/// outer cage, or with 0 the low poly itself.
 pub fn cage_vertices(low: &LowMesh, frontal: impl Fn(usize) -> f32) -> Vec<PreviewVertex> {
     low.vertices
         .iter()
@@ -253,12 +299,23 @@ mod tests {
     use crate::mesh::Vertex;
 
     #[test]
-    fn parse_parts() {
-        assert_eq!(Parts::parse("off").unwrap(), Parts::default());
-        assert_eq!(Parts::parse("high,Cage").unwrap(), Parts { low: false, high: true, cage: true });
-        assert_eq!(Parts::parse("low").unwrap(), Parts { low: true, high: false, cage: false });
-        assert!(Parts::parse("low,mid").is_err());
-        assert!(!Parts::default().needs_high());
+    fn set_parts() {
+        let mut p = Parts::default();
+        assert!(p.low.show && p.high.show && p.cage.show);
+        assert_eq!((p.low.opacity, p.high.opacity, p.cage.opacity), (0.5, 0.5, 0.3));
+        p.set("low=off").unwrap();
+        p.set("high=off").unwrap();
+        assert!(!p.low.show && p.low.opacity == 0.5);
+        p.set("cage=0.8").unwrap();
+        assert_eq!(p.cage, Part { show: true, opacity: 0.8 });
+        assert!(p.needs_high());
+        p.set("cage=off").unwrap();
+        assert!(!p.needs_high());
+        p.set("low=on").unwrap();
+        assert!(p.low.show);
+        assert!(p.set("cage=1.5").is_err());
+        assert!(p.set("mid=on").is_err());
+        assert!(p.set("low").is_err());
     }
 
     #[test]
