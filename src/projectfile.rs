@@ -47,6 +47,9 @@ struct MeshRef {
 struct MeshMapsState {
     settings: BakeSettings,
     baked: Vec<MeshMap>,
+    /// The high-poly mesh to bake from (absolute path; the file isn't copied).
+    #[serde(rename = "highPoly", default, skip_serializing_if = "Option::is_none")]
+    high_poly: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -288,7 +291,11 @@ pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, ex
         viewport: viewport.clone(),
         export: export.cloned(),
         stencils: p.stencils.clone(),
-        mesh_maps: MeshMapsState { settings: p.maps.settings, baked },
+        mesh_maps: MeshMapsState {
+            settings: p.maps.settings,
+            baked,
+            high_poly: p.maps.high_poly.as_ref().map(|h| h.display().to_string()),
+        },
         images,
         extra: p.file_extra.clone(),
     };
@@ -311,12 +318,14 @@ fn save_map(gpu: &Gpu, p: &Project, m: MeshMap, layer: u32, path: &Path) -> Resu
         MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
         MeshMap::Curvature => (&maps.curvature.texture, 4),
         MeshMap::Thickness => (&maps.thickness.texture, 4),
+        MeshMap::Normal => (&maps.tnormal.texture, 8),
+        MeshMap::Height => (&maps.height.texture, 4),
     };
     let bytes = gpu.read_texture(tex, layer, bpp);
     let res = maps.res as usize;
     let px: Vec<[f32; 4]> = match m {
         MeshMap::Position => bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).to_vec(),
-        MeshMap::WorldNormal => bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| c.map(|h| h.to_f32())).collect(),
+        MeshMap::WorldNormal | MeshMap::Normal => bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| c.map(|h| h.to_f32())).collect(),
         MeshMap::Id => bytes.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]).collect(),
         _ => bytemuck::cast_slice::<u8, f32>(&bytes).iter().map(|v| [*v, *v, *v, 1.0]).collect(),
     };
@@ -339,10 +348,15 @@ fn load_map(gpu: &Gpu, p: &Project, m: MeshMap, layer: u32, path: &Path) -> Resu
     }
     let (tex, data): (&wgpu::Texture, Vec<u8>) = match m {
         MeshMap::Id => (&p.maps.id.texture, img.pixels().flat_map(|c| c.0.map(|v| (v * 255.0 + 0.5) as u8)).collect()),
+        MeshMap::Normal => {
+            let v: Vec<half::f16> = img.pixels().flat_map(|c| c.0.map(half::f16::from_f32)).collect();
+            (&p.maps.tnormal.texture, bytemuck::cast_slice(&v).to_vec())
+        }
         _ => {
             let t = match m {
                 MeshMap::AmbientOcclusion => &p.maps.ao.texture,
                 MeshMap::Curvature => &p.maps.curvature.texture,
+                MeshMap::Height => &p.maps.height.texture,
                 _ => &p.maps.thickness.texture,
             };
             let v: Vec<f32> = img.pixels().map(|c| c.0[0]).collect();
@@ -505,6 +519,7 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
     p.channels = file.channels;
     p.graph = graph_from_file(file.graph, &file.root_stack)?;
     p.maps.settings = file.mesh_maps.settings;
+    p.maps.high_poly = file.mesh_maps.high_poly.map(PathBuf::from);
     p.file_extra = file.extra;
     for name in &file.images {
         let path = dir.join("images").join(name);
@@ -532,6 +547,11 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
             p.maps.mark_baked(m);
             p.saved_maps.insert(m);
         }
+    }
+    // A high-poly file that changed since the bake makes the maps baked from it out of date.
+    if p.maps.high_poly.as_ref().is_some_and(|h| h.is_file()) {
+        p.maps.settings.high_poly = crate::highpoly::stamp(p.maps.high_poly.as_ref());
+        p.maps.refresh_status();
     }
     load_paint(gpu, &mut p, &dir.join("paint"))?;
     p.name = dir.file_stem().map(|s| s.to_string_lossy().into_owned());

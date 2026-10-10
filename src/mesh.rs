@@ -17,6 +17,8 @@ pub struct Vertex {
     /// UDIM convention: v points up, tile 1001 is [0,1)².
     pub uv: [f32; 2],
     pub material: u32,
+    /// Part (glTF node / OBJ object) index into `Mesh::groups`, for high-poly name matching.
+    pub group: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -72,6 +74,8 @@ pub struct Mesh {
     pub indices: Vec<u32>,
     /// Material names; `Vertex::material` indexes this. Used for the ID map.
     pub materials: Vec<String>,
+    /// Part names (glTF node or mesh names, OBJ object names); `Vertex::group` indexes this.
+    pub groups: Vec<String>,
     /// Sorted UDIM numbers in use.
     pub tiles: Vec<u32>,
     pub bbox_min: Vec3,
@@ -190,6 +194,7 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
         vertices: raw.vertices,
         indices: raw.indices,
         materials: raw.materials,
+        groups: raw.groups,
         tiles,
         bbox_min,
         bbox_max,
@@ -201,6 +206,7 @@ struct RawMesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     materials: Vec<String>,
+    groups: Vec<String>,
     has_uvs: bool,
     has_normals: bool,
     has_tangents: bool,
@@ -222,6 +228,7 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
         vertices: Vec::new(),
         indices: Vec::new(),
         materials: Vec::new(),
+        groups: Vec::new(),
         has_uvs: true,
         has_normals: true,
         has_tangents: true,
@@ -241,6 +248,12 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
             stack.push((child, world));
         }
         let Some(mesh) = node.mesh() else { continue };
+        let part = node
+            .name()
+            .or(mesh.name())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("Part {}", node.index()));
+        let group = group_index(&mut out.groups, part);
         for prim in mesh.primitives() {
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
@@ -286,6 +299,7 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
                     tangent: t.into(),
                     uv,
                     material,
+                    group,
                 });
             }
             let flip = world.determinant() < 0.0;
@@ -331,6 +345,7 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
         vertices: Vec::new(),
         indices: Vec::new(),
         materials: Vec::new(),
+        groups: Vec::new(),
         has_uvs: true,
         has_normals: true,
         has_tangents: false,
@@ -347,6 +362,7 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
                 names.len() as u32 - 1
             }),
         };
+        let group = group_index(&mut out.groups, model.name.clone());
         let base = out.vertices.len() as u32;
         for i in 0..m.positions.len() / 3 {
             out.vertices.push(Vertex {
@@ -363,6 +379,7 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
                     [m.texcoords[2 * i], m.texcoords[2 * i + 1]]
                 },
                 material,
+                group,
             });
         }
         out.indices.extend(m.indices.iter().map(|i| base + i));
@@ -372,6 +389,29 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
     }
     out.materials = names;
     Ok(out)
+}
+
+/// Index of a part name, adding it if new (parts with the same name are one part).
+fn group_index(groups: &mut Vec<String>, name: String) -> u32 {
+    match groups.iter().position(|g| *g == name) {
+        Some(i) => i as u32,
+        None => {
+            groups.push(name);
+            groups.len() as u32 - 1
+        }
+    }
+}
+
+/// Imports a high-poly mesh for baking (docs/reference/mesh-maps.md#high-poly-mesh): like
+/// `import`, with the low poly's settings, but UVs are not needed.
+pub fn import_high(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
+    let mut mesh = import(path, settings)?;
+    mesh.diagnostics.retain(|d| !d.code.starts_with("UV_"));
+    if mesh.has_errors() {
+        let msgs: Vec<&str> = mesh.diagnostics.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.as_str()).collect();
+        bail!("{}", msgs.join(" "));
+    }
+    Ok(mesh)
 }
 
 fn compute_normals(vertices: &mut [Vertex], indices: &[u32]) {

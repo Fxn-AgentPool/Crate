@@ -41,7 +41,7 @@ pub struct CrateApp {
     /// Diagnostics of an import that failed, shown in the Import Log.
     failed_import_log: Option<Vec<Diagnostic>>,
     /// Maps checked in the Mesh Maps window.
-    bake_selection: [bool; 6],
+    bake_selection: [bool; 8],
     error: Option<String>,
     /// Material version compiled into the viewport.
     viewport_material: u64,
@@ -100,7 +100,7 @@ impl CrateApp {
             show_import_log: false,
             show_mesh_maps: false,
             failed_import_log: None,
-            bake_selection: [false; 6],
+            bake_selection: [false; 8],
             error: None,
             viewport_material: u64::MAX,
             message: None,
@@ -237,6 +237,11 @@ impl eframe::App for CrateApp {
         if let Some(doc) = &mut self.doc {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
+            }
+            match doc.maps.report.take() {
+                Some(Ok(msg)) => self.message = Some((msg, ui.input(|i| i.time))),
+                Some(Err(e)) => self.error = Some(e),
+                None => {}
             }
         }
         self.shortcuts(ui.ctx());
@@ -1206,7 +1211,12 @@ impl CrateApp {
         let baking = doc.bake_job.is_some();
         egui::Grid::new("maps").num_columns(2).striped(true).show(ui, |ui| {
             for m in MeshMap::ALL {
-                ui.checkbox(&mut self.bake_selection[m.index()], m.name());
+                let possible = !m.needs_high() || doc.maps.high_poly.is_some();
+                if !possible {
+                    self.bake_selection[m.index()] = false;
+                }
+                ui.add_enabled(possible, egui::Checkbox::new(&mut self.bake_selection[m.index()], m.name()))
+                    .on_disabled_hover_text("Needs a high-poly mesh (below).");
                 let st = doc.maps.status(m);
                 let color = match st {
                     MapStatus::UpToDate => egui::Color32::from_rgb(120, 200, 120),
@@ -1222,12 +1232,62 @@ impl CrateApp {
                 let maps: Vec<MeshMap> =
                     MeshMap::ALL.into_iter().filter(|m| self.bake_selection[m.index()]).collect();
                 doc.start_bake(&self.gpu, &maps);
-                self.bake_selection = [false; 6];
+                self.bake_selection = [false; 8];
             }
         });
         if let Some(job) = &doc.bake_job {
             ui.add(egui::ProgressBar::new(job.progress()).show_percentage());
         }
+        if let Some(pct) = doc.maps.last_misses {
+            ui.label(format!("Missed: {pct:.1}% of texels"));
+        }
+        ui.separator();
+        egui::CollapsingHeader::new("High poly").default_open(true).show(ui, |ui| {
+            let before = (doc.maps.settings, doc.maps.high_poly.clone());
+            ui.horizontal(|ui| {
+                let name = doc.maps.high_poly.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into());
+                ui.label(egui::RichText::new(name).monospace());
+            });
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!baking, egui::Button::new("Browse…")).clicked() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter("Mesh", &["glb", "gltf", "obj"]).set_title("High-poly mesh").pick_file() {
+                        doc.maps.high_poly = Some(p);
+                    }
+                }
+                if ui.add_enabled(!baking && doc.maps.high_poly.is_some(), egui::Button::new("Clear")).clicked() {
+                    doc.maps.high_poly = None;
+                }
+            });
+            let s = &mut doc.maps.settings;
+            egui::Grid::new("high poly settings").num_columns(2).show(ui, |ui| {
+                ui.label("Frontal distance");
+                ui.add(egui::DragValue::new(&mut s.frontal).speed(0.0005).range(0.0..=1.0));
+                ui.end_row();
+                ui.label("Rear distance");
+                ui.add(egui::DragValue::new(&mut s.rear).speed(0.0005).range(0.0..=1.0));
+                ui.end_row();
+                ui.label("Match by name");
+                ui.checkbox(&mut s.match_by_name, "");
+                ui.end_row();
+                ui.label("Apply Normal map");
+                ui.checkbox(&mut s.apply_normal, "");
+                ui.end_row();
+            });
+            if (doc.maps.settings, doc.maps.high_poly.clone()) != before {
+                if doc.maps.high_poly != before.1 {
+                    doc.maps.last_misses = None;
+                }
+                doc.maps.settings.high_poly = crate::highpoly::stamp(doc.maps.high_poly.as_ref());
+                doc.maps.refresh_status();
+                for m in MeshMap::ALL {
+                    if doc.maps.status(m) == MapStatus::OutOfDate {
+                        self.bake_selection[m.index()] = true;
+                    }
+                }
+                // Apply Normal map is shown immediately.
+                doc.update_scene(&self.gpu);
+            }
+        });
         ui.separator();
         egui::CollapsingHeader::new("Bake settings").default_open(true).show(ui, |ui| {
             let before = doc.maps.settings;

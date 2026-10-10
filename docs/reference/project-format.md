@@ -41,7 +41,7 @@ UTF-8 JSON. Top-level keys:
 | `viewport` | object | Camera, exposure, environment rotation and environment file. |
 | `export` | object | Last-used export settings. See [Export](export.md). |
 | `stencils` | object | Loaded stencils (image name, transform, display and Paint Through settings) and the active one. |
-| `meshMaps` | object | Bake settings and the list of baked maps. |
+| `meshMaps` | object | Bake settings, the list of baked maps, and `highPoly`: the high-poly mesh's path (absolute), if one is set. The high-poly file is not copied into the project. |
 | `images` | array of string | Images in `images/`. |
 
 ### `graph`

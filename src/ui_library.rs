@@ -62,7 +62,7 @@ pub struct Library {
     category: Category,
     smart: Option<Vec<(crate::smartmat::LibraryItem, Option<egui::TextureHandle>)>>,
     /// Mesh map thumbnails with the maps version they were made from.
-    map_thumbs: [Option<(u64, egui::TextureHandle)>; 6],
+    map_thumbs: [Option<(u64, egui::TextureHandle)>; 8],
 }
 
 impl Default for Library {
@@ -252,6 +252,8 @@ fn map_thumbnail(gpu: &Gpu, p: &Project, m: MeshMap) -> egui::ColorImage {
         MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
         MeshMap::Curvature => (&maps.curvature.texture, 4),
         MeshMap::Thickness => (&maps.thickness.texture, 4),
+        MeshMap::Normal => (&maps.tnormal.texture, 8),
+        MeshMap::Height => (&maps.height.texture, 4),
     };
     let bytes = gpu.read_texture(tex, 0, bpp);
     let res = maps.res as usize;
@@ -264,6 +266,8 @@ fn map_thumbnail(gpu: &Gpu, p: &Project, m: MeshMap) -> egui::ColorImage {
             // Shown the way normal maps usually look: -1..1 mapped to 0..1.
             MeshMap::WorldNormal => [h(0) * 0.5 + 0.5, h(1) * 0.5 + 0.5, h(2) * 0.5 + 0.5],
             MeshMap::Id => [bytes[o] as f32 / 255.0, bytes[o + 1] as f32 / 255.0, bytes[o + 2] as f32 / 255.0],
+            // Stored encoded already.
+            MeshMap::Normal => [h(0), h(1), h(2)],
             _ => [f(0); 3],
         }
     };

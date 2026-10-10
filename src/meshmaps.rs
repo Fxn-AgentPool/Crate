@@ -3,15 +3,22 @@
 //! Position, World Normal and ID come from a UV-space raster pass; Ambient Occlusion,
 //! Curvature and Thickness are ray traced on the GPU against a BVH. Padding is computed
 //! once per tile as a "nearest covered texel" map that every map is gathered from.
+//!
+//! With a high-poly mesh, a projection pass (shaders/highbake.wgsl) finds the high-poly point
+//! for every texel, writing Normal, Height and ID, and AO, Curvature and Thickness are then
+//! traced from those points against the high poly. Tiles are baked one after the other, so the
+//! projected points need only one tile of memory.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::bvh::Bvh;
 use crate::gpu::{self, Gpu};
-use crate::mesh::Mesh;
+use crate::highpoly::{HighCpu, HighGpu};
+use crate::mesh::{ImportSettings, Mesh};
 use crate::viewport::{GpuMesh, vertex_layout};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -22,16 +29,22 @@ pub enum MeshMap {
     Curvature,
     Thickness,
     Id,
+    /// Tangent-space normal from the high poly.
+    Normal,
+    /// Height from the high poly.
+    Height,
 }
 
 impl MeshMap {
-    pub const ALL: [MeshMap; 6] = [
+    pub const ALL: [MeshMap; 8] = [
         MeshMap::Position,
         MeshMap::WorldNormal,
         MeshMap::AmbientOcclusion,
         MeshMap::Curvature,
         MeshMap::Thickness,
         MeshMap::Id,
+        MeshMap::Normal,
+        MeshMap::Height,
     ];
 
     pub fn name(self) -> &'static str {
@@ -42,6 +55,8 @@ impl MeshMap {
             MeshMap::Curvature => "Curvature",
             MeshMap::Thickness => "Thickness",
             MeshMap::Id => "ID",
+            MeshMap::Normal => "Normal",
+            MeshMap::Height => "Height",
         }
     }
 
@@ -53,6 +68,8 @@ impl MeshMap {
             MeshMap::Curvature => "curvature",
             MeshMap::Thickness => "thickness",
             MeshMap::Id => "id",
+            MeshMap::Normal => "normal",
+            MeshMap::Height => "height",
         }
     }
 
@@ -71,9 +88,20 @@ impl MeshMap {
     fn is_ray_traced(self) -> bool {
         matches!(self, MeshMap::AmbientOcclusion | MeshMap::Curvature | MeshMap::Thickness)
     }
+
+    /// Baked from the high poly when one is set.
+    pub fn from_high(self) -> bool {
+        !matches!(self, MeshMap::Position | MeshMap::WorldNormal)
+    }
+
+    /// Can only be baked from a high poly.
+    pub fn needs_high(self) -> bool {
+        matches!(self, MeshMap::Normal | MeshMap::Height)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct BakeSettings {
     /// 0 = tile resolution.
     pub resolution: u32,
@@ -87,6 +115,15 @@ pub struct BakeSettings {
     pub curvature_radius: f32,
     /// Texels.
     pub padding: u32,
+    /// High poly: ray start outside the low-poly surface, relative to the bounding box diagonal.
+    pub frontal: f32,
+    /// High poly: how far inside the surface rays still search, relative to the diagonal.
+    pub rear: f32,
+    pub match_by_name: bool,
+    /// Combine the baked Normal map with the material's normal (viewport and export).
+    pub apply_normal: bool,
+    /// `highpoly::stamp` of the high-poly file the maps were baked from (0 = none).
+    pub high_poly: u64,
 }
 
 impl Default for BakeSettings {
@@ -99,6 +136,11 @@ impl Default for BakeSettings {
             ignore_backfaces: true,
             curvature_radius: 0.005,
             padding: 8,
+            frontal: 0.01,
+            rear: 0.01,
+            match_by_name: true,
+            apply_normal: true,
+            high_poly: 0,
         }
     }
 }
@@ -107,6 +149,13 @@ impl BakeSettings {
     /// Whether a map baked with `old` would differ when baked with `self`.
     fn affects(&self, old: &BakeSettings, map: MeshMap) -> bool {
         if self.resolution != old.resolution || self.padding != old.padding {
+            return true;
+        }
+        if map.from_high()
+            && (self.high_poly != old.high_poly
+                || (self.high_poly != 0
+                    && (self.frontal != old.frontal || self.rear != old.rear || self.match_by_name != old.match_by_name)))
+        {
             return true;
         }
         match map {
@@ -200,17 +249,49 @@ struct RayParams {
     mode: u32,
     samples: u32,
     ignore_backfaces: u32,
-    _pad: u32,
+    /// Layer of the surface textures read (the projected surface has a single layer).
+    in_layer: u32,
     max_distance: f32,
     cos_spread: f32,
     curvature_radius: f32,
     epsilon: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ProjectParams {
+    layer: u32,
+    res: u32,
+    row_start: u32,
+    row_count: u32,
+    frontal: f32,
+    rear: f32,
+    flags: u32,
+    _pad: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Raster { tile: u32 },
+    /// High-poly projection of some rows of a tile.
+    Project { tile: u32, row_start: u32 },
     Ray { map: MeshMap, tile: u32, row_start: u32 },
+}
+
+enum HighState {
+    Loading(std::thread::JoinHandle<anyhow::Result<HighCpu>>),
+    Ready(HighBake),
+}
+
+/// GPU state of a high-poly bake: the mesh, and one tile of projected surface.
+struct HighBake {
+    mesh: HighGpu,
+    /// Projected position and normal of the tile being baked (same encoding as the position
+    /// and normal maps).
+    hpos: wgpu::Texture,
+    hnrm: wgpu::Texture,
+    /// Covered and missed texels, summed over all tiles.
+    counters: wgpu::Buffer,
 }
 
 /// A bake in progress. Advanced a little each frame so the UI stays responsive.
@@ -219,6 +300,8 @@ pub struct BakeJob {
     total: usize,
     settings: BakeSettings,
     maps: Vec<MeshMap>,
+    high: Option<HighState>,
+    error: Option<String>,
 }
 
 impl BakeJob {
@@ -240,11 +323,24 @@ pub struct MeshMaps {
     pub ao: MapTexture,
     pub curvature: MapTexture,
     pub thickness: MapTexture,
+    /// Tangent-space normal from the high poly, encoded `n * 0.5 + 0.5`; alpha 0 = missed.
+    pub tnormal: MapTexture,
+    pub height: MapTexture,
+    /// Low-poly tangent per texel (w = sign * (part + 1)); not padded.
+    tangent: MapTexture,
     /// Nearest covered texel per texel (padding source), `u32::MAX` when empty.
     pub source: MapTexture,
-    pub status: [MapStatus; 6],
-    baked_with: [Option<BakeSettings>; 6],
+    pub status: [MapStatus; 8],
+    baked_with: [Option<BakeSettings>; 8],
     pub settings: BakeSettings,
+    /// The high-poly mesh to bake from.
+    pub high_poly: Option<PathBuf>,
+    /// Low-poly part names, for matching.
+    low_groups: Vec<String>,
+    /// Percentage of texels the last high-poly bake missed.
+    pub last_misses: Option<f32>,
+    /// Message about the last finished bake, for the status bar (taken once).
+    pub report: Option<Result<String, String>>,
     /// Incremented whenever any map's contents change.
     pub version: u64,
 
@@ -260,6 +356,7 @@ pub struct MeshMaps {
     dilate_step: wgpu::ComputePipeline,
     dilate_gather: wgpu::ComputePipeline,
     ray_pipeline: wgpu::ComputePipeline,
+    project_pipeline: wgpu::ComputePipeline,
 }
 
 impl MeshMaps {
@@ -308,7 +405,7 @@ impl MeshMaps {
                 module: &raster_module,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &[Some(POS_FORMAT.into()), Some(NRM_FORMAT.into()), Some(ID_FORMAT.into())],
+                targets: &[Some(POS_FORMAT.into()), Some(NRM_FORMAT.into()), Some(ID_FORMAT.into()), Some(NRM_FORMAT.into())],
             }),
             multiview_mask: None,
             cache: None,
@@ -330,6 +427,8 @@ impl MeshMaps {
         let dilate_gather = compute(&dilate, "gather");
         let ray = gpu::shader(d, "ray bake", include_str!("shaders/raybake.wgsl"));
         let ray_pipeline = compute(&ray, "main");
+        let project = gpu::shader(d, "high-poly projection", include_str!("shaders/highbake.wgsl"));
+        let project_pipeline = compute(&project, "main");
 
         let size = (mesh.bbox_max - mesh.bbox_min).max(glam::Vec3::splat(1e-6));
         let mut maps = Self {
@@ -341,10 +440,17 @@ impl MeshMaps {
             ao: MapTexture::new(gpu, "map ao", SCALAR_FORMAT, res, layers),
             curvature: MapTexture::new(gpu, "map curvature", SCALAR_FORMAT, res, layers),
             thickness: MapTexture::new(gpu, "map thickness", SCALAR_FORMAT, res, layers),
+            tnormal: MapTexture::new(gpu, "map normal (tangent)", NRM_FORMAT, res, layers),
+            height: MapTexture::new(gpu, "map height", SCALAR_FORMAT, res, layers),
+            tangent: MapTexture::new(gpu, "map tangent", NRM_FORMAT, res, layers),
             source: MapTexture::new(gpu, "map source", SRC_FORMAT, res, layers),
-            status: [MapStatus::Missing; 6],
-            baked_with: [None; 6],
+            status: [MapStatus::Missing; 8],
+            baked_with: [None; 8],
             settings,
+            high_poly: None,
+            low_groups: mesh.groups.clone(),
+            last_misses: None,
+            report: None,
             version: 0,
             bvh_nodes,
             bvh_tris,
@@ -357,15 +463,32 @@ impl MeshMaps {
             dilate_step,
             dilate_gather,
             ray_pipeline,
+            project_pipeline,
         };
         maps.clear_scalar_maps(gpu);
         maps
     }
 
-    /// Neutral values for maps that have not been baked: AO 1, curvature 0.5, thickness 1.
+    /// Neutral values for maps that have not been baked: AO 1, curvature 0.5, thickness 1,
+    /// height 0.5, flat normal.
     fn clear_scalar_maps(&self, gpu: &Gpu) {
         let texels = (self.res * self.res) as usize;
-        for (tex, value) in [(&self.ao, 1.0f32), (&self.curvature, 0.5), (&self.thickness, 1.0)] {
+        let h = half::f16::from_f32;
+        let flat = vec![[h(0.5), h(0.5), h(1.0), h(1.0)]; texels];
+        for layer in 0..self.layers {
+            gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.tnormal.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&flat),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.res * 8), rows_per_image: Some(self.res) },
+                wgpu::Extent3d { width: self.res, height: self.res, depth_or_array_layers: 1 },
+            );
+        }
+        for (tex, value) in [(&self.ao, 1.0f32), (&self.curvature, 0.5), (&self.thickness, 1.0), (&self.height, 0.5)] {
             let data = vec![value; texels];
             for layer in 0..self.layers {
                 gpu.queue.write_texture(
@@ -427,14 +550,16 @@ impl MeshMaps {
 
     /// Starts baking `maps`. Raster maps are always baked first, since every other map
     /// reads them.
-    pub fn start_bake(&mut self, gpu: &Gpu, tile_resolution: u32, maps: &[MeshMap]) -> BakeJob {
+    pub fn start_bake(&mut self, gpu: &Gpu, tile_resolution: u32, maps: &[MeshMap], import: &ImportSettings) -> BakeJob {
         let res = if self.settings.resolution == 0 { tile_resolution } else { self.settings.resolution };
-        let mut maps: Vec<MeshMap> = maps.to_vec();
+        self.settings.high_poly = crate::highpoly::stamp(self.high_poly.as_ref());
+        self.refresh_status();
+        let mut maps: Vec<MeshMap> = maps.iter().copied().filter(|m| self.high_poly.is_some() || !m.needs_high()).collect();
         if res != self.res {
             self.reallocate(gpu, res);
             // Everything baked at the old resolution is gone.
-            self.status = [MapStatus::Missing; 6];
-            self.baked_with = [None; 6];
+            self.status = [MapStatus::Missing; 8];
+            self.baked_with = [None; 8];
             for m in [MeshMap::Position, MeshMap::WorldNormal] {
                 if !maps.contains(&m) {
                     maps.push(m);
@@ -455,13 +580,33 @@ impl MeshMaps {
                     maps.push(m);
                 }
             }
-        }
-        let rows = self.rows_per_step();
-        for &map in &maps {
-            if !map.is_ray_traced() {
-                continue;
+            // The raster pass writes the low poly's ID; an ID baked from the high poly is redone.
+            if self.high_poly.is_some() && self.status(MeshMap::Id) != MapStatus::Missing && !maps.contains(&MeshMap::Id) {
+                maps.push(MeshMap::Id);
             }
-            for tile in 0..self.layers {
+        }
+        let high = match &self.high_poly {
+            Some(path) if maps.iter().any(|m| m.from_high()) => {
+                let (path, import, groups, by_name) = (path.clone(), import.clone(), self.low_groups.clone(), self.settings.match_by_name);
+                Some(HighState::Loading(std::thread::spawn(move || crate::highpoly::load(&path, &import, &groups, by_name))))
+            }
+            _ => None,
+        };
+        let rows = self.rows_per_step();
+        // One ray per texel: as many rows per step as the ray budget allows.
+        let project_rows = ((1u64 << 24) / self.res.max(1) as u64).clamp(1, self.res as u64) as u32;
+        for tile in 0..self.layers {
+            if high.is_some() {
+                let mut row = 0;
+                while row < self.res {
+                    steps.push_back(Step::Project { tile, row_start: row });
+                    row += project_rows;
+                }
+            }
+            for &map in &maps {
+                if !map.is_ray_traced() {
+                    continue;
+                }
                 let mut row = 0;
                 while row < self.res {
                     steps.push_back(Step::Ray { map, tile, row_start: row });
@@ -469,7 +614,52 @@ impl MeshMaps {
                 }
             }
         }
-        BakeJob { total: steps.len(), steps, settings: self.settings, maps }
+        BakeJob { total: steps.len(), steps, settings: self.settings, maps, high, error: None }
+    }
+
+    /// Waits for the high poly to load and uploads it. Ok(false) while it is still loading.
+    fn high_ready(&self, gpu: &Gpu, job: &mut BakeJob) -> Result<bool, String> {
+        match job.high.take() {
+            Some(HighState::Loading(handle)) if !handle.is_finished() => {
+                job.high = Some(HighState::Loading(handle));
+                Ok(false)
+            }
+            Some(HighState::Loading(handle)) => {
+                let cpu = handle
+                    .join()
+                    .map_err(|_| "loading the high poly failed".to_string())?
+                    .map_err(|e| format!("Could not load the high-poly mesh: {e:#}"))?;
+                let d = &gpu.device;
+                let tex = |label, format| {
+                    d.create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d { width: self.res, height: self.res, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                        view_formats: &[],
+                    })
+                };
+                let counters = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("bake counters"),
+                    contents: bytemuck::cast_slice(&[0u32; 2]),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                });
+                job.high = Some(HighState::Ready(HighBake {
+                    mesh: cpu.upload(gpu).map_err(|e| format!("{e:#}"))?,
+                    hpos: tex("projected position", POS_FORMAT),
+                    hnrm: tex("projected normal", NRM_FORMAT),
+                    counters,
+                }));
+                Ok(true)
+            }
+            other => {
+                job.high = other;
+                Ok(true)
+            }
+        }
     }
 
     fn rows_per_step(&self) -> u32 {
@@ -487,6 +677,9 @@ impl MeshMaps {
         self.ao = MapTexture::new(gpu, "map ao", SCALAR_FORMAT, res, layers);
         self.curvature = MapTexture::new(gpu, "map curvature", SCALAR_FORMAT, res, layers);
         self.thickness = MapTexture::new(gpu, "map thickness", SCALAR_FORMAT, res, layers);
+        self.tnormal = MapTexture::new(gpu, "map normal (tangent)", NRM_FORMAT, res, layers);
+        self.height = MapTexture::new(gpu, "map height", SCALAR_FORMAT, res, layers);
+        self.tangent = MapTexture::new(gpu, "map tangent", NRM_FORMAT, res, layers);
         self.source = MapTexture::new(gpu, "map source", SRC_FORMAT, res, layers);
         self.clear_scalar_maps(gpu);
         self.version += 1;
@@ -501,10 +694,27 @@ impl MeshMaps {
         budget: std::time::Duration,
     ) -> bool {
         let start = std::time::Instant::now();
-        while let Some(step) = job.steps.pop_front() {
+        while let Some(&step) = job.steps.front() {
+            if matches!(step, Step::Project { .. }) {
+                match self.high_ready(gpu, job) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(e) => {
+                        job.error = Some(e);
+                        job.steps.clear();
+                        break;
+                    }
+                }
+            }
+            job.steps.pop_front();
+            let high = match &job.high {
+                Some(HighState::Ready(h)) => Some(h),
+                _ => None,
+            };
             match step {
                 Step::Raster { tile } => self.raster_tile(gpu, mesh, tile, job.settings.padding),
-                Step::Ray { map, tile, row_start } => self.ray_rows(gpu, map, tile, row_start),
+                Step::Project { tile, row_start } => self.project_rows(gpu, &job.maps, high.expect("high poly loaded"), tile, row_start),
+                Step::Ray { map, tile, row_start } => self.ray_rows(gpu, map, tile, row_start, high),
             }
             gpu.wait_idle();
             if start.elapsed() >= budget {
@@ -512,21 +722,42 @@ impl MeshMaps {
             }
         }
         self.version += 1;
-        if job.steps.is_empty() {
-            for &m in &job.maps {
-                self.status[m.index()] = MapStatus::UpToDate;
-                self.baked_with[m.index()] = Some(job.settings);
-            }
-            true
-        } else {
-            false
+        if !job.steps.is_empty() {
+            return false;
         }
+        if let Some(e) = job.error.take() {
+            // The raster maps were baked; the rest keep their old data and status.
+            for m in [MeshMap::Position, MeshMap::WorldNormal] {
+                if job.maps.contains(&m) {
+                    self.status[m.index()] = MapStatus::UpToDate;
+                    self.baked_with[m.index()] = Some(job.settings);
+                }
+            }
+            self.report = Some(Err(e));
+            return true;
+        }
+        for &m in &job.maps {
+            self.status[m.index()] = MapStatus::UpToDate;
+            self.baked_with[m.index()] = Some(job.settings);
+        }
+        if let Some(HighState::Ready(h)) = &job.high {
+            let c = gpu.read_buffer(&h.counters);
+            let c: &[u32] = bytemuck::cast_slice(&c);
+            let pct = if c[0] > 0 { c[1] as f32 * 100.0 / c[0] as f32 } else { 0.0 };
+            self.last_misses = Some(pct);
+            self.report = Some(Ok(format!("High-poly bake: {pct:.1}% of texels missed")));
+        }
+        true
     }
 
     /// Bakes synchronously, for headless use.
     pub fn bake_blocking(&mut self, gpu: &Gpu, mesh: &GpuMesh, tile_resolution: u32, maps: &[MeshMap]) {
-        let mut job = self.start_bake(gpu, tile_resolution, maps);
-        while !self.advance(gpu, mesh, &mut job, std::time::Duration::from_secs(3600)) {}
+        // Only used for the raster maps; a high poly is baked through `start_bake`.
+        let mut job = self.start_bake(gpu, tile_resolution, maps, &ImportSettings::default());
+        while !self.advance(gpu, mesh, &mut job, std::time::Duration::from_secs(3600)) {
+            // Waiting for the high poly to load.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     fn tile_offset(&self, mesh: &GpuMesh, layer: u32) -> (f32, f32) {
@@ -544,6 +775,8 @@ impl MeshMaps {
         let pos = target("raster pos", POS_FORMAT);
         let nrm = target("raster nrm", NRM_FORMAT);
         let id = target("raster id", ID_FORMAT);
+        let tan_tex = gpu::render_target(d, "raster tangent", res, res, NRM_FORMAT, wgpu::TextureUsages::COPY_SRC);
+        let tan = tan_tex.create_view(&Default::default());
         let (tu, tv) = self.tile_offset(mesh, layer);
         let params = RasterParams {
             bbox_min: self.bbox_min.extend(0.0).into(),
@@ -575,7 +808,7 @@ impl MeshMaps {
             };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("uv raster"),
-                color_attachments: &[attach(&pos), attach(&nrm), attach(&id)],
+                color_attachments: &[attach(&pos), attach(&nrm), attach(&id), attach(&tan)],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -587,6 +820,16 @@ impl MeshMaps {
             pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh.index_count, 0, 0..1);
         }
+        enc.copy_texture_to_texture(
+            tan_tex.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.tangent.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d { width: res, height: res, depth_or_array_layers: 1 },
+        );
 
         // Padding: nearest covered texel, grown one texel per step.
         let src_tex = |label| {
@@ -677,7 +920,71 @@ impl MeshMaps {
         gpu.queue.submit([enc.finish()]);
     }
 
-    fn ray_rows(&mut self, gpu: &Gpu, map: MeshMap, layer: u32, row_start: u32) {
+    /// High-poly projection of `rows` of one tile: Normal, Height, ID (as requested) and the
+    /// projected surface that `ray_rows` traces from.
+    fn project_rows(&mut self, gpu: &Gpu, maps: &[MeshMap], high: &HighBake, layer: u32, row_start: u32) {
+        let d = &gpu.device;
+        let s = &self.settings;
+        let rows = ((1u64 << 24) / self.res.max(1) as u64).clamp(1, self.res as u64) as u32;
+        let rows = rows.min(self.res - row_start);
+        let flags = maps.contains(&MeshMap::Normal) as u32
+            | (maps.contains(&MeshMap::Height) as u32) << 1
+            | (maps.contains(&MeshMap::Id) as u32) << 2;
+        let params = ProjectParams {
+            layer,
+            res: self.res,
+            row_start,
+            row_count: rows,
+            frontal: s.frontal * self.diagonal,
+            rear: s.rear * self.diagonal,
+            flags,
+            _pad: 0,
+        };
+        let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("project params"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let array = |t: &wgpu::Texture| {
+            t.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
+        let (hpos, hnrm) = (array(&high.hpos), array(&high.hnrm));
+        let (tnrm, height, id) = (array(&self.tnormal.texture), array(&self.height.texture), array(&self.id.texture));
+        let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("high-poly projection"),
+            layout: &self.project_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: tex_res(&self.position.view) },
+                wgpu::BindGroupEntry { binding: 2, resource: tex_res(&self.normal.view) },
+                wgpu::BindGroupEntry { binding: 3, resource: tex_res(&self.tangent.view) },
+                wgpu::BindGroupEntry { binding: 4, resource: tex_res(&self.source.view) },
+                wgpu::BindGroupEntry { binding: 5, resource: high.mesh.nodes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: high.mesh.tris.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: high.mesh.data.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: high.mesh.low_match.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 9, resource: tex_res(&hpos) },
+                wgpu::BindGroupEntry { binding: 10, resource: tex_res(&hnrm) },
+                wgpu::BindGroupEntry { binding: 11, resource: tex_res(&tnrm) },
+                wgpu::BindGroupEntry { binding: 12, resource: tex_res(&height) },
+                wgpu::BindGroupEntry { binding: 13, resource: tex_res(&id) },
+                wgpu::BindGroupEntry { binding: 14, resource: high.counters.as_entire_binding() },
+            ],
+        });
+        let mut enc = d.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.project_pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(self.res.div_ceil(8), rows.div_ceil(8), 1);
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+
+    fn ray_rows(&mut self, gpu: &Gpu, map: MeshMap, layer: u32, row_start: u32, high: Option<&HighBake>) {
         let d = &gpu.device;
         let s = &self.settings;
         let rows = self.rows_per_step().min(self.res - row_start);
@@ -694,7 +1001,7 @@ impl MeshMaps {
             mode,
             samples: if map == MeshMap::Curvature { s.samples.clamp(16, 64) } else { s.samples.max(1) },
             ignore_backfaces: s.ignore_backfaces as u32,
-            _pad: 0,
+            in_layer: if high.is_some() { 0 } else { layer },
             max_distance: s.max_distance * self.diagonal,
             cos_spread: (s.spread_angle.clamp(1.0, 180.0) * 0.5).to_radians().cos(),
             // The probe sits two radii above the surface.
@@ -706,19 +1013,27 @@ impl MeshMaps {
             contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let out_view = out.texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let array = |t: &wgpu::Texture| {
+            t.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
+        let out_view = array(&out.texture);
+        // With a high poly, trace from the projected surface against the high poly.
+        let (pos, nrm, nodes, tris) = match high {
+            Some(h) => (array(&h.hpos), array(&h.hnrm), &h.mesh.nodes, &h.mesh.tris),
+            None => (array(&self.position.texture), array(&self.normal.texture), &self.bvh_nodes, &self.bvh_tris),
+        };
         let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ray bake"),
             layout: &self.ray_pipeline.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.position.view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.normal.view) },
-                wgpu::BindGroupEntry { binding: 3, resource: self.bvh_nodes.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: self.bvh_tris.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: tex_res(&pos) },
+                wgpu::BindGroupEntry { binding: 2, resource: tex_res(&nrm) },
+                wgpu::BindGroupEntry { binding: 3, resource: nodes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: tris.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&out_view) },
             ],
         });
@@ -735,4 +1050,47 @@ impl MeshMaps {
 
 fn tex_res(v: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(v)
+}
+
+/// Saves one tile of a map as a 16-bit PNG (the `save-map` script command), encoded as in
+/// docs/reference/mesh-maps.md#maps: normals `n * 0.5 + 0.5`, position normalized to the
+/// bounding box, scalar maps as gray.
+pub fn save_png(gpu: &Gpu, maps: &MeshMaps, map: MeshMap, layer: u32, path: &std::path::Path) -> anyhow::Result<()> {
+    let (tex, bpp) = match map {
+        MeshMap::Position => (&maps.position.texture, 16),
+        MeshMap::WorldNormal => (&maps.normal.texture, 8),
+        MeshMap::Id => (&maps.id.texture, 4),
+        MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
+        MeshMap::Curvature => (&maps.curvature.texture, 4),
+        MeshMap::Thickness => (&maps.thickness.texture, 4),
+        MeshMap::Normal => (&maps.tnormal.texture, 8),
+        MeshMap::Height => (&maps.height.texture, 4),
+    };
+    let bytes = gpu.read_texture(tex, layer, bpp);
+    let res = maps.res;
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let rgb: Vec<[f32; 3]> = match map {
+        MeshMap::Position => bytemuck::cast_slice::<u8, [f32; 4]>(&bytes)
+            .iter()
+            .map(|p| {
+                let v = (glam::Vec3::new(p[0], p[1], p[2]) - maps.bbox_min) / maps.bbox_size;
+                [v.x, v.y, v.z]
+            })
+            .collect(),
+        MeshMap::WorldNormal | MeshMap::Normal => {
+            bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| [c[0].to_f32(), c[1].to_f32(), c[2].to_f32()]).collect()
+        }
+        MeshMap::Id => bytes.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect(),
+        _ => {
+            let v: Vec<u16> = bytemuck::cast_slice::<u8, f32>(&bytes).iter().map(|v| q(*v)).collect();
+            image::ImageBuffer::<image::Luma<u16>, _>::from_raw(res, res, v).unwrap().save(path)?;
+            return Ok(());
+        }
+    };
+    let v: Vec<u16> = rgb.iter().flat_map(|c| c.map(q)).collect();
+    image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(res, res, v).unwrap().save(path)?;
+    Ok(())
 }

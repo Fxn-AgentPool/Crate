@@ -95,6 +95,16 @@ fn blendf(a: f32, b: f32, mode: u32) -> f32 {
     return blend3(vec3f(a), vec3f(b), mode).x;
 }
 
+// Applies the baked high-poly Normal map under the material's normal
+// (docs/reference/mesh-maps.md#normal-map).
+fn apply_baked_normal(s: Surface, m: Material) -> Material {
+    if scene.info.w == 0u || !map_baked(6u) || s.layer < 0 { return m; }
+    var o = m;
+    let base = normalize(mesh_normal_map(tile_tex(s.tile_uv), s.layer).xyz * 2.0 - 1.0);
+    o.normal = rnm(base, m.normal);
+    return o;
+}
+
 // Reoriented normal mapping of detail `d` onto base `b` (both tangent space, -1..1).
 fn rnm(b: vec3f, d: vec3f) -> vec3f {
     let t = b + vec3f(0.0, 0.0, 1.0);

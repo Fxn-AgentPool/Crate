@@ -78,14 +78,16 @@ fn parse(args: &[String]) -> Result<Opts> {
 
 fn display_mode(name: &str) -> Result<DisplayMode> {
     let n = name.to_ascii_lowercase().replace([' ', '_', '-'], "");
-    for (i, m) in MeshMap::ALL.iter().enumerate() {
-        if m.name().to_ascii_lowercase().replace(' ', "") == n || m.file_stem().replace('_', "") == n {
-            return Ok(DisplayMode::MeshMap(i as u32));
-        }
-    }
+    // Channels first: "normal" and "height" are channels; the maps are "normal-map", "height-map".
     for (i, c) in Channel::ALL.iter().enumerate() {
         if c.name().to_ascii_lowercase().replace(' ', "") == n {
             return Ok(DisplayMode::Channel(i as u32));
+        }
+    }
+    for (i, m) in MeshMap::ALL.iter().enumerate() {
+        let name = m.name().to_ascii_lowercase().replace(' ', "");
+        if name == n || m.file_stem().replace('_', "") == n || format!("{name}map") == n {
+            return Ok(DisplayMode::MeshMap(i as u32));
         }
     }
     match n.as_str() {

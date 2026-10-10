@@ -202,7 +202,7 @@ pub fn compile(g: &Graph, ch: &ChannelSettings, env: &Env) -> Compiled {
     for line in &f.lines {
         let _ = writeln!(code, "    {line}");
     }
-    let _ = writeln!(code, "    return mat_to_material({body});\n}}");
+    let _ = writeln!(code, "    return apply_baked_normal(s, mat_to_material({body}));\n}}");
     Compiled { code, params: cx.l.params, errors: cx.errors }
 }
 
@@ -393,6 +393,8 @@ impl<'a> Ctx<'a> {
                     }
                     "Position" => (String::new(), Some(format!("mesh_position({tc}, s.layer)"))),
                     "ID" => (String::new(), Some(format!("mesh_id({tc}, s.layer)"))),
+                    "Normal" => (String::new(), Some(format!("mesh_normal_map({tc}, s.layer).xyz"))),
+                    "Height" => (format!("mesh_height({tc}, s.layer)"), None),
                     _ => (format!("mesh_ao({tc}, s.layer)"), None),
                 };
                 match co {

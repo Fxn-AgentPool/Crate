@@ -30,7 +30,7 @@ Creates a project from a mesh. Optionally bakes mesh maps, runs a script, and ex
 Always saves the project.
 
 ```
-crate new <MESH> -o <PROJECT> [--tile-resolution N] [--bake MAPS] [--script FILE]
+crate new <MESH> -o <PROJECT> [--tile-resolution N] [--high-poly FILE] [--bake MAPS] [--script FILE]
             [--export DIR] [EXPORT OPTIONS] [--set NAME=VALUE]...
 ```
 
@@ -39,7 +39,8 @@ crate new <MESH> -o <PROJECT> [--tile-resolution N] [--bake MAPS] [--script FILE
 | `MESH` | — | Mesh file: `.glb`, `.gltf` or `.obj`. |
 | `-o`, `--output` | — | Project directory to create. `.crate` is added if missing. |
 | `--tile-resolution` | `2048` | `1024`, `2048` or `4096`. |
-| `--bake` | none | `all`, or a comma-separated list: `ao`, `curvature`, `thickness`, `id`. Position and World Normal are always baked. |
+| `--high-poly` | none | High-poly mesh to bake from (`.glb`, `.gltf` or `.obj`). See [Mesh maps](mesh-maps.md#high-poly-mesh). |
+| `--bake` | none | `all`, or a comma-separated list: `ao`, `curvature`, `thickness`, `id`, `normal`, `height`. `all` includes Normal and Height when `--high-poly` is given. Position and World Normal are always baked. |
 | `--script` | none | Script to run on the new project before saving. |
 | `--export` | none | Export textures to this directory after the script. |
 | `--set` | none | Script variable, repeatable. See [Script commands](script-commands.md#variables). |

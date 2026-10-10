@@ -193,7 +193,11 @@ impl Session {
             "bake" => {
                 let p = self.project()?;
                 let maps: Vec<MeshMap> = if rest.is_empty() || rest[0] == "all" {
-                    vec![MeshMap::AmbientOcclusion, MeshMap::Curvature, MeshMap::Thickness, MeshMap::Id]
+                    let mut v = vec![MeshMap::AmbientOcclusion, MeshMap::Curvature, MeshMap::Thickness, MeshMap::Id];
+                    if p.maps.high_poly.is_some() {
+                        v.extend([MeshMap::Normal, MeshMap::Height]);
+                    }
+                    v
                 } else if rest[0] == "outdated" {
                     MeshMap::ALL
                         .into_iter()
@@ -206,10 +210,88 @@ impl Session {
                     say!("  nothing to bake");
                     return Ok(());
                 }
+                if let Some(m) = maps.iter().find(|m| m.needs_high()).filter(|_| p.maps.high_poly.is_none()) {
+                    bail!("{} needs a high-poly mesh (high-poly <file>)", m.name());
+                }
                 let t = std::time::Instant::now();
                 p.start_bake(&gpu, &maps);
                 p.finish_background_work(&gpu);
+                match p.maps.report.take() {
+                    Some(Err(e)) => bail!("{e}"),
+                    Some(Ok(msg)) => say!("  {msg}"),
+                    None => {}
+                }
                 say!("  baked in {:.2}s", t.elapsed().as_secs_f32());
+            }
+            "high-poly" => {
+                let path = rest.first().context("high-poly <mesh> | off")?.clone();
+                let path = if path == "off" { None } else { Some(self.path(&path)) };
+                if let Some(p) = &path {
+                    if !p.is_file() {
+                        bail!("no such file {}", p.display());
+                    }
+                }
+                let p = self.project()?;
+                if p.maps.high_poly != path {
+                    p.maps.last_misses = None;
+                }
+                p.maps.high_poly = path;
+                p.maps.settings.high_poly = crate::highpoly::stamp(p.maps.high_poly.as_ref());
+                p.maps.refresh_status();
+            }
+            "bake-settings" => {
+                let p = self.project()?;
+                let on = |v: &str| -> Result<bool> {
+                    match v {
+                        "on" | "true" | "1" => Ok(true),
+                        "off" | "false" | "0" => Ok(false),
+                        _ => bail!("expected on or off, got {v}"),
+                    }
+                };
+                for kv in rest {
+                    let (k, v) = kv.split_once('=').context("bake-settings key=value")?;
+                    let s = &mut p.maps.settings;
+                    match k {
+                        "resolution" => s.resolution = v.parse()?,
+                        "samples" => s.samples = v.parse()?,
+                        "max_distance" => s.max_distance = v.parse()?,
+                        "spread_angle" => s.spread_angle = v.parse()?,
+                        "ignore_backfaces" => s.ignore_backfaces = on(v)?,
+                        "curvature_radius" => s.curvature_radius = v.parse()?,
+                        "padding" => s.padding = v.parse()?,
+                        "frontal" => s.frontal = v.parse()?,
+                        "rear" => s.rear = v.parse()?,
+                        "match_by_name" => s.match_by_name = on(v)?,
+                        "apply_normal" => s.apply_normal = on(v)?,
+                        _ => bail!("unknown bake setting {k}"),
+                    }
+                }
+                p.maps.refresh_status();
+                p.update_scene(&gpu);
+            }
+            "save-map" => {
+                let m = parse_map(rest.first().context("save-map <map> <file.png> [udim]")?)?;
+                let out = self.path(rest.get(1).context("save-map <map> <file.png> [udim]")?);
+                let p = self.project()?;
+                let layer = match rest.get(2) {
+                    Some(u) => {
+                        let u: u32 = u.parse()?;
+                        p.mesh.tiles.iter().position(|t| *t == u).with_context(|| format!("the mesh has no tile {u}"))?
+                    }
+                    None => 0,
+                };
+                crate::meshmaps::save_png(&gpu, &p.maps, m, layer as u32, &out)?;
+                say!("  wrote {}", out.display());
+                report(|r| r.files.push(norm(&out)));
+            }
+            "expect-misses" => {
+                let max: f32 = rest.first().context("expect-misses <max percent>")?.parse()?;
+                let p = self.project()?;
+                let got = p.maps.last_misses.context("no high-poly bake has run")?;
+                if got > max {
+                    bail!("the high-poly bake missed {got:.2}% of texels (at most {max}% expected)");
+                }
+                say!("  missed {got:.2}% (at most {max}%)");
             }
             "add-fill" | "add-paint" => {
                 let p = self.project()?;
@@ -853,7 +935,9 @@ fn parse_map(m: &str) -> Result<MeshMap> {
         "thickness" => MeshMap::Thickness,
         "id" => MeshMap::Id,
         "position" => MeshMap::Position,
-        "worldnormal" | "normal" => MeshMap::WorldNormal,
+        "worldnormal" => MeshMap::WorldNormal,
+        "normal" | "normalmap" => MeshMap::Normal,
+        "height" | "heightmap" => MeshMap::Height,
         _ => bail!("unknown mesh map {m}"),
     })
 }

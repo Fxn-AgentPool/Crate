@@ -28,6 +28,8 @@ pub struct Tri {
 pub struct Bvh {
     pub nodes: Vec<Node>,
     pub tris: Vec<Tri>,
+    /// Source triangle index of each entry in `tris`.
+    pub order: Vec<u32>,
 }
 
 const LEAF_SIZE: usize = 4;
@@ -118,7 +120,7 @@ impl Bvh {
                 }
             })
             .collect();
-        Self { nodes, tris }
+        Self { nodes, tris, order }
     }
 
     /// Binned SAH. Returns (axis, split position) or None if a leaf is cheaper.

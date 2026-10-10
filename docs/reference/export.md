@@ -64,7 +64,8 @@ One EXR 16f file per enabled channel, unpacked. Height is exported as a separate
 converted to normals.
 
 \* **Normal\*** is the combined normal: Height converted with Height to Normal, combined with the
-Normal channel (RNM).
+Normal channel (RNM). The Normal channel includes the baked high-poly Normal map when **Apply
+Normal map** is on (see [Mesh maps](mesh-maps.md#normal-map)).
 
 ## Custom presets
 

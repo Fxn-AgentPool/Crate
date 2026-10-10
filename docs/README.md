@@ -43,6 +43,7 @@ Directions for specific tasks, assuming you already know your way around.
 
 - [How to import a mesh with UDIMs](how-to/import-a-mesh-with-udims.md)
 - [How to bake mesh maps](how-to/bake-mesh-maps.md)
+- [How to bake from a high-poly mesh](how-to/bake-from-a-high-poly-mesh.md)
 - [How to paint in manual bake mode](how-to/paint-in-manual-bake-mode.md)
 - [How to paint through a stencil](how-to/paint-through-a-stencil.md)
 - [How to mask a layer with a generator](how-to/mask-a-layer-with-a-generator.md)
@@ -87,6 +88,7 @@ Background, design decisions and context. Read these away from the application.
 - [About the paint buffer](explanation/about-the-paint-buffer.md)
 - [About realtime evaluation and caching](explanation/about-realtime-evaluation.md)
 - [About UDIM tiles and paint storage](explanation/about-tile-storage.md)
+- [About high-poly baking](explanation/about-high-poly-baking.md)
 - [About the MVP scope](explanation/about-mvp-scope.md)
 - [About automation](explanation/about-automation.md)
 - [About updates](explanation/about-updates.md)

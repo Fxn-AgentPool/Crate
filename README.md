@@ -74,6 +74,7 @@ being built separately.
 | `save_load.txt` | Saving and reopening a project renders identically; re-saving writes nothing. |
 | `smart_material.txt` | Saving a smart material and adding it to another project renders identically. |
 | `preview.txt` | Node previews of float, color and material outputs; turning it off restores the material. |
+| `highpoly.txt` | High-poly baking against analytic references (`tests/data/make_highpoly.py`): Normal, Height, exported normals, misses, name matching, save and reopen. |
 
 `cargo test` runs unit tests of the Node Editor's graph operations (merge, swap, dissolve, …).
 `tests/cli.sh` checks every command-line subcommand, variables, JSON output, watch mode and exit
@@ -110,7 +111,7 @@ builds, which check for releases but never install them.
 | Path | Contents |
 |---|---|
 | `src/mesh.rs` | glTF/OBJ import, UDIM tiles, import diagnostics |
-| `src/meshmaps.rs`, `src/bvh.rs` | Mesh map baking (UV raster + GPU ray tracing) |
+| `src/meshmaps.rs`, `src/bvh.rs`, `src/highpoly.rs` | Mesh map baking (UV raster + GPU ray tracing), from the low poly or a high poly |
 | `src/graph.rs`, `src/ops.rs` | Node graph model and layer operations |
 | `src/compile.rs`, `src/shaders/material_lib.wgsl` | Graph to WGSL compiler and its runtime library |
 | `src/cache.rs` | Cached nodes and filters (Blur, Dilate, Height to Normal) |
