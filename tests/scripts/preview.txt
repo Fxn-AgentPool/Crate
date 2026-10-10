@@ -1,0 +1,27 @@
+new assets/crate.glb 1024
+bake ao curvature
+size 640x480
+camera 35 22 1.3
+add-fill
+set base_color=#2A4C7D roughness=0.6
+render target/tests/preview/a_material.png
+# Preview a float output (shown as unlit grey), then a color output.
+node cells cellular
+node-set cells scale=12
+preview cells
+render target/tests/preview/b_cells.png
+expect-different target/tests/preview/a_material.png target/tests/preview/b_cells.png
+node tint ramp
+link cells.out tint.in
+preview tint.out
+render target/tests/preview/c_ramp.png
+# Previewing a material output shows that material.
+node red fill
+node-set red base_color=#C03020
+preview red
+render target/tests/preview/d_red_fill.png
+expect-different target/tests/preview/a_material.png target/tests/preview/d_red_fill.png
+# Turning the preview off restores the material exactly.
+preview off
+render target/tests/preview/e_off.png
+expect-same target/tests/preview/a_material.png target/tests/preview/e_off.png

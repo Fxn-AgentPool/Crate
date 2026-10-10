@@ -285,6 +285,13 @@ pub fn add_mask_generator(g: &mut Graph, l: LayerRef, ty: &str) -> Selection {
     push_mask_slot(g, l, name, MaskSource::Node(node))
 }
 
+/// Adds a Mesh Map node (for example Curvature) as a mask effect.
+pub fn add_mask_mesh_map(g: &mut Graph, l: LayerRef, map: crate::meshmaps::MeshMap) -> Selection {
+    let node = g.add("mesh_map");
+    g.set(node, "map", crate::graph::Value::Text(map.param_name().into()));
+    push_mask_slot(g, l, map.name(), MaskSource::Node(node))
+}
+
 pub fn add_mask_paint(g: &mut Graph, l: LayerRef) -> Selection {
     let node = g.add("paint_mask");
     push_mask_slot(g, l, "Paint", MaskSource::Node(node))

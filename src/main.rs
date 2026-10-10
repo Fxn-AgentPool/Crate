@@ -22,6 +22,7 @@ mod smartmat;
 mod script;
 mod stencil;
 mod thumbs;
+mod ui_library;
 mod ui_export;
 mod ui_graph;
 mod ui_layer_list;

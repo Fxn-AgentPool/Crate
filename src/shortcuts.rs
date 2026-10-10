@@ -29,6 +29,7 @@ pub enum Action {
     Duplicate,
     Delete,
     EditAsGraph,
+    ToggleNodeEditor,
     FrameMesh,
     FrameCursor,
     MaterialView,
@@ -44,7 +45,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 32] = [
+    pub const ALL: [Action; 33] = [
         Action::NewProject,
         Action::OpenProject,
         Action::Save,
@@ -67,6 +68,7 @@ impl Action {
         Action::Duplicate,
         Action::Delete,
         Action::EditAsGraph,
+        Action::ToggleNodeEditor,
         Action::FrameMesh,
         Action::FrameCursor,
         Action::MaterialView,
@@ -103,6 +105,7 @@ impl Action {
             Action::Duplicate => "Duplicate",
             Action::Delete => "Delete",
             Action::EditAsGraph => "Edit as graph",
+            Action::ToggleNodeEditor => "Open or close the Node Editor",
             Action::FrameMesh => "Frame mesh",
             Action::FrameCursor => "Frame cursor",
             Action::MaterialView => "Material view",
@@ -144,6 +147,7 @@ impl Action {
             Action::Duplicate => (c, Key::D),
             Action::Delete => (n, Key::Delete),
             Action::EditAsGraph => (n, Key::G),
+            Action::ToggleNodeEditor => (c, Key::Space),
             Action::FrameMesh => (n, Key::F),
             Action::FrameCursor => (s, Key::F),
             Action::MaterialView => (n, Key::M),
@@ -216,10 +220,11 @@ impl Bindings {
 
     /// Actions triggered this frame. Shortcuts with more modifiers are checked first, so
     /// Ctrl+Shift+Z is not mistaken for Ctrl+Z.
-    pub fn triggered(&self, i: &mut egui::InputState) -> Vec<Action> {
+    /// Actions whose shortcut was pressed, among those `allow` accepts. Their keys are consumed.
+    pub fn triggered(&self, i: &mut egui::InputState, allow: impl Fn(Action) -> bool) -> Vec<Action> {
         let mut order: Vec<Action> = Action::ALL
             .into_iter()
-            .filter(|a| !matches!(a, Action::StencilKey | Action::BufferKey | Action::FrameCursor))
+            .filter(|a| !matches!(a, Action::StencilKey | Action::BufferKey | Action::FrameCursor) && allow(*a))
             .collect();
         let count = |m: Modifiers| m.command as u8 + m.ctrl as u8 + m.shift as u8 + m.alt as u8;
         order.sort_by_key(|a| std::cmp::Reverse(count(self.get(*a).modifiers)));

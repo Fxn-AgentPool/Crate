@@ -32,6 +32,16 @@ fn mat_defaults() -> Mat {
     return m;
 }
 
+// Node Editor preview: the value as unlit color.
+fn mat_preview(c: vec3f) -> Mat {
+    var m = mat_defaults();
+    m.v[CH_BASE] = vec3f(0.0);
+    m.v[CH_ROUGH] = vec3f(1.0);
+    m.v[CH_METAL] = vec3f(0.0);
+    m.v[CH_EMISSIVE] = c;
+    return m;
+}
+
 fn mat_uncovered(m_in: Mat) -> Mat {
     var m = m_in;
     for (var c = 0u; c < 7u; c++) { m.a[c] = 0.0; }

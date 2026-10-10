@@ -202,6 +202,7 @@ fn pipeline(gpu: &Gpu, p: &mut crate::project::Project, target: &Target, materia
     let scene = &p.scene;
     let (slots, masks, caches) = (&p.paint_slots, &p.mask_slots, &p.caches);
     let env = compile::Env {
+        preview: None,
         image_layer: &|n| scene.image_layer(n),
         paint_slot: &|id| slots.get(&id).or(masks.get(&id)).copied(),
         cache: &|id| caches.lookup(id),

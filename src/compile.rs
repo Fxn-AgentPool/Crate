@@ -155,6 +155,8 @@ pub struct Env<'a> {
     pub image_layer: &'a dyn Fn(&str) -> i32,
     pub paint_slot: &'a dyn Fn(NodeId) -> Option<u32>,
     pub cache: &'a dyn Fn(NodeId) -> Option<CacheRef>,
+    /// Node Editor preview: show this output instead of the Material Output (viewport only).
+    pub preview: Option<&'a Link>,
 }
 
 /// What a cache evaluation shader computes.
@@ -181,9 +183,15 @@ pub fn compile(g: &Graph, ch: &ChannelSettings, env: &Env) -> Compiled {
         exclude: None,
     };
     let mut f = Func { lines: Vec::new(), emitted: HashSet::new() };
-    let body = match g.output_node().and_then(|o| g.node(o).inputs.get("in").cloned()) {
-        Some(link) => cx.input_expr(&mut f, &link, SocketType::Material),
-        None => "mat_defaults()".to_string(),
+    let body = match env.preview.filter(|l| g.get(l.node).is_some()) {
+        Some(link) => match g.output_type(link) {
+            Some(SocketType::Material) => cx.input_expr(&mut f, link, SocketType::Material),
+            _ => format!("mat_preview({})", cx.input_expr(&mut f, link, SocketType::Color)),
+        },
+        None => match g.output_node().and_then(|o| g.node(o).inputs.get("in").cloned()) {
+            Some(link) => cx.input_expr(&mut f, &link, SocketType::Material),
+            None => "mat_defaults()".to_string(),
+        },
     };
     let mut code = String::new();
     for func in &cx.funcs {

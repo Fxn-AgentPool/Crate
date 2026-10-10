@@ -61,7 +61,7 @@ pub struct PainterApp {
     node_editor: crate::ui_graph::NodeEditor,
     windows: crate::ui_windows::Windows,
     prefs: crate::prefs::Preferences,
-    library: Library,
+    library: crate::ui_library::Library,
     environment: Option<PathBuf>,
     bindings: crate::shortcuts::Bindings,
     thumbs: crate::thumbs::Thumbnails,
@@ -110,7 +110,7 @@ impl PainterApp {
             node_editor: Default::default(),
             windows: Default::default(),
             prefs: crate::prefs::Preferences::load(),
-            library: Library::default(),
+            library: Default::default(),
             environment: None,
             bindings: crate::shortcuts::Bindings::new(&prefs_for_bindings.shortcuts),
             thumbs: crate::thumbs::Thumbnails::new(&paint_gpu),
@@ -160,6 +160,7 @@ impl PainterApp {
         self.bake_selection = MeshMap::ALL.map(|m| project.maps.status(m) != MapStatus::UpToDate);
         self.doc = Some(project);
         self.thumbs.clear();
+        self.library.project_changed();
         self.viewport_material = u64::MAX;
         self.failed_import_log = None;
         self.error = None;
@@ -185,6 +186,7 @@ impl PainterApp {
             self.paint = session.paint;
             self.doc = Some(project);
             self.thumbs.clear();
+            self.library.project_changed();
             self.viewport_material = u64::MAX;
         }
     }
@@ -256,8 +258,13 @@ impl PainterApp {
             if flip || reset_s {
                 self.s_dragged = true;
             }
-            let escape = self.node_editor.open && i.consume_key(Modifiers::NONE, Key::Escape);
-            let mut actions = if s_down || i.key_down(v_key) { Vec::new() } else { bindings.triggered(i) };
+            let escape = self.node_editor.open && !self.node_editor.has_popup() && i.consume_key(Modifiers::NONE, Key::Escape);
+            // Over the Node Editor, its own keys (Delete, Tab, Home, …) win over the viewport's.
+            let over_editor = self.node_editor.open && i.pointer.hover_pos().is_some_and(|p| self.node_editor.rect.contains(p));
+            let allow = |a: A| {
+                !over_editor || matches!(a, A::ToggleNodeEditor | A::Undo | A::Redo | A::Save | A::NewProject | A::OpenProject | A::ExportTextures)
+            };
+            let mut actions = if s_down || i.key_down(v_key) { Vec::new() } else { bindings.triggered(i, allow) };
             if escape {
                 self.node_editor.open = false;
             }
@@ -328,9 +335,10 @@ impl PainterApp {
                     A::NextStencil => doc.stencils.next(),
                     A::EditAsGraph => {
                         if let Some(sel) = doc.selection {
-                            self.node_editor.open_for(sel.layer(), &doc.graph);
+                            self.node_editor.open_for(sel.layer());
                         }
                     }
+                    A::ToggleNodeEditor => self.node_editor.toggle(doc.selection.map(|s| s.layer())),
                     A::FrameMesh => self.camera.frame(doc.mesh.center(), doc.mesh.radius()),
                     A::TileGrid => self.view.show_tiles = !self.view.show_tiles,
                     A::Wireframe => self.view.wireframe = !self.view.wireframe,
@@ -389,6 +397,7 @@ impl PainterApp {
                                         self.viewport_material = u64::MAX;
                                         self.paint = PaintEngine::new(&self.gpu);
                                         self.thumbs.clear();
+                                        self.library.project_changed();
                                         self.show_import_log |= !doc.mesh.diagnostics.is_empty();
                                     }
                                     Err(e) => self.error = Some(format!("Reimport failed: {e:#}")),
@@ -653,7 +662,7 @@ impl PainterApp {
         let doc = &*doc;
 
         if doc.material_version != self.viewport_material {
-            if let Err(e) = self.viewport.set_material(&self.gpu, &doc.material_code) {
+            if let Err(e) = self.viewport.set_material(&self.gpu, doc.viewport_code()) {
                 log::error!("Material shader failed to compile:
 {e}");
                 self.error = Some("Material shader failed to compile; see the log.".into());
@@ -836,6 +845,7 @@ impl PainterApp {
                 }
                 self.doc = Some(project);
                 self.thumbs.clear();
+                self.library.project_changed();
                 self.viewport_material = u64::MAX;
                 self.error = None;
             }
@@ -899,21 +909,32 @@ impl PainterApp {
 
     fn side_panels(&mut self, ui: &mut egui::Ui) {
         let Some(doc) = &mut self.doc else { return };
-        let mut insert = None;
+        let mut library_action = None;
         egui::Panel::left("left").resizable(true).default_size(280.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 paint_panels(ui, &self.gpu, doc, &mut self.paint);
                 egui::CollapsingHeader::new("Library").default_open(true).show(ui, |ui| {
-                    insert = self.library.ui(ui);
+                    library_action = self.library.ui(ui, &self.gpu, doc);
                 });
             });
         });
-        if let Some(path) = insert {
-            let above = doc.selection.map(|s| s.layer());
-            match crate::smartmat::insert(&self.gpu, doc, &path, above) {
-                Ok(l) => doc.selection = Some(crate::ops::Selection::Layer(l)),
-                Err(e) => self.error = Some(format!("Could not add smart material: {e:#}")),
+        use crate::ui_library::LibraryAction;
+        match library_action {
+            Some(LibraryAction::InsertSmartMaterial(path)) => {
+                let above = doc.selection.map(|s| s.layer());
+                match crate::smartmat::insert(&self.gpu, doc, &path, above) {
+                    Ok(l) => doc.selection = Some(crate::ops::Selection::Layer(l)),
+                    Err(e) => self.error = Some(format!("Could not add smart material: {e:#}")),
+                }
             }
+            Some(LibraryAction::MeshMapMask(m)) => {
+                if let Some(l) = doc.selection.map(|s| s.layer()) {
+                    let sel = doc.edit(&self.gpu, "Add mesh map mask", |g| crate::ops::add_mask_mesh_map(g, l, m));
+                    doc.selection = Some(sel);
+                }
+            }
+            Some(LibraryAction::ShowMeshMap(m)) => self.view.display = DisplayMode::MeshMap(m.index() as u32),
+            None => {}
         }
         let mut actions = PanelActions::default();
         egui::Panel::right("right").resizable(true).default_size(330.0).show(ui, |ui| {
@@ -941,11 +962,14 @@ impl PainterApp {
         }
         if actions.edit_as_graph.is_some() {
             if let Some(sel) = doc.selection {
-                self.node_editor.open_for(sel.layer(), &doc.graph);
+                self.node_editor.open_for(sel.layer());
             }
         }
+        if !self.node_editor.open && doc.preview.is_some() {
+            doc.set_preview(&self.gpu, None);
+        }
         if self.node_editor.open {
-            egui::Panel::bottom("node editor").resizable(true).default_size(380.0).show(ui, |ui| {
+            egui::Panel::bottom("node editor").resizable(true).default_size(380.0).min_size(220.0).show(ui, |ui| {
                 self.node_editor.ui(ui, &self.gpu, doc);
             });
         }
@@ -1237,72 +1261,6 @@ fn capitalize(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         None => String::new(),
-    }
-}
-
-/// Library section: smart materials in the user library directory.
-#[derive(Default)]
-struct Library {
-    items: Option<Vec<(crate::smartmat::LibraryItem, Option<egui::TextureHandle>)>>,
-}
-
-impl Library {
-    fn refresh(&mut self) {
-        self.items = None;
-    }
-
-    /// Returns a smart material to insert, if one was chosen.
-    fn ui(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
-        let items = self.items.get_or_insert_with(|| {
-            crate::smartmat::list()
-                .into_iter()
-                .map(|it| {
-                    let tex = it.thumbnail.clone().map(|img| ui.ctx().load_texture(format!("smat {}", it.name), img, Default::default()));
-                    (it, tex)
-                })
-                .collect()
-        });
-        let mut chosen = None;
-        ui.label(egui::RichText::new("Smart Materials").strong());
-        if items.is_empty() {
-            ui.label(egui::RichText::new("None yet. Right-click a group > Save as smart material.").weak());
-        }
-        ui.horizontal_wrapped(|ui| {
-            for (it, tex) in items.iter() {
-                let id = egui::Id::new(("smat", &it.path));
-                let resp = ui
-                    .dnd_drag_source(id, it.path.clone(), |ui| {
-                        ui.vertical(|ui| {
-                            if let Some(t) = tex {
-                                ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(72.0, 72.0)));
-                            }
-                            ui.label(egui::RichText::new(&it.name).small());
-                        });
-                    })
-                    .response
-                    .on_hover_text("Drag onto the Layers panel, or double-click to add");
-                if resp.double_clicked() {
-                    chosen = Some(it.path.clone());
-                }
-                resp.context_menu(|ui| {
-                    if ui.button("Add to layers").clicked() {
-                        chosen = Some(it.path.clone());
-                        ui.close();
-                    }
-                });
-            }
-        });
-        ui.horizontal(|ui| {
-            if ui.small_button("Refresh").clicked() {
-                self.items = None;
-            }
-            if ui.small_button("Show in file browser").clicked() {
-                let dir = crate::smartmat::library_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                crate::prefs::open_folder(&dir);
-            }
-        });
-        chosen
     }
 }
 

@@ -1,22 +1,28 @@
 //! Node Editor. See Painter-docs/reference/nodes.md and Painter-docs/how-to/edit-a-layer-as-a-graph.md.
 //!
-//! Shows the subgraph behind one layer: its content and mask, plus a virtual "Layer" sink
-//! node whose inputs are the layer's content and mask. Connecting into the sink, into a
-//! Stack's layer sockets or into a Mask Stack's sockets edits those slots.
+//! Shows either the subgraph behind one layer (its content and mask, plus a virtual "Layer"
+//! sink node whose inputs are the layer's content and mask) or, with no layer in focus, the
+//! whole project graph. Connecting into the sink, into a Stack's layer sockets or into a Mask
+//! Stack's sockets edits those slots; the "+ New layer" / "+ New effect" sockets add slots.
 
 use std::collections::BTreeSet;
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2, epaint::CubicBezierShape};
 
 use crate::gpu::Gpu;
-use crate::graph::{self, Graph, MaskSlot, MaskSource, NodeId, SocketType, Value};
+use crate::graph::{self, Graph, MaskSlot, MaskSource, NodeId, Slot, SocketType, Value};
 use crate::ops::{self, LayerRef};
 use crate::project::Project;
+
+mod wrangler;
+use wrangler::MergeOp;
 
 const SINK: NodeId = u32::MAX;
 const NODE_W: f32 = 170.0;
 const HEADER: f32 = 22.0;
 const ROW: f32 = 20.0;
+const NEW_LAYER: &str = "slot_new";
+const NEW_EFFECT: &str = "m_new";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SocketRef {
@@ -26,22 +32,72 @@ struct SocketRef {
 
 #[derive(Clone, Debug)]
 enum Drag {
-    Node(NodeId),
+    /// Moving the selected nodes.
+    Nodes,
     /// Dragging a new link from an output.
     Link { from: SocketRef, ty: SocketType },
     Pan,
+    /// Box selection, from this screen position.
+    Box { start: Pos2, additive: bool },
+    /// Ctrl + right drag: cuts the links the stroke crosses.
+    Cut { points: Vec<Pos2> },
+    /// Alt + right drag from one node to another: connects them (with Shift: choose sockets).
+    Lazy { from: NodeId, menu: bool },
+}
+
+/// Node Wrangler operations, from shortcuts or the node context menu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Op {
+    Merge(MergeOp),
+    Swap,
+    Dissolve,
+    DeleteUnused,
+    Duplicate,
+    Align,
+    Reset,
+    CopySettings,
+    LinkToSelected,
+    SelectAll,
+    DeselectAll,
+}
+
+/// What the editor shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    /// The whole project graph.
+    Root,
+    /// One layer's content and mask, with the Layer sink.
+    Layer(LayerRef),
+}
+
+/// The add-node menu, optionally connecting the new node to a dragged link.
+struct AddMenu {
+    /// Canvas position for the new node.
+    at: Pos2,
+    search: String,
+    link: Option<(SocketRef, SocketType)>,
 }
 
 pub struct NodeEditor {
     pub open: bool,
-    pub layer: Option<LayerRef>,
+    /// Screen area of the editor last frame, so global shortcuts can yield to it.
+    pub rect: Rect,
+    pub focus: Focus,
     pan: Vec2,
     zoom: f32,
-    selected: Option<NodeId>,
+    selected: BTreeSet<NodeId>,
+    /// The node whose properties are shown (the last one clicked).
+    primary: Option<NodeId>,
     drag: Option<Drag>,
+    /// Whether the current node drag has moved anything (for its undo checkpoint).
+    moved: bool,
     /// Nodes added in this editor session that are not yet connected.
     extra: BTreeSet<NodeId>,
-    add_menu: Option<(Pos2, String)>,
+    add_menu: Option<AddMenu>,
+    /// Right-click menu of a node (screen position).
+    node_menu: Option<Pos2>,
+    /// Socket chooser after a Shift+Alt lazy connect: (screen position, from, to).
+    lazy_menu: Option<(Pos2, NodeId, NodeId)>,
     auto_layout_needed: bool,
     frame_needed: bool,
 }
@@ -50,13 +106,18 @@ impl Default for NodeEditor {
     fn default() -> Self {
         Self {
             open: false,
-            layer: None,
+            rect: Rect::NOTHING,
+            focus: Focus::Root,
             pan: Vec2::ZERO,
             zoom: 1.0,
-            selected: None,
+            selected: BTreeSet::new(),
+            primary: None,
             drag: None,
+            moved: false,
             extra: BTreeSet::new(),
             add_menu: None,
+            node_menu: None,
+            lazy_menu: None,
             auto_layout_needed: false,
             frame_needed: false,
         }
@@ -69,6 +130,10 @@ fn type_color(t: SocketType) -> Color32 {
         SocketType::Color => Color32::from_rgb(230, 200, 60),
         SocketType::Material => Color32::from_rgb(90, 200, 110),
     }
+}
+
+fn compatible(from: SocketType, to: SocketType) -> bool {
+    from == to || matches!((from, to), (SocketType::Float, SocketType::Color) | (SocketType::Color, SocketType::Float))
 }
 
 /// Input sockets of a node, including slot sockets of stacks.
@@ -85,10 +150,16 @@ fn inputs(g: &Graph, id: NodeId) -> Vec<(String, String, SocketType)> {
         v.push((format!("slot{i}"), s.name.clone(), SocketType::Material));
         v.push((format!("slot{i}.mask"), format!("{} mask", s.name), SocketType::Float));
     }
+    if n.ty == "stack" {
+        v.push((NEW_LAYER.into(), "+ New layer".into(), SocketType::Material));
+    }
     for (i, m) in n.mask_slots.iter().enumerate() {
         if matches!(m.source, MaskSource::Node(_)) {
             v.push((format!("m{i}"), m.name.clone(), SocketType::Float));
         }
+    }
+    if n.ty == "mask_stack" {
+        v.push((NEW_EFFECT.into(), "+ New effect".into(), SocketType::Float));
     }
     v
 }
@@ -114,10 +185,10 @@ fn main_output(g: &Graph, id: NodeId) -> String {
 }
 
 /// All links into `id`: (input socket, source node, source output).
-fn links_into(g: &Graph, layer: LayerRef, id: NodeId) -> Vec<(String, NodeId, String)> {
+fn links_into(g: &Graph, layer: Option<LayerRef>, id: NodeId) -> Vec<(String, NodeId, String)> {
     let mut v = Vec::new();
     if id == SINK {
-        if let Some(s) = ops::slot(g, layer) {
+        if let Some(s) = layer.and_then(|l| ops::slot(g, l)) {
             if let Some(c) = s.content.filter(|c| g.get(*c).is_some()) {
                 v.push(("content".into(), c, main_output(g, c)));
             }
@@ -169,7 +240,7 @@ fn as_mask_stack(g: &mut Graph, src: NodeId) -> NodeId {
 }
 
 /// Applies a connection. Returns false if it is not allowed.
-fn connect(g: &mut Graph, layer: LayerRef, from: &SocketRef, to: &SocketRef) -> bool {
+fn connect(g: &mut Graph, layer: Option<LayerRef>, from: &SocketRef, to: &SocketRef) -> bool {
     let Some(from_ty) = g.get(from.node).and_then(|_| g.output_type(&graph::Link { node: from.node, output: from.name.clone() })) else {
         return false;
     };
@@ -177,16 +248,12 @@ fn connect(g: &mut Graph, layer: LayerRef, from: &SocketRef, to: &SocketRef) -> 
         Some((_, _, t)) => t,
         None => return false,
     };
-    let compatible = match (from_ty, to_ty) {
-        (a, b) if a == b => true,
-        (SocketType::Float, SocketType::Color) | (SocketType::Color, SocketType::Float) => true,
-        _ => false,
-    };
-    if !compatible {
+    if !compatible(from_ty, to_ty) {
         return false;
     }
     let would_cycle = |g: &Graph, target: NodeId| target == from.node || g.depends_on(from.node, target);
     if to.node == SINK {
+        let Some(layer) = layer else { return false };
         if to.name == "content" {
             if let Some(s) = ops::slot_mut(g, layer) {
                 s.content = Some(from.node);
@@ -201,6 +268,22 @@ fn connect(g: &mut Graph, layer: LayerRef, from: &SocketRef, to: &SocketRef) -> 
     }
     if would_cycle(g, to.node) {
         return false;
+    }
+    if to.name == NEW_LAYER {
+        let name = g.node(from.node).title().to_string();
+        g.node_mut(to.node).slots.push(Slot::new(name, from.node));
+        return true;
+    }
+    if to.name == NEW_EFFECT {
+        let name = g.node(from.node).title().to_string();
+        g.node_mut(to.node).mask_slots.push(MaskSlot {
+            name,
+            visible: true,
+            opacity: 1.0,
+            mode: graph::BlendMode::Normal,
+            source: MaskSource::Node(from.node),
+        });
+        return true;
     }
     if let Some(rest) = to.name.strip_prefix("slot") {
         let (idx, is_mask) = match rest.strip_suffix(".mask") {
@@ -226,9 +309,9 @@ fn connect(g: &mut Graph, layer: LayerRef, from: &SocketRef, to: &SocketRef) -> 
     g.connect(from.node, &from.name, to.node, &to.name)
 }
 
-fn disconnect(g: &mut Graph, layer: LayerRef, to: &SocketRef) {
+fn disconnect(g: &mut Graph, layer: Option<LayerRef>, to: &SocketRef) {
     if to.node == SINK {
-        if let Some(s) = ops::slot_mut(g, layer) {
+        if let Some(s) = layer.and_then(|l| ops::slot_mut(g, l)) {
             if to.name == "content" {
                 s.content = None;
             } else {
@@ -386,46 +469,70 @@ pub fn id_color(i: u32) -> [f32; 3] {
 }
 
 impl NodeEditor {
-    pub fn open_for(&mut self, layer: LayerRef, g: &Graph) {
+    /// Opens the editor on one layer's graph.
+    pub fn open_for(&mut self, layer: LayerRef) {
+        self.set_focus(Focus::Layer(layer));
         self.open = true;
-        if self.layer != Some(layer) {
-            self.layer = Some(layer);
+    }
+
+    /// Opens the editor on the whole project graph.
+    pub fn open_root(&mut self) {
+        self.set_focus(Focus::Root);
+        self.open = true;
+    }
+
+    /// Ctrl+Space: closes the editor, or opens it on the selected layer (or the whole graph).
+    pub fn toggle(&mut self, layer: Option<LayerRef>) {
+        if self.open {
+            self.open = false;
+        } else {
+            match layer {
+                Some(l) => self.open_for(l),
+                None => self.open_root(),
+            }
+        }
+    }
+
+    /// Whether one of the editor's menus is open (Esc closes it rather than the editor).
+    pub fn has_popup(&self) -> bool {
+        self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some()
+    }
+
+    fn set_focus(&mut self, focus: Focus) {
+        if self.focus != focus {
+            self.focus = focus;
             self.extra.clear();
-            self.selected = None;
-            self.zoom = 1.0;
-            self.pan = Vec2::ZERO;
-            // Lay out nodes that were never placed: right to left from the sink.
-            let _ = g;
+            self.selected.clear();
+            self.primary = None;
+            self.add_menu = None;
+            self.drag = None;
         }
         self.auto_layout_needed = true;
         self.frame_needed = true;
     }
 
-    /// Fits all visible nodes into the canvas.
-    fn frame_all(&mut self, g: &Graph, layer: LayerRef, rect: Rect) {
-        let mut lo = Vec2::splat(f32::MAX);
-        let mut hi = Vec2::splat(f32::MIN);
-        let mut nodes = self.visible(g, layer);
-        nodes.push(SINK);
-        for n in nodes {
-            let pos = if n == SINK { self.sink_pos(g, layer) } else { g.node(n).pos };
-            let h = HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0;
-            lo = lo.min(Vec2::new(pos[0], pos[1]));
-            hi = hi.max(Vec2::new(pos[0] + NODE_W, pos[1] + h));
+    fn layer(&self) -> Option<LayerRef> {
+        match self.focus {
+            Focus::Layer(l) => Some(l),
+            Focus::Root => None,
         }
-        let size = (hi - lo).max(Vec2::splat(1.0));
-        self.zoom = ((rect.width() - 40.0) / size.x).min((rect.height() - 40.0) / size.y).clamp(0.3, 1.0);
-        // origin = rect.center() - (NODE_W, 60); put the bounds' center at the rect's center.
-        let origin = rect.center() - Vec2::new(NODE_W, 60.0);
-        let center = (lo + hi) * 0.5;
-        self.pan = (rect.center() - origin) / self.zoom - center;
     }
 
-    fn visible(&self, g: &Graph, layer: LayerRef) -> Vec<NodeId> {
+    /// Nodes shown, without the sink.
+    fn visible(&self, g: &Graph) -> Vec<NodeId> {
         let mut set = BTreeSet::new();
-        if let Some(s) = ops::slot(g, layer) {
-            for root in [s.content, s.mask].into_iter().flatten() {
-                set.extend(g.subgraph(root));
+        match self.focus {
+            Focus::Layer(l) => {
+                if let Some(s) = ops::slot(g, l) {
+                    for root in [s.content, s.mask].into_iter().flatten() {
+                        set.extend(g.subgraph(root));
+                    }
+                }
+            }
+            Focus::Root => {
+                if let Some(out) = g.output_node() {
+                    set.extend(g.subgraph(out));
+                }
             }
         }
         for e in &self.extra {
@@ -436,14 +543,52 @@ impl NodeEditor {
         set.into_iter().collect()
     }
 
-    /// Places nodes at (0, 0) to the left of whatever reads them.
-    fn layout(&self, g: &mut Graph, layer: LayerRef) {
-        let nodes = self.visible(g, layer);
-        let unplaced: Vec<NodeId> = nodes.iter().copied().filter(|n| g.node(*n).pos == [0.0, 0.0]).collect();
+    /// Nodes shown, with the sink when a layer is in focus.
+    fn all_nodes(&self, g: &Graph) -> Vec<NodeId> {
+        let mut v = self.visible(g);
+        if self.layer().is_some() {
+            v.push(SINK);
+        }
+        v
+    }
+
+    /// Fits all visible nodes into the canvas.
+    fn frame_all(&mut self, g: &Graph, rect: Rect) {
+        let mut lo = Vec2::splat(f32::MAX);
+        let mut hi = Vec2::splat(f32::MIN);
+        let nodes = self.all_nodes(g);
+        if nodes.is_empty() {
+            self.zoom = 1.0;
+            self.pan = Vec2::ZERO;
+            return;
+        }
+        for n in nodes {
+            let pos = self.node_pos(g, n);
+            let h = HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0;
+            lo = lo.min(Vec2::new(pos[0], pos[1]));
+            hi = hi.max(Vec2::new(pos[0] + NODE_W, pos[1] + h));
+        }
+        let size = (hi - lo).max(Vec2::splat(1.0));
+        self.zoom = ((rect.width() - 40.0) / size.x).min((rect.height() - 40.0) / size.y).clamp(0.3, 1.0);
+        let origin = rect.center() - Vec2::new(NODE_W, 60.0);
+        let center = (lo + hi) * 0.5;
+        self.pan = (rect.center() - origin) / self.zoom - center;
+    }
+
+    /// Places nodes that were never placed (at (0, 0)) to the left of the node that reads them,
+    /// level with the socket they feed, then moves them down until they overlap nothing.
+    fn layout(&self, g: &mut Graph) {
+        let nodes = self.visible(g);
+        // The Material Output anchors the whole-graph view at the origin.
+        let anchor = match self.focus {
+            Focus::Root => g.output_node(),
+            Focus::Layer(_) => None,
+        };
+        let unplaced: Vec<NodeId> = nodes.iter().copied().filter(|n| Some(*n) != anchor && g.node(*n).pos == [0.0, 0.0]).collect();
         if unplaced.is_empty() {
             return;
         }
-        // Depth = longest path to the sink.
+        // Depth = longest path to the sink (or the Material Output): readers are placed first.
         let mut depth: std::collections::BTreeMap<NodeId, usize> = Default::default();
         fn walk(g: &Graph, n: NodeId, d: usize, depth: &mut std::collections::BTreeMap<NodeId, usize>) {
             if depth.get(&n).is_some_and(|x| *x >= d) || d > 64 {
@@ -454,100 +599,229 @@ impl NodeEditor {
                 walk(g, c, d + 1, depth);
             }
         }
-        if let Some(s) = ops::slot(g, layer) {
-            for r in [s.content, s.mask].into_iter().flatten() {
-                walk(g, r, 1, &mut depth);
+        match self.focus {
+            Focus::Layer(l) => {
+                if let Some(s) = ops::slot(g, l) {
+                    for r in [s.content, s.mask].into_iter().flatten() {
+                        walk(g, r, 1, &mut depth);
+                    }
+                }
+            }
+            Focus::Root => {
+                if let Some(out) = g.output_node() {
+                    walk(g, out, 0, &mut depth);
+                }
             }
         }
-        let mut rows: std::collections::BTreeMap<usize, f32> = Default::default();
-        for n in unplaced {
-            let d = *depth.get(&n).unwrap_or(&1);
-            let y = rows.entry(d).or_insert(0.0);
-            g.node_mut(n).pos = [-(d as f32) * 220.0, *y];
-            *y += 140.0;
+        let height = |g: &Graph, n: NodeId| HEADER + (inputs(g, n).len() + outputs(g, n).len()).max(1) as f32 * ROW + 6.0;
+        let mut placed: Vec<NodeId> = nodes.iter().copied().filter(|n| !unplaced.contains(n)).collect();
+        let mut order = unplaced;
+        order.sort_by_key(|n| depth.get(n).copied().unwrap_or(1));
+        for n in order {
+            // The first placed node reading `n`, and the row of the socket it reads it on.
+            let reader = placed.iter().copied().find_map(|r| {
+                let i = links_into(g, self.layer(), r).iter().position(|(_, src, _)| *src == n)?;
+                let input = &links_into(g, self.layer(), r)[i].0;
+                let row = outputs(g, r).len() + inputs(g, r).iter().position(|(name, _, _)| name == input).unwrap_or(0);
+                Some((r, row))
+            });
+            let (x, mut y) = match reader {
+                Some((r, row)) => {
+                    let rp = g.node(r).pos;
+                    (rp[0] - NODE_W - 50.0, rp[1] + row as f32 * ROW)
+                }
+                None => {
+                    let d = depth.get(&n).copied().unwrap_or(1);
+                    (-(d as f32) * (NODE_W + 50.0), 0.0)
+                }
+            };
+            let h = height(g, n);
+            // Move down past anything in the way.
+            loop {
+                let hit = placed.iter().copied().find(|o| {
+                    let op = g.node(*o).pos;
+                    (op[0] - x).abs() < NODE_W + 20.0 && y < op[1] + height(g, *o) + 20.0 && op[1] < y + h + 20.0
+                });
+                match hit {
+                    Some(o) => y = g.node(o).pos[1] + height(g, o) + 20.0,
+                    None => break,
+                }
+            }
+            g.node_mut(n).pos = [x, y];
+            placed.push(n);
         }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
-        let Some(layer) = self.layer.filter(|l| ops::slot(&p.graph, *l).is_some()) else {
-            ui.label("Select a layer and press G to edit it as a graph.");
-            return;
-        };
-        if self.auto_layout_needed {
-            self.layout(&mut p.graph, layer);
-            self.auto_layout_needed = false;
+        // A deleted layer falls back to the whole graph instead of closing the editor.
+        if let Focus::Layer(l) = self.focus {
+            if ops::slot(&p.graph, l).is_none() {
+                self.set_focus(Focus::Root);
+            }
         }
-        let name = ops::slot(&p.graph, layer).map(|s| s.name.clone()).unwrap_or_default();
+        self.rect = ui.max_rect();
+        // Every frame: nodes added elsewhere (new layers, effects) get placed as they appear.
+        self.layout(&mut p.graph);
+        if std::mem::take(&mut self.auto_layout_needed) {
+            self.frame_needed = true;
+        }
         ui.horizontal(|ui| {
-            ui.strong(format!("Node Editor: {name}"));
-            ui.label(egui::RichText::new("Tab: add node · drag outputs to inputs · Delete: remove · middle drag: pan · wheel: zoom · Home: frame all · Esc: close").weak());
+            match self.focus {
+                Focus::Layer(l) => {
+                    let name = ops::slot(&p.graph, l).map(|s| s.name.clone()).unwrap_or_default();
+                    ui.strong(format!("Node Editor: {name}"));
+                    if ui.small_button("Whole graph").on_hover_text("Show the whole project graph").clicked() {
+                        self.set_focus(Focus::Root);
+                    }
+                }
+                Focus::Root => {
+                    ui.strong("Node Editor: whole project");
+                    if let Some(sel) = p.selection {
+                        if ui.small_button("Selected layer").on_hover_text("Show only the selected layer's graph (G)").clicked() {
+                            self.set_focus(Focus::Layer(sel.layer()));
+                        }
+                    }
+                }
+            }
+            if let Some(l) = p.preview.clone() {
+                let title = p.graph.get(l.node).map(|n| n.title().to_string()).unwrap_or_default();
+                ui.colored_label(Color32::from_rgb(110, 200, 120), format!("Previewing {title} › {}", pretty(&l.output)));
+                if ui.small_button("Stop preview").on_hover_text("Or Ctrl+Shift+click empty space").clicked() {
+                    p.set_preview(gpu, None);
+                }
+            }
+            ui.label(
+                egui::RichText::new(
+                    "Tab / Shift+A / right-click: add · drag output: connect · drag: box select · right-drag, Alt+drag: pan · \
+                     Ctrl+Shift+click: preview · Alt+right-drag: lazy connect · Ctrl+right-drag: cut links · right-click a node: more",
+                )
+                .weak(),
+            );
         });
         egui::Panel::right("node props").resizable(true).default_size(260.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.properties(ui, gpu, p));
         });
-        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, gpu, p, layer));
+        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, gpu, p));
     }
 
     fn to_screen(&self, origin: Pos2, pos: [f32; 2]) -> Pos2 {
         origin + (Vec2::new(pos[0], pos[1]) + self.pan) * self.zoom
     }
 
-    fn sink_pos(&self, g: &Graph, layer: LayerRef) -> [f32; 2] {
-        let content = ops::slot(g, layer).and_then(|s| s.content).and_then(|c| g.get(c));
+    fn to_canvas(&self, origin: Pos2, screen: Pos2) -> Pos2 {
+        let c = (screen - origin) / self.zoom - self.pan;
+        Pos2::new(c.x, c.y)
+    }
+
+    fn sink_pos(&self, g: &Graph) -> [f32; 2] {
+        let content = self.layer().and_then(|l| ops::slot(g, l)).and_then(|s| s.content).and_then(|c| g.get(c));
         let x = content.map(|n| n.pos[0] + 240.0).unwrap_or(0.0).max(0.0);
         [x, content.map(|n| n.pos[1]).unwrap_or(0.0)]
     }
 
-    fn node_rect(&self, g: &Graph, origin: Pos2, id: NodeId, layer: LayerRef) -> Rect {
-        let pos = if id == SINK { self.sink_pos(g, layer) } else { g.node(id).pos };
-        let rows = inputs(g, id).len() + outputs(g, id).len();
-        let h = HEADER + rows.max(1) as f32 * ROW + 6.0;
-        Rect::from_min_size(self.to_screen(origin, pos), Vec2::new(NODE_W, h) * self.zoom)
+    fn node_pos(&self, g: &Graph, id: NodeId) -> [f32; 2] {
+        if id == SINK { self.sink_pos(g) } else { g.node(id).pos }
     }
 
-    fn input_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str, layer: LayerRef) -> Option<Pos2> {
-        let r = self.node_rect(g, origin, id, layer);
+    fn node_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
+        let rows = inputs(g, id).len() + outputs(g, id).len();
+        let h = HEADER + rows.max(1) as f32 * ROW + 6.0;
+        Rect::from_min_size(self.to_screen(origin, self.node_pos(g, id)), Vec2::new(NODE_W, h) * self.zoom)
+    }
+
+    fn input_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
+        let r = self.node_rect(g, origin, id);
         let i = inputs(g, id).iter().position(|(n, _, _)| n == name)?;
         let row = outputs(g, id).len() + i;
         Some(Pos2::new(r.left(), r.top() + (HEADER + ROW * (row as f32 + 0.5)) * self.zoom))
     }
 
-    fn output_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str, layer: LayerRef) -> Option<Pos2> {
-        let r = self.node_rect(g, origin, id, layer);
+    fn output_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
+        let r = self.node_rect(g, origin, id);
         let i = outputs(g, id).iter().position(|(n, _)| n == name)?;
         Some(Pos2::new(r.right(), r.top() + (HEADER + ROW * (i as f32 + 0.5)) * self.zoom))
     }
 
-    fn canvas(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, layer: LayerRef) {
+    /// The socket under a screen point: (socket, is output).
+    fn socket_at(&self, g: &Graph, origin: Pos2, nodes: &[NodeId], pt: Pos2) -> Option<(SocketRef, bool)> {
+        let r = 10.0 * self.zoom.max(0.6);
+        for &n in nodes.iter().rev() {
+            for (name, _) in outputs(g, n) {
+                if self.output_pos(g, origin, n, &name).is_some_and(|q| q.distance(pt) < r) {
+                    return Some((SocketRef { node: n, name }, true));
+                }
+            }
+            for (name, _, _) in inputs(g, n) {
+                if self.input_pos(g, origin, n, &name).is_some_and(|q| q.distance(pt) < r) {
+                    return Some((SocketRef { node: n, name }, false));
+                }
+            }
+        }
+        None
+    }
+
+    fn node_at(&self, g: &Graph, origin: Pos2, nodes: &[NodeId], pt: Pos2) -> Option<NodeId> {
+        nodes.iter().rev().copied().find(|n| self.node_rect(g, origin, *n).contains(pt))
+    }
+
+    /// First input of `node` that accepts `ty`, preferring an exact type match and free inputs.
+    fn input_for(g: &Graph, layer: Option<LayerRef>, node: NodeId, ty: SocketType) -> Option<String> {
+        let linked: Vec<String> = links_into(g, layer, node).into_iter().map(|(i, _, _)| i).collect();
+        let ins = inputs(g, node);
+        let pick = |exact: bool, free: bool| {
+            ins.iter()
+                .find(|(n, _, t)| (if exact { *t == ty } else { compatible(ty, *t) }) && (!free || !linked.contains(n)))
+                .map(|(n, _, _)| n.clone())
+        };
+        pick(true, true).or_else(|| pick(false, true)).or_else(|| pick(true, false)).or_else(|| pick(false, false))
+    }
+
+    fn canvas(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         let rect = ui.available_rect_before_wrap();
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, Color32::from_gray(28));
         if self.frame_needed || (resp.hovered() && ui.input(|i| i.key_pressed(egui::Key::Home))) {
-            self.frame_all(&p.graph, layer, rect);
+            self.frame_all(&p.graph, rect);
             self.frame_needed = false;
         }
         let origin = rect.center() - Vec2::new(NODE_W, 60.0);
-        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let layer = self.layer();
+        let (secondary_pressed, secondary_down, ctrl) =
+            ui.input(|i| (i.pointer.secondary_pressed(), i.pointer.secondary_down(), i.modifiers.command));
+        let menus_open = self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some();
+        let (pointer, mut pressed, primary_down, alt, shift, delta, scroll, middle) = ui.input(|i| {
+            (
+                i.pointer.hover_pos(),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.modifiers.alt,
+                i.modifiers.shift,
+                i.pointer.delta(),
+                i.smooth_scroll_delta.y,
+                i.pointer.middle_down(),
+            )
+        });
 
-        // Pan and zoom.
-        let (middle, scroll) = ui.input(|i| (i.pointer.middle_down(), i.smooth_scroll_delta.y));
+        // Zoom about the cursor.
         if resp.hovered() && scroll != 0.0 {
             let z = (self.zoom * (1.0 + scroll * 0.0015)).clamp(0.3, 2.5);
             if let Some(ptr) = pointer {
-                // Keep the point under the cursor fixed.
                 let canvas = (ptr - origin) / self.zoom - self.pan;
                 self.pan = (ptr - origin) / z - canvas;
             }
             self.zoom = z;
         }
-        if middle && resp.dragged() {
-            self.pan += resp.drag_delta() / self.zoom;
+        // Pan: right drag or middle drag (Alt + left drag is handled as a drag mode below).
+        let rmb_tool = matches!(self.drag, Some(Drag::Cut { .. } | Drag::Lazy { .. }));
+        if (resp.dragged_by(egui::PointerButton::Secondary) && !rmb_tool) || (middle && resp.dragged()) {
+            self.pan += delta / self.zoom;
         }
 
-        let nodes = self.visible(&p.graph, layer);
-        let mut all = nodes.clone();
-        all.push(SINK);
+        let all = self.all_nodes(&p.graph);
+        if all.is_empty() {
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Empty graph: press Tab to add a node", egui::FontId::proportional(14.0), Color32::from_gray(120));
+        }
 
         // Links.
         for &n in &all {
@@ -555,10 +829,7 @@ impl NodeEditor {
                 if !all.contains(&src) {
                     continue;
                 }
-                let (Some(a), Some(b)) = (
-                    self.output_pos(&p.graph, origin, src, &out, layer),
-                    self.input_pos(&p.graph, origin, n, &input, layer),
-                ) else {
+                let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, src, &out), self.input_pos(&p.graph, origin, n, &input)) else {
                     continue;
                 };
                 let ty = p.graph.output_type(&graph::Link { node: src, output: out.clone() }).unwrap_or(SocketType::Float);
@@ -567,16 +838,19 @@ impl NodeEditor {
         }
 
         // Nodes.
-        let mut clicked_socket: Option<(SocketRef, bool, Pos2)> = None;
         let font = egui::FontId::proportional(12.0 * self.zoom);
+        let link_ty = match &self.drag {
+            Some(Drag::Link { ty, .. }) => Some(*ty),
+            _ => None,
+        };
         for &n in &all {
-            let r = self.node_rect(&p.graph, origin, n, layer);
-            let selected = self.selected == Some(n);
-            let (title, cached, error) = if n == SINK {
-                (format!("Layer: {}", ops::slot(&p.graph, layer).map(|s| s.name.as_str()).unwrap_or("")), false, false)
+            let r = self.node_rect(&p.graph, origin, n);
+            let selected = self.selected.contains(&n);
+            let (title, cached) = if n == SINK {
+                (format!("Layer: {}", layer.and_then(|l| ops::slot(&p.graph, l)).map(|s| s.name.as_str()).unwrap_or("")), false)
             } else {
                 let node = p.graph.node(n);
-                (node.title().to_string(), node.cached, false)
+                (node.title().to_string(), node.cached)
             };
             painter.rect_filled(r, 5.0, Color32::from_gray(if n == SINK { 50 } else { 42 }));
             let header = Rect::from_min_size(r.min, Vec2::new(r.width(), HEADER * self.zoom));
@@ -585,147 +859,618 @@ impl NodeEditor {
             if cached {
                 painter.text(header.right_center() - Vec2::new(6.0, 0.0), egui::Align2::RIGHT_CENTER, "cached", egui::FontId::proportional(10.0 * self.zoom), Color32::from_rgb(120, 200, 230));
             }
-            let _ = error;
-            painter.rect_stroke(r, 5.0, Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { Color32::from_rgb(240, 190, 60) } else { Color32::from_gray(70) }), egui::StrokeKind::Inside);
-            for (name, ty) in outputs(&p.graph, n) {
-                let pos = self.output_pos(&p.graph, origin, n, &name, layer).unwrap();
-                painter.circle_filled(pos, 5.0 * self.zoom, type_color(ty));
-                painter.text(pos - Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::RIGHT_CENTER, pretty(&name), font.clone(), Color32::LIGHT_GRAY);
-                if pointer.is_some_and(|pt| pt.distance(pos) < 9.0 * self.zoom) && ui.input(|i| i.pointer.primary_pressed()) {
-                    clicked_socket = Some((SocketRef { node: n, name: name.clone() }, true, pos));
+            let previewed = p.preview.as_ref().is_some_and(|l| l.node == n);
+            let outline = if selected {
+                Stroke::new(2.0, Color32::from_rgb(240, 190, 60))
+            } else if previewed {
+                Stroke::new(2.0, Color32::from_rgb(90, 200, 110))
+            } else {
+                Stroke::new(1.0, Color32::from_gray(70))
+            };
+            if previewed {
+                let out = p.preview.as_ref().map(|l| l.output.clone()).unwrap_or_default();
+                if let Some(pos) = self.output_pos(&p.graph, origin, n, &out) {
+                    painter.circle_stroke(pos, 8.0 * self.zoom, Stroke::new(2.0, Color32::from_rgb(90, 200, 110)));
                 }
             }
-            for (name, label, ty) in inputs(&p.graph, n) {
-                let pos = self.input_pos(&p.graph, origin, n, &name, layer).unwrap();
+            painter.rect_stroke(r, 5.0, outline, egui::StrokeKind::Inside);
+            for (name, ty) in outputs(&p.graph, n) {
+                let pos = self.output_pos(&p.graph, origin, n, &name).unwrap();
                 painter.circle_filled(pos, 5.0 * self.zoom, type_color(ty));
-                painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), Color32::LIGHT_GRAY);
-                if pointer.is_some_and(|pt| pt.distance(pos) < 9.0 * self.zoom) && ui.input(|i| i.pointer.primary_pressed()) {
-                    clicked_socket = Some((SocketRef { node: n, name: name.clone() }, false, pos));
+                painter.text(pos - Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::RIGHT_CENTER, pretty(&name), font.clone(), Color32::LIGHT_GRAY);
+            }
+            for (name, label, ty) in inputs(&p.graph, n) {
+                let pos = self.input_pos(&p.graph, origin, n, &name).unwrap();
+                // While dragging a link, dim inputs that can't accept it.
+                let ok = link_ty.is_none_or(|lt| compatible(lt, ty));
+                let c = if ok { type_color(ty) } else { type_color(ty).gamma_multiply(0.25) };
+                painter.circle_filled(pos, 5.0 * self.zoom, c);
+                let text = if name == NEW_LAYER || name == NEW_EFFECT { Color32::from_gray(140) } else { Color32::LIGHT_GRAY };
+                painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), text);
+            }
+        }
+
+        if pressed && ctrl && shift && resp.hovered() && self.drag.is_none() && !menus_open {
+            pressed = false;
+            let hit = pointer.and_then(|ptr| self.node_at(&p.graph, origin, &all, ptr));
+            self.cycle_preview(gpu, p, hit);
+        }
+        if secondary_pressed && resp.hovered() && self.drag.is_none() && !menus_open {
+            if let Some(ptr) = pointer {
+                if alt {
+                    if let Some(n) = self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK) {
+                        self.drag = Some(Drag::Lazy { from: n, menu: shift });
+                    }
+                } else if ctrl {
+                    self.drag = Some(Drag::Cut { points: vec![ptr] });
                 }
             }
         }
 
-        // Start drags.
-        if ui.input(|i| i.pointer.primary_pressed()) && resp.hovered() && self.drag.is_none() {
-            if let Some((sock, is_output, _)) = clicked_socket {
-                if is_output {
-                    let ty = p.graph.output_type(&graph::Link { node: sock.node, output: sock.name.clone() }).unwrap_or(SocketType::Float);
-                    self.drag = Some(Drag::Link { from: sock, ty });
-                } else if let Some((_, src, out)) = links_into(&p.graph, layer, sock.node).into_iter().find(|(i, _, _)| *i == sock.name) {
-                    // Pick up an existing link from its input end.
-                    p.checkpoint("Disconnect");
-                    disconnect(&mut p.graph, layer, &sock);
-                    p.graph_changed(gpu);
-                    let ty = p.graph.output_type(&graph::Link { node: src, output: out.clone() }).unwrap_or(SocketType::Float);
-                    self.drag = Some(Drag::Link { from: SocketRef { node: src, name: out }, ty });
-                }
-            } else if let Some(ptr) = pointer {
-                let hit = all.iter().rev().copied().find(|n| self.node_rect(&p.graph, origin, *n, layer).contains(ptr));
-                self.selected = hit;
-                match hit {
-                    Some(n) if n != SINK => {
-                        p.checkpoint("Move node");
-                        self.drag = Some(Drag::Node(n));
+        // Start a drag with the left button (unless a menu is taking the click).
+        if pressed && resp.hovered() && self.drag.is_none() && !menus_open {
+            if let Some(ptr) = pointer {
+                if let Some((sock, is_output)) = self.socket_at(&p.graph, origin, &all, ptr) {
+                    if is_output {
+                        let ty = p.graph.output_type(&graph::Link { node: sock.node, output: sock.name.clone() }).unwrap_or(SocketType::Float);
+                        self.drag = Some(Drag::Link { from: sock, ty });
+                    } else if let Some((_, src, out)) = links_into(&p.graph, layer, sock.node).into_iter().find(|(i, _, _)| *i == sock.name) {
+                        // Pick up an existing link from its input end.
+                        p.checkpoint("Disconnect");
+                        disconnect(&mut p.graph, layer, &sock);
+                        p.graph_changed(gpu);
+                        let ty = p.graph.output_type(&graph::Link { node: src, output: out.clone() }).unwrap_or(SocketType::Float);
+                        self.drag = Some(Drag::Link { from: SocketRef { node: src, name: out }, ty });
                     }
-                    _ => self.drag = Some(Drag::Pan),
+                } else if alt {
+                    self.drag = Some(Drag::Pan);
+                } else if let Some(n) = self.node_at(&p.graph, origin, &all, ptr) {
+                    if shift {
+                        if !self.selected.remove(&n) {
+                            self.selected.insert(n);
+                        }
+                    } else if !self.selected.contains(&n) {
+                        self.selected = BTreeSet::from([n]);
+                    }
+                    self.primary = Some(n);
+                    self.drag = Some(Drag::Nodes);
+                    self.moved = false;
+                } else {
+                    if !shift {
+                        self.selected.clear();
+                        self.primary = None;
+                    }
+                    self.drag = Some(Drag::Box { start: ptr, additive: shift });
                 }
             }
         }
+
+        // Continue or finish the drag.
         if let Some(drag) = self.drag.clone() {
-            let delta = ui.input(|i| i.pointer.delta()) / self.zoom;
-            match drag {
-                Drag::Node(n) => {
-                    let pos = &mut p.graph.node_mut(n).pos;
-                    pos[0] += delta.x;
-                    pos[1] += delta.y;
-                }
-                Drag::Pan => self.pan += delta,
-                Drag::Link { ref from, ty } => {
-                    if let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, from.node, &from.name, layer), pointer) {
-                        draw_link(&painter, a, b, type_color(ty), self.zoom);
-                    }
-                }
-            }
-            if !ui.input(|i| i.pointer.primary_down()) {
-                if let Drag::Link { from, .. } = &drag {
-                    // Drop on the nearest input socket.
-                    let target = pointer.and_then(|pt| {
-                        all.iter().find_map(|&n| {
-                            inputs(&p.graph, n).into_iter().find_map(|(name, _, _)| {
-                                let pos = self.input_pos(&p.graph, origin, n, &name, layer)?;
-                                (pos.distance(pt) < 12.0 * self.zoom).then(|| SocketRef { node: n, name })
-                            })
-                        })
-                    });
-                    if let Some(to) = target {
-                        let mut g2 = p.graph.clone();
-                        if connect(&mut g2, layer, from, &to) {
-                            p.checkpoint("Connect");
-                            p.graph = g2;
-                            self.extra.remove(&from.node);
-                            p.graph_changed(gpu);
+            match &drag {
+                Drag::Nodes => {
+                    if delta != Vec2::ZERO {
+                        if !self.moved {
+                            p.checkpoint("Move nodes");
+                            self.moved = true;
+                        }
+                        let d = delta / self.zoom;
+                        for n in self.selected.iter().copied().filter(|n| *n != SINK) {
+                            if let Some(node) = p.graph.nodes.get_mut(&n) {
+                                node.pos[0] += d.x;
+                                node.pos[1] += d.y;
+                            }
                         }
                     }
                 }
-                self.drag = None;
+                Drag::Pan => self.pan += delta / self.zoom,
+                Drag::Link { from, ty } => {
+                    if let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, from.node, &from.name), pointer) {
+                        draw_link(&painter, a, b, type_color(*ty), self.zoom);
+                    }
+                }
+                Drag::Box { start, .. } => {
+                    if let Some(ptr) = pointer {
+                        let b = Rect::from_two_pos(*start, ptr);
+                        painter.rect_filled(b, 0.0, Color32::from_rgba_unmultiplied(90, 140, 220, 30));
+                        painter.rect_stroke(b, 0.0, Stroke::new(1.0, Color32::from_rgb(110, 160, 230)), egui::StrokeKind::Inside);
+                    }
+                }
+                Drag::Cut { points } => {
+                    if let (Some(ptr), Some(Drag::Cut { points })) = (pointer, &mut self.drag) {
+                        if points.last().is_none_or(|l| l.distance(ptr) > 3.0) {
+                            points.push(ptr);
+                        }
+                    }
+                    painter.extend(egui::Shape::dashed_line(points, Stroke::new(1.5, Color32::from_rgb(230, 90, 80)), 6.0, 4.0));
+                }
+                Drag::Lazy { from, .. } => {
+                    if let Some(ptr) = pointer {
+                        let a = self.node_rect(&p.graph, origin, *from).right_center();
+                        let target = self.node_at(&p.graph, origin, &all, ptr).filter(|b| b != from);
+                        if let Some(b) = target {
+                            let ok = !wrangler::link_options(&p.graph, layer, *from, b).is_empty();
+                            let c = if ok { Color32::from_rgb(110, 200, 120) } else { Color32::from_rgb(230, 90, 80) };
+                            painter.rect_stroke(self.node_rect(&p.graph, origin, b), 5.0, Stroke::new(2.0, c), egui::StrokeKind::Outside);
+                        }
+                        painter.line_segment([a, ptr], Stroke::new(1.5, Color32::from_gray(200)));
+                    }
+                }
             }
-        }
-
-        // Keyboard: Tab adds a node, Delete removes the selected node.
-        let (tab, del) = ui.input(|i| (i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Delete)));
-        if resp.hovered() && tab {
-            let at = pointer.unwrap_or(rect.center());
-            let canvas = (at - origin) / self.zoom - self.pan;
-            self.add_menu = Some((Pos2::new(canvas.x, canvas.y), String::new()));
-        }
-        if resp.hovered() && del {
-            if let Some(n) = self.selected.filter(|n| *n != SINK) {
-                let ty = p.graph.node(n).ty.clone();
-                if ty != "material_output" && n != p.graph.root {
-                    p.edit(gpu, "Delete node", |g| g.remove(n));
-                    self.selected = None;
-                    self.extra.remove(&n);
+            let released = match &drag {
+                Drag::Cut { .. } | Drag::Lazy { .. } => !secondary_down,
+                _ => !primary_down,
+            };
+            if released {
+                self.drag = None;
+                match drag {
+                    Drag::Link { from, ty } => self.drop_link(gpu, p, origin, &all, pointer, from, ty, rect),
+                    Drag::Box { start, additive } => {
+                        if let Some(ptr) = pointer {
+                            let b = Rect::from_two_pos(start, ptr);
+                            if !additive {
+                                self.selected.clear();
+                            }
+                            for &n in &all {
+                                if b.intersects(self.node_rect(&p.graph, origin, n)) {
+                                    self.selected.insert(n);
+                                    self.primary = Some(n);
+                                }
+                            }
+                        }
+                    }
+                    Drag::Cut { points } => self.cut_links(gpu, p, origin, &all, &points),
+                    Drag::Lazy { from, menu } => {
+                        if let Some(ptr) = pointer {
+                            if let Some(b) = self.node_at(&p.graph, origin, &all, ptr).filter(|b| *b != from) {
+                                if menu {
+                                    self.lazy_menu = Some((ptr, from, b));
+                                } else if !wrangler::link_options(&p.graph, layer, from, b).is_empty() {
+                                    p.edit(gpu, "Lazy connect", |g| wrangler::lazy_connect(g, layer, from, b));
+                                    self.extra.remove(&from);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-        if resp.secondary_clicked() {
-            let at = pointer.unwrap_or(rect.center());
-            let canvas = (at - origin) / self.zoom - self.pan;
-            self.add_menu = Some((Pos2::new(canvas.x, canvas.y), String::new()));
+
+        // Node Wrangler shortcuts.
+        if resp.hovered() && !menus_open && !ui.ctx().egui_wants_keyboard_input() {
+            if let Some(op) = ui.input(Self::shortcut_op) {
+                self.apply(gpu, p, op);
+            }
+            if ui.input(|i| i.modifiers.matches_exact(egui::Modifiers::SHIFT) && i.key_pressed(egui::Key::A)) {
+                let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
+                self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
+            }
+        }
+        // Ctrl+Plus / Minus / 0 are merges here, not UI zoom.
+        let over = resp.hovered();
+        ui.ctx().options_mut(|o| o.zoom_with_keyboard = !over);
+
+        // Keyboard: Tab adds a node, Delete removes the selected nodes.
+        let (tab, del) = ui.input(|i| (i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Delete)));
+        if resp.hovered() && tab && !menus_open {
+            let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
+            self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
+        }
+        if resp.hovered() && del && !menus_open {
+            let root = p.graph.root;
+            let doomed: Vec<NodeId> = self
+                .selected
+                .iter()
+                .copied()
+                .filter(|n| *n != SINK && *n != root && p.graph.get(*n).is_some_and(|x| x.ty != "material_output"))
+                .collect();
+            if !doomed.is_empty() {
+                p.edit(gpu, "Delete nodes", |g| {
+                    for n in &doomed {
+                        g.remove(*n);
+                    }
+                });
+                for n in doomed {
+                    self.selected.remove(&n);
+                    self.extra.remove(&n);
+                }
+                self.primary = None;
+            }
+        }
+        if let Some(m) = resp.dnd_release_payload::<crate::meshmaps::MeshMap>() {
+            let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
+            let id = p.edit(gpu, "Add mesh map", |g| {
+                let id = g.add("mesh_map");
+                g.set(id, "map", Value::Text(m.param_name().into()));
+                g.node_mut(id).pos = [at.x, at.y - HEADER];
+                id
+            });
+            self.extra.insert(id);
+            self.selected = BTreeSet::from([id]);
+            self.primary = Some(id);
+        }
+        if resp.secondary_clicked() && !menus_open && !ctrl && !alt {
+            let ptr = pointer.unwrap_or(rect.center());
+            match self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK) {
+                // Right-click on a node: its Node Wrangler menu.
+                Some(n) => {
+                    if !self.selected.contains(&n) {
+                        self.selected = BTreeSet::from([n]);
+                    }
+                    self.primary = Some(n);
+                    self.node_menu = Some(ptr);
+                }
+                None => {
+                    let at = self.to_canvas(origin, ptr);
+                    self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
+                }
+            }
         }
         self.add_menu_ui(ui, gpu, p, origin);
+        self.node_menu_ui(ui, gpu, p);
+        self.lazy_menu_ui(ui, gpu, p);
+    }
+
+    fn shortcut_op(i: &egui::InputState) -> Option<Op> {
+        use egui::{Key, Modifiers as M};
+        let k = |m: M, key: Key| i.modifiers.matches_exact(m) && i.key_pressed(key);
+        let ctrl = M::COMMAND;
+        // Ctrl+X arrives as a Cut event rather than a key press.
+        if i.events.iter().any(|e| matches!(e, egui::Event::Cut)) || k(ctrl, Key::X) {
+            return Some(Op::Dissolve);
+        }
+        let ops = [
+            (ctrl, Key::Num0, Op::Merge(MergeOp::Mix)),
+            (ctrl, Key::Plus, Op::Merge(MergeOp::Add)),
+            (ctrl, Key::Equals, Op::Merge(MergeOp::Add)),
+            (ctrl, Key::Minus, Op::Merge(MergeOp::Subtract)),
+            (ctrl, Key::Num8, Op::Merge(MergeOp::Multiply)),
+            (ctrl, Key::Slash, Op::Merge(MergeOp::Divide)),
+            (ctrl, Key::Comma, Op::Merge(MergeOp::Min)),
+            (ctrl, Key::Period, Op::Merge(MergeOp::Max)),
+            (M::ALT, Key::S, Op::Swap),
+            (M::ALT, Key::X, Op::DeleteUnused),
+            (M::SHIFT, Key::D, Op::Duplicate),
+            (M::SHIFT, Key::Equals, Op::Align),
+            (M::NONE, Key::Backspace, Op::Reset),
+            (M::SHIFT, Key::C, Op::CopySettings),
+            (M::NONE, Key::K, Op::LinkToSelected),
+            (M::NONE, Key::A, Op::SelectAll),
+            (M::ALT, Key::A, Op::DeselectAll),
+        ];
+        ops.into_iter().find(|(m, key, _)| k(*m, *key)).map(|(_, _, op)| op)
+    }
+
+    fn selection(&self) -> Vec<NodeId> {
+        self.selected.iter().copied().filter(|n| *n != SINK).collect()
+    }
+
+    fn apply(&mut self, gpu: &Gpu, p: &mut Project, op: Op) {
+        let layer = self.layer();
+        let sel: Vec<NodeId> = self.selection().into_iter().filter(|n| p.graph.get(*n).is_some()).collect();
+        match op {
+            Op::Merge(m) => {
+                if sel.len() < 2 {
+                    return;
+                }
+                let mut g2 = p.graph.clone();
+                if let Some(n) = wrangler::merge(&mut g2, layer, &sel, m) {
+                    p.checkpoint("Merge nodes");
+                    p.graph = g2;
+                    p.graph_changed(gpu);
+                    self.extra.insert(n);
+                    self.selected = BTreeSet::from([n]);
+                    self.primary = Some(n);
+                }
+            }
+            Op::Swap => {
+                let mut g2 = p.graph.clone();
+                if wrangler::swap(&mut g2, layer, &sel) {
+                    p.checkpoint("Swap links");
+                    p.graph = g2;
+                    p.graph_changed(gpu);
+                }
+            }
+            Op::Dissolve => {
+                let root = p.graph.root;
+                let doomed: Vec<NodeId> =
+                    sel.into_iter().filter(|n| *n != root && p.graph.node(*n).ty != "material_output").collect();
+                if !doomed.is_empty() {
+                    p.edit(gpu, "Dissolve nodes", |g| {
+                        for n in &doomed {
+                            wrangler::dissolve(g, layer, *n);
+                        }
+                    });
+                    self.selected.clear();
+                    self.primary = None;
+                }
+            }
+            Op::DeleteUnused => {
+                let live: BTreeSet<NodeId> = p.graph.output_node().map(|o| p.graph.subgraph(o)).unwrap_or_default();
+                if p.graph.nodes.keys().any(|k| !live.contains(k)) {
+                    p.edit(gpu, "Delete unused nodes", |g| {
+                        g.collect_garbage();
+                    });
+                    self.extra.clear();
+                    self.selected.retain(|n| *n == SINK || p.graph.get(*n).is_some());
+                    self.primary = self.primary.filter(|n| p.graph.get(*n).is_some());
+                }
+            }
+            Op::Duplicate => {
+                if sel.is_empty() {
+                    return;
+                }
+                let copies = p.edit(gpu, "Duplicate nodes", |g| wrangler::duplicate(g, &sel));
+                self.extra.extend(copies.iter().copied());
+                self.primary = copies.first().copied();
+                self.selected = copies.into_iter().collect();
+            }
+            Op::Align => {
+                if sel.len() > 1 {
+                    p.checkpoint("Align nodes");
+                    wrangler::align(&mut p.graph, &sel);
+                }
+            }
+            Op::Reset => {
+                if !sel.is_empty() {
+                    p.edit(gpu, "Reset nodes", |g| {
+                        for n in &sel {
+                            wrangler::reset(g, *n);
+                        }
+                    });
+                }
+            }
+            Op::CopySettings => {
+                if let Some(from) = self.primary.filter(|n| sel.contains(n)) {
+                    let mut g2 = p.graph.clone();
+                    if wrangler::copy_settings(&mut g2, from, &sel) > 0 {
+                        p.checkpoint("Copy node settings");
+                        p.graph = g2;
+                        p.graph_changed(gpu);
+                    }
+                }
+            }
+            Op::LinkToSelected => {
+                if let Some(active) = self.primary.filter(|n| sel.contains(n)) {
+                    let mut g2 = p.graph.clone();
+                    if wrangler::link_to_selected(&mut g2, layer, active, &sel) > 0 {
+                        p.checkpoint("Link to selected");
+                        p.graph = g2;
+                        p.graph_changed(gpu);
+                        self.extra.remove(&active);
+                    }
+                }
+            }
+            Op::SelectAll => {
+                self.selected = self.all_nodes(&p.graph).into_iter().collect();
+            }
+            Op::DeselectAll => {
+                self.selected.clear();
+                self.primary = None;
+            }
+        }
+    }
+
+    /// Ctrl+Shift+click: shows the node's first output in the viewport; clicking the same node
+    /// again steps through its outputs, then turns the preview off. Empty space turns it off.
+    fn cycle_preview(&mut self, gpu: &Gpu, p: &mut Project, node: Option<NodeId>) {
+        let next = node.filter(|n| *n != SINK).and_then(|n| {
+            let outs = outputs(&p.graph, n);
+            let i = match &p.preview {
+                Some(l) if l.node == n => outs.iter().position(|(o, _)| *o == l.output).map_or(0, |i| i + 1),
+                _ => 0,
+            };
+            outs.get(i).map(|(o, _)| graph::Link { node: n, output: o.clone() })
+        });
+        p.set_preview(gpu, next);
+    }
+
+    /// Removes the links crossed by a Ctrl+right-drag stroke.
+    fn cut_links(&mut self, gpu: &Gpu, p: &mut Project, origin: Pos2, all: &[NodeId], stroke: &[Pos2]) {
+        let layer = self.layer();
+        let mut cut = Vec::new();
+        for &n in all {
+            for (input, src, out) in links_into(&p.graph, layer, n) {
+                if !all.contains(&src) {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, src, &out), self.input_pos(&p.graph, origin, n, &input)) else {
+                    continue;
+                };
+                let curve = link_points(a, b, self.zoom);
+                let hit = curve.windows(2).any(|c| stroke.windows(2).any(|s| segments_cross(c[0], c[1], s[0], s[1])));
+                if hit {
+                    cut.push(SocketRef { node: n, name: input });
+                }
+            }
+        }
+        if !cut.is_empty() {
+            p.edit(gpu, "Cut links", |g| {
+                // Highest index first, so removing slot links keeps the other indices valid.
+                for s in cut.iter().rev() {
+                    disconnect(g, layer, s);
+                }
+            });
+        }
+    }
+
+    fn node_menu_ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
+        let Some(at) = self.node_menu else { return };
+        let mut chosen = None;
+        let mut preview = false;
+        let mut close = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let n_sel = self.selection().len();
+        let area = egui::Area::new(egui::Id::new("node wrangler menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+            egui::Frame::menu(ui.style()).show(ui, |ui| {
+                ui.set_width(240.0);
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    let mut item = |ui: &mut egui::Ui, label: &str, key: &str, enabled: bool, op: Option<Op>| {
+                        let r = ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(key).frame(false));
+                        if r.clicked() {
+                            match op {
+                                Some(op) => chosen = Some(op),
+                                None => preview = true,
+                            }
+                        }
+                    };
+                    item(ui, "Preview output", "Ctrl+Shift+Click", true, None);
+                    ui.separator();
+                    ui.label(egui::RichText::new("Merge selected").small().weak());
+                    for m in MergeOp::ALL {
+                        item(ui, m.label(), m.shortcut(), n_sel > 1, Some(Op::Merge(m)));
+                    }
+                    ui.separator();
+                    item(ui, "Swap links", "Alt+S", n_sel == 1 || n_sel == 2, Some(Op::Swap));
+                    item(ui, "Link active to selected", "K", n_sel > 1, Some(Op::LinkToSelected));
+                    item(ui, "Copy settings to selected", "Shift+C", n_sel > 1, Some(Op::CopySettings));
+                    item(ui, "Reset to defaults", "Backspace", true, Some(Op::Reset));
+                    ui.separator();
+                    item(ui, "Duplicate", "Shift+D", true, Some(Op::Duplicate));
+                    item(ui, "Align", "Shift+=", n_sel > 1, Some(Op::Align));
+                    item(ui, "Dissolve (delete and reconnect)", "Ctrl+X", true, Some(Op::Dissolve));
+                    item(ui, "Delete unused nodes", "Alt+X", true, Some(Op::DeleteUnused));
+                });
+            });
+        });
+        let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pt| !area.response.rect.contains(pt)));
+        if outside || chosen.is_some() || preview {
+            close = true;
+        }
+        if preview {
+            let n = self.primary;
+            // Start from the first output, even if this node is already previewed.
+            if p.preview.as_ref().is_some_and(|l| Some(l.node) == n) {
+                p.set_preview(gpu, None);
+            }
+            self.cycle_preview(gpu, p, n);
+        }
+        if let Some(op) = chosen {
+            self.apply(gpu, p, op);
+        }
+        if close {
+            self.node_menu = None;
+        }
+    }
+
+    /// Shift+Alt+right-drag: choose which output goes to which input.
+    fn lazy_menu_ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
+        let Some((at, a, b)) = self.lazy_menu else { return };
+        let layer = self.layer();
+        if p.graph.get(a).is_none() || (b != SINK && p.graph.get(b).is_none()) {
+            self.lazy_menu = None;
+            return;
+        }
+        let opts = wrangler::link_options(&p.graph, layer, a, b);
+        let mut chosen = None;
+        let area = egui::Area::new(egui::Id::new("lazy connect menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+            egui::Frame::menu(ui.style()).show(ui, |ui| {
+                ui.set_min_width(200.0);
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    if opts.is_empty() {
+                        ui.label(egui::RichText::new("No compatible sockets").weak());
+                    }
+                    let in_label = |name: &str| inputs(&p.graph, b).into_iter().find(|(n, _, _)| n == name).map(|(_, l, _)| l).unwrap_or_default();
+                    for (out, input) in &opts {
+                        if ui.add(egui::Button::new(format!("{}  →  {}", pretty(out), in_label(input))).frame(false)).clicked() {
+                            chosen = Some((out.clone(), input.clone()));
+                        }
+                    }
+                });
+            });
+        });
+        let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pt| !area.response.rect.contains(pt)));
+        if let Some((out, input)) = chosen.clone() {
+            let mut g2 = p.graph.clone();
+            if connect(&mut g2, layer, &SocketRef { node: a, name: out }, &SocketRef { node: b, name: input }) {
+                p.checkpoint("Connect");
+                p.graph = g2;
+                p.graph_changed(gpu);
+                self.extra.remove(&a);
+            }
+        }
+        if chosen.is_some() || outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.lazy_menu = None;
+        }
+    }
+
+    /// Releases a dragged link: onto an input connects; onto a node connects to its first
+    /// fitting input; onto empty space opens the add menu to create a connected node.
+    #[allow(clippy::too_many_arguments)]
+    fn drop_link(&mut self, gpu: &Gpu, p: &mut Project, origin: Pos2, all: &[NodeId], pointer: Option<Pos2>, from: SocketRef, ty: SocketType, rect: Rect) {
+        let Some(pt) = pointer else { return };
+        let layer = self.layer();
+        let target = match self.socket_at(&p.graph, origin, all, pt) {
+            Some((s, false)) => Some(s),
+            Some((_, true)) => None,
+            None => self
+                .node_at(&p.graph, origin, all, pt)
+                .filter(|n| *n != from.node)
+                .and_then(|n| Self::input_for(&p.graph, layer, n, ty).map(|name| SocketRef { node: n, name })),
+        };
+        match target {
+            Some(to) => {
+                let mut g2 = p.graph.clone();
+                if connect(&mut g2, layer, &from, &to) {
+                    p.checkpoint("Connect");
+                    p.graph = g2;
+                    self.extra.remove(&from.node);
+                    p.graph_changed(gpu);
+                }
+            }
+            None if rect.contains(pt) && self.node_at(&p.graph, origin, all, pt).is_none() => {
+                let at = self.to_canvas(origin, pt);
+                self.add_menu = Some(AddMenu { at, search: String::new(), link: Some((from, ty)) });
+            }
+            None => {}
+        }
     }
 
     fn add_menu_ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, origin: Pos2) {
-        let Some((at, mut search)) = self.add_menu.take() else { return };
-        let screen = self.to_screen(origin, [at.x, at.y]);
+        let Some(mut menu) = self.add_menu.take() else { return };
+        let screen = self.to_screen(origin, [menu.at.x, menu.at.y]);
         let mut keep = true;
         let mut chosen = None;
-        egui::Area::new(egui::Id::new("add node")).fixed_pos(screen).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+        let link_ty = menu.link.as_ref().map(|(_, t)| *t);
+        let area = egui::Area::new(egui::Id::new("add node")).fixed_pos(screen).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_width(200.0);
-                let r = ui.text_edit_singleline(&mut search);
+                ui.set_width(260.0);
+                if link_ty.is_some() {
+                    ui.label(egui::RichText::new("Add a connected node").small().weak());
+                }
+                let r = ui.add(egui::TextEdit::singleline(&mut menu.search).hint_text("Search nodes…").desired_width(f32::INFINITY));
                 r.request_focus();
-                let q = search.to_ascii_lowercase();
+                let q = menu.search.to_ascii_lowercase();
                 let mut first = None;
-                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                    let mut category = "";
-                    for d in graph::defs() {
-                        if matches!(d.ty, "material_output" | "stack") {
-                            continue;
+                egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        let mut category = "";
+                        for d in graph::defs() {
+                            if matches!(d.ty, "material_output") {
+                                continue;
+                            }
+                            if !q.is_empty() && !d.title.to_ascii_lowercase().contains(&q) {
+                                continue;
+                            }
+                            // With a link, only offer nodes that can take it.
+                            if let Some(lt) = link_ty {
+                                let accepts = d.inputs.iter().any(|(_, t)| compatible(lt, *t))
+                                    || (d.ty == "stack" && lt == SocketType::Material)
+                                    || (d.ty == "mask_stack" && compatible(lt, SocketType::Float));
+                                if !accepts {
+                                    continue;
+                                }
+                            }
+                            if d.category != category {
+                                category = d.category;
+                                ui.label(egui::RichText::new(category).weak().small());
+                            }
+                            first.get_or_insert(d.ty);
+                            if ui.add(egui::Button::new(d.title).frame(false)).clicked() {
+                                chosen = Some(d.ty);
+                            }
                         }
-                        if !q.is_empty() && !d.title.to_ascii_lowercase().contains(&q) {
-                            continue;
-                        }
-                        if d.category != category {
-                            category = d.category;
-                            ui.label(egui::RichText::new(category).weak().small());
-                        }
-                        first.get_or_insert(d.ty);
-                        if ui.button(d.title).clicked() {
-                            chosen = Some(d.ty);
-                        }
-                    }
+                    });
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     chosen = first;
@@ -735,23 +1480,43 @@ impl NodeEditor {
                 }
             });
         });
+        // A click outside the menu closes it.
+        let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pt| !area.response.rect.contains(pt)));
+        if outside {
+            keep = false;
+        }
         if let Some(ty) = chosen {
+            let layer = self.layer();
+            let at = menu.at;
+            let link = menu.link.clone();
             let id = p.edit(gpu, "Add node", |g| {
                 let id = g.add(ty);
-                g.node_mut(id).pos = [at.x, at.y];
+                g.node_mut(id).pos = [at.x, at.y - HEADER];
+                if let Some((from, lt)) = &link {
+                    if let Some(name) = Self::input_for(g, layer, id, *lt) {
+                        connect(g, layer, from, &SocketRef { node: id, name });
+                    }
+                }
                 id
             });
+            if let Some((from, _)) = &menu.link {
+                self.extra.remove(&from.node);
+            }
             self.extra.insert(id);
-            self.selected = Some(id);
+            self.selected = BTreeSet::from([id]);
+            self.primary = Some(id);
             keep = false;
         }
         if keep {
-            self.add_menu = Some((at, search));
+            self.add_menu = Some(menu);
         }
     }
 
     fn properties(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
-        let Some(n) = self.selected.filter(|n| *n != SINK && p.graph.get(*n).is_some()) else {
+        if self.selected.len() > 1 {
+            ui.label(egui::RichText::new(format!("{} nodes selected", self.selected.len())).weak());
+        }
+        let Some(n) = self.primary.filter(|n| *n != SINK && p.graph.get(*n).is_some()) else {
             ui.label(egui::RichText::new("Select a node.").weak());
             return;
         };
@@ -772,7 +1537,8 @@ impl NodeEditor {
         }
         if crate::graph::GENERATORS.contains(&node.ty.as_str()) && ui.button("Ungroup").on_hover_text("Replace with its component nodes").clicked() {
             if let Some(out) = p.edit(gpu, "Ungroup", |g| ungroup(g, n)) {
-                self.selected = Some(out);
+                self.selected = BTreeSet::from([out]);
+                self.primary = Some(out);
                 self.auto_layout_needed = true;
             }
             return;
@@ -837,6 +1603,33 @@ impl NodeEditor {
             p.edit(gpu, "Select IDs", |g| g.set(n, "colors", Value::Colors(new)));
         }
     }
+}
+
+/// Points along a link's curve (the same curve `draw_link` draws).
+fn link_points(a: Pos2, b: Pos2, zoom: f32) -> Vec<Pos2> {
+    let dx = ((b.x - a.x).abs() * 0.5).max(40.0 * zoom);
+    let (c1, c2) = (a + Vec2::new(dx, 0.0), b - Vec2::new(dx, 0.0));
+    (0..=24)
+        .map(|i| {
+            let t = i as f32 / 24.0;
+            let u = 1.0 - t;
+            let v = a.to_vec2() * (u * u * u) + c1.to_vec2() * (3.0 * u * u * t) + c2.to_vec2() * (3.0 * u * t * t) + b.to_vec2() * (t * t * t);
+            v.to_pos2()
+        })
+        .collect()
+}
+
+/// Whether segments p1-p2 and q1-q2 intersect.
+fn segments_cross(p1: Pos2, p2: Pos2, q1: Pos2, q2: Pos2) -> bool {
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    let (r, s) = (p2 - p1, q2 - q1);
+    let d = cross(r, s);
+    if d.abs() < 1e-6 {
+        return false;
+    }
+    let t = cross(q1 - p1, s) / d;
+    let u = cross(q1 - p1, r) / d;
+    (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
 }
 
 fn draw_link(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) {

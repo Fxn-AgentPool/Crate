@@ -64,6 +64,10 @@ pub struct Project {
     pub material_errors: Vec<String>,
     /// Incremented whenever `material_code` changes.
     pub material_version: u64,
+    /// Node Editor preview (not saved, not part of undo).
+    pub preview: Option<crate::graph::Link>,
+    /// Material shader with the preview, when there is one.
+    pub preview_code: Option<String>,
     /// Pool slot of every Paint / Paint Mask node that has been painted. Kept outside the
     /// graph so undoing a graph edit never detaches paint data.
     pub paint_slots: std::collections::BTreeMap<crate::graph::NodeId, u32>,
@@ -116,6 +120,8 @@ impl Project {
             selection: None,
             multi: Vec::new(),
             material_code: String::new(),
+            preview: None,
+            preview_code: None,
             material_errors: Vec::new(),
             material_version: 0,
             paint_slots: Default::default(),
@@ -186,24 +192,47 @@ impl Project {
 
     /// Recompiles the material after any change to the graph or channel settings.
     pub fn graph_changed(&mut self, gpu: &Gpu) {
+        self.compile_material(gpu);
+        self.edit_version += 1;
+        self.update_scene(gpu);
+    }
+
+    fn compile_material(&mut self, gpu: &Gpu) {
         let scene = &self.scene;
         let (slots, masks) = (&self.paint_slots, &self.mask_slots);
         let caches = &self.caches;
-        let env = compile::Env {
-            image_layer: &|n| scene.image_layer(n),
-            paint_slot: &|id| slots.get(&id).or(masks.get(&id)).copied(),
-            cache: &|id| caches.lookup(id),
-        };
+        let image_layer = |n: &str| scene.image_layer(n);
+        let paint_slot = |id| slots.get(&id).or(masks.get(&id)).copied();
+        let cache = |id| caches.lookup(id);
+        let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, cache: &cache, preview: None };
         let compiled = compile::compile(&self.graph, &self.channels, &env);
-        self.scene.write_params(gpu, &compiled.params);
         let code = format!("{}\n{}", compile::LIB_WGSL, compiled.code);
-        if code != self.material_code {
+        // The preview only changes what the viewport shows; exports always use `material_code`.
+        let preview = self.preview.as_ref().filter(|l| self.graph.get(l.node).is_some());
+        let preview_code = preview.map(|l| {
+            let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, cache: &cache, preview: Some(l) };
+            format!("{}\n{}", compile::LIB_WGSL, compile::compile(&self.graph, &self.channels, &env).code)
+        });
+        self.scene.write_params(gpu, &compiled.params);
+        if code != self.material_code || preview_code != self.preview_code {
             self.material_code = code;
+            self.preview_code = preview_code;
             self.material_version += 1;
         }
         self.material_errors = compiled.errors;
-        self.edit_version += 1;
-        self.update_scene(gpu);
+    }
+
+    /// Shows a node output in the viewport instead of the material (None: the material).
+    pub fn set_preview(&mut self, gpu: &Gpu, link: Option<crate::graph::Link>) {
+        if self.preview != link {
+            self.preview = link;
+            self.compile_material(gpu);
+        }
+    }
+
+    /// The material shader the viewport shows.
+    pub fn viewport_code(&self) -> &str {
+        self.preview_code.as_deref().unwrap_or(&self.material_code)
     }
 
     pub fn has_unsaved_changes(&self) -> bool {

@@ -60,6 +60,14 @@ impl MeshMap {
         self as usize
     }
 
+    /// Value of the Mesh Map node's `map` parameter (see `graph::MAP_NAMES`).
+    pub fn param_name(self) -> &'static str {
+        match self {
+            MeshMap::AmbientOcclusion => "AO",
+            m => m.name(),
+        }
+    }
+
     fn is_ray_traced(self) -> bool {
         matches!(self, MeshMap::AmbientOcclusion | MeshMap::Curvature | MeshMap::Thickness)
     }

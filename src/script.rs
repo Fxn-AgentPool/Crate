@@ -742,6 +742,25 @@ impl Session {
                 let (w, h) = rest.first().context("size WxH")?.split_once('x').context("size WxH")?;
                 self.size = (w.parse()?, h.parse()?);
             }
+            "preview" => {
+                // preview <var>[.output] | preview off: what Ctrl+Shift+click shows in the viewport.
+                let arg = rest.first().context("preview <node>[.output] | off")?.clone();
+                let link = if arg == "off" {
+                    None
+                } else {
+                    let (var, out) = arg.split_once('.').map_or((arg.as_str(), None), |(v, o)| (v, Some(o)));
+                    let node = self.var(var)?;
+                    let p = self.project()?;
+                    let output = match out {
+                        Some(o) => o.to_string(),
+                        None => p.graph.node(node).def().outputs.first().context("node has no outputs")?.0.to_string(),
+                    };
+                    p.graph.output_type(&crate::graph::Link { node, output: output.clone() }).with_context(|| format!("no output {output}"))?;
+                    Some(crate::graph::Link { node, output })
+                };
+                let p = self.project()?;
+                p.set_preview(&gpu, link);
+            }
             "render" => {
                 let out = self.path(rest.first().context("render <out.png>")?);
                 self.render(&out)?;
@@ -762,7 +781,7 @@ impl Session {
         let p = self.project.as_mut().context("no project")?;
         p.finish_background_work(&gpu);
         let vp = self.viewport.as_mut().unwrap();
-        if let Err(e) = vp.set_material(&gpu, &p.material_code) {
+        if let Err(e) = vp.set_material(&gpu, p.viewport_code()) {
             bail!("material shader failed to compile:\n{e}");
         }
         vp.render(

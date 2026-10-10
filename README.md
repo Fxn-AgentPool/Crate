@@ -17,6 +17,11 @@ the MSVC build tools.
 cargo build --release
 ```
 
+On Windows you can also double-click `build.bat`, or run `build.bat run` to build and start
+Painter (`build.bat debug` for a debug build). It finds cargo in `%USERPROFILE%\.cargo\bin` if it
+isn't on `PATH`, and stops with a message if Painter is running, since Windows can't replace a
+running exe.
+
 ## Running
 
 ```
