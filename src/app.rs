@@ -122,6 +122,9 @@ impl CrateApp {
             updater: Default::default(),
             restart: false,
         };
+        if let Err(e) = crate::library::ensure_folders() {
+            log::warn!("{e:#}");
+        }
         if app.prefs.check_updates_at_startup {
             app.updater.check(&cc.egui_ctx, true);
         }
@@ -986,6 +989,22 @@ impl CrateApp {
                 }
             }
             Some(LibraryAction::ShowMeshMap(m)) => self.view.display = DisplayMode::MeshMap(m.index() as u32),
+            Some(LibraryAction::UseAlpha(path)) => match doc.import_image(&self.gpu, &path) {
+                Ok(name) => self.paint.brush.alpha = name,
+                Err(e) => self.error = Some(format!("Could not use alpha: {e:#}")),
+            },
+            Some(LibraryAction::LoadStencil(path)) => {
+                if let Err(e) = doc.add_stencil(&self.gpu, &path) {
+                    self.error = Some(format!("Could not load stencil: {e:#}"));
+                }
+            }
+            Some(LibraryAction::LoadEnvironment(path)) => match self.viewport.set_environment(&self.gpu, Some(&path)) {
+                Ok(()) => {
+                    self.view.hdri = true;
+                    self.environment = Some(path);
+                }
+                Err(e) => self.error = Some(format!("Could not load environment: {e:#}")),
+            },
             None => {}
         }
         let mut actions = PanelActions::default();

@@ -54,6 +54,22 @@ for _ in $(seq 1 60); do kill -0 $WATCH 2>/dev/null || break; sleep 1; done
 kill $WATCH 2>/dev/null
 check "watch reimported" grep -q '"event":"reimported"' "$OUT/watch.jsonl"
 
+# user library, in a temporary user directory (relative, so it works for Windows executables)
+case "$P" in *.exe) LIB="$OUT/user/Crate/library" ;; *) LIB="$OUT/user/crate/library" ;; esac
+mkdir -p "$LIB/environments" "$LIB/stencils" "$LIB/alphas" "$LIB/grunge"
+# A 2×1 Radiance HDR, uniform gray 1.0.
+printf '#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n\x80\x80\x80\x81\x80\x80\x80\x81' > "$LIB/environments/gray.hdr"
+touch "$LIB/environments/.hidden.hdr" "$LIB/environments/notes.txt"
+cp assets/D_SampleDecal.png "$LIB/stencils/decal.png"
+cp assets/D_SampleDecal.png "$LIB/alphas/dot.png"
+cp assets/D_SampleDecal.png "$LIB/grunge/scratches.png"
+lib() { APPDATA="$OUT/user" XDG_CONFIG_HOME="$OUT/user" "$P" run --project "$OUT/Crate.crate" -c "$1"; }
+check "library lists environments" lib "expect-library environments gray"
+check "library lists extra folders" lib "expect-library grunge scratches"
+check "library items by name" lib "stencil-add decal; stencil-add grunge/scratches; brush alpha=dot; brush alpha=round"
+check "library environment lights the viewport" lib "size 160x120; render $OUT/studio.png; environment gray; render $OUT/gray.png; expect-different $OUT/studio.png $OUT/gray.png"
+check "missing library item fails" bash -c "! APPDATA=$OUT/user XDG_CONFIG_HOME=$OUT/user '$P' run --project $OUT/Crate.crate -c 'stencil-add nothing' > /dev/null 2>&1"
+
 # exit codes
 "$P" info "$OUT/Missing.crate" > /dev/null 2>&1; code=$?
 check "missing project exits 1" test "$code" -eq 1

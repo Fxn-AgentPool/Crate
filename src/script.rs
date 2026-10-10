@@ -463,6 +463,12 @@ impl Session {
                         "jitter_angle" => b.jitter_angle = v.parse()?,
                         "jitter_position" => b.jitter_position = v.parse()?,
                         "jitter_flow" => b.jitter_flow = v.parse()?,
+                        "alpha" if v == "round" => b.alpha.clear(),
+                        "alpha" => {
+                            let path = crate::library::resolve(v, "alphas", |s| self.path(s))?;
+                            let p = self.project.as_mut().context("no project")?;
+                            self.paint.brush.alpha = p.import_image(&gpu, &path)?;
+                        }
                         _ => bail!("unknown brush property {k}"),
                     }
                 }
@@ -514,7 +520,8 @@ impl Session {
                 self.paint.end_stroke(&gpu, p, stencil);
             }
             "stencil-add" => {
-                let path = self.path(rest.first().context("stencil-add <image>")?);
+                let arg = rest.first().context("stencil-add <library item or image>")?;
+                let path = crate::library::resolve(arg, "stencils", |s| self.path(s))?;
                 let p = self.project.as_mut().context("no project")?;
                 p.add_stencil(&gpu, &path)?;
             }
@@ -810,12 +817,19 @@ impl Session {
                 self.paint.transform.rotation = v[2].to_radians();
                 self.paint.transform.scale = v[3];
             }
+            "expect-library" => {
+                // expect-library <folder> <name>...: what the Library lists for that folder.
+                let folder = rest.first().context("expect-library <folder> <name>...")?;
+                let got: Vec<String> = crate::library::scan(folder).into_iter().map(|it| it.name).collect();
+                anyhow::ensure!(got == rest[1..], "library folder {folder} lists {got:?}");
+            }
             "expect-unbaked" => {
                 let want: bool = rest.first().context("expect-unbaked true|false")?.parse()?;
                 anyhow::ensure!(self.paint.unbaked == want, "unbaked is {}", self.paint.unbaked);
             }
             "environment" => {
-                let path = self.path(rest.first().context("environment <file.hdr|exr>")?);
+                let arg = rest.first().context("environment <library item or file.hdr|exr>")?;
+                let path = crate::library::resolve(arg, "environments", |s| self.path(s))?;
                 self.viewport.as_mut().context("no project")?.set_environment(&gpu, Some(&path))?;
                 self.view.hdri = true;
             }

@@ -9,6 +9,7 @@ mod export;
 mod gpu;
 mod graph;
 mod headless;
+mod library;
 mod highpoly;
 mod mesh;
 mod meshmaps;

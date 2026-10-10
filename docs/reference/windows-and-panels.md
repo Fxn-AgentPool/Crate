@@ -63,8 +63,7 @@ thumbnail; using it reports the error in the status bar.
 | Stencil, or image in another folder | Loads it as a stencil. | — | **Load as stencil**. |
 | Environment | Loads it as the viewport environment. | — | **Load environment**. |
 
-Without an open project, Library items can't be used: double-click does nothing and the
-context menu items are disabled.
+The Library is shown only while a project is open.
 
 ## Menus
 

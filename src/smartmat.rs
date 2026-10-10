@@ -18,7 +18,7 @@ pub const FORMAT: &str = "crate-smart-material";
 /// Smart materials saved before the rename (`.psmat` files).
 const LEGACY_FORMAT: &str = "painter-smart-material";
 pub const EXT: &str = "smat";
-const LEGACY_EXT: &str = "psmat";
+pub const LEGACY_EXT: &str = "psmat";
 
 #[derive(Serialize, Deserialize)]
 struct MaterialFile {
@@ -35,7 +35,7 @@ struct MaterialFile {
 }
 
 pub fn library_dir() -> PathBuf {
-    crate::prefs::dir().join("library").join("smart-materials")
+    crate::library::dir("smart-materials")
 }
 
 pub struct LibraryItem {
@@ -45,20 +45,16 @@ pub struct LibraryItem {
 }
 
 pub fn list() -> Vec<LibraryItem> {
-    let mut items = Vec::new();
-    for e in std::fs::read_dir(library_dir()).into_iter().flatten().flatten() {
-        let path = e.path();
-        if path.extension().is_some_and(|x| x == EXT || x == LEGACY_EXT) {
-            let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-            let thumbnail = read_entry(&path, "thumbnail.png").ok().and_then(|bytes| {
+    crate::library::scan("smart-materials")
+        .into_iter()
+        .map(|it| {
+            let thumbnail = read_entry(&it.path, "thumbnail.png").ok().and_then(|bytes| {
                 let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
                 Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
             });
-            items.push(LibraryItem { name, path, thumbnail });
-        }
-    }
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    items
+            LibraryItem { name: it.name, path: it.path, thumbnail }
+        })
+        .collect()
 }
 
 fn read_entry(path: &Path, name: &str) -> Result<Vec<u8>> {

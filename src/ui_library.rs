@@ -1,52 +1,25 @@
-//! Library panel: project resources (baked mesh maps, images) and the user library
-//! (smart materials, plus categories that are not populated yet).
+//! Library panel: project resources (baked mesh maps, images) and the user library, one
+//! category per library folder. See docs/reference/windows-and-panels.md "Library".
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 use crate::gpu::Gpu;
+use crate::library::{self, Kind};
 use crate::meshmaps::{MapStatus, MeshMap};
 use crate::project::Project;
 
 const THUMB: usize = 64;
+/// Size library image thumbnails are made at (shown at 72 points).
+const LIBRARY_THUMB: u32 = 128;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Category {
     MeshMaps,
     Images,
-    SmartMaterials,
-    Materials,
-    SmartMasks,
-    Brushes,
-    Alphas,
-    Stencils,
-    Environments,
-}
-
-impl Category {
-    const PROJECT: [Category; 2] = [Category::MeshMaps, Category::Images];
-    const LIBRARY: [Category; 7] = [
-        Category::SmartMaterials,
-        Category::Materials,
-        Category::SmartMasks,
-        Category::Brushes,
-        Category::Alphas,
-        Category::Stencils,
-        Category::Environments,
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            Category::MeshMaps => "Mesh Maps",
-            Category::Images => "Images",
-            Category::SmartMaterials => "Smart Materials",
-            Category::Materials => "Materials",
-            Category::SmartMasks => "Smart Masks",
-            Category::Brushes => "Brushes",
-            Category::Alphas => "Alphas",
-            Category::Stencils => "Stencils",
-            Category::Environments => "Environments",
-        }
-    }
+    /// A folder of the user library.
+    Library(String),
 }
 
 /// What the user asked the library to do this frame.
@@ -56,24 +29,46 @@ pub enum LibraryAction {
     MeshMapMask(MeshMap),
     /// Show the map in the viewport.
     ShowMeshMap(MeshMap),
+    UseAlpha(PathBuf),
+    LoadStencil(PathBuf),
+    LoadEnvironment(PathBuf),
+}
+
+enum Thumb {
+    Loading,
+    Ready(egui::TextureHandle),
+    Unreadable,
+}
+
+/// A scanned library folder, with thumbnails arriving from a background thread.
+struct FolderView {
+    items: Vec<(library::Item, Thumb)>,
+    thumbs: Option<mpsc::Receiver<(usize, Option<egui::ColorImage>)>>,
 }
 
 pub struct Library {
     category: Category,
     smart: Option<Vec<(crate::smartmat::LibraryItem, Option<egui::TextureHandle>)>>,
+    /// Folders the user added, scanned when first shown and on Refresh.
+    extra: Option<Vec<String>>,
+    folders: HashMap<String, FolderView>,
     /// Mesh map thumbnails with the maps version they were made from.
     map_thumbs: [Option<(u64, egui::TextureHandle)>; 8],
 }
 
 impl Default for Library {
     fn default() -> Self {
-        Self { category: Category::MeshMaps, smart: None, map_thumbs: Default::default() }
+        Self { category: Category::MeshMaps, smart: None, extra: None, folders: HashMap::new(), map_thumbs: Default::default() }
     }
 }
 
 impl Library {
+    /// Rescans every library folder (Refresh, or after saving a smart material).
     pub fn refresh(&mut self) {
         self.smart = None;
+        self.extra = None;
+        // Dropping a view also stops its thumbnail thread.
+        self.folders.clear();
     }
 
     /// Forgets per-project state (thumbnails) when another project is opened.
@@ -82,28 +77,45 @@ impl Library {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &Project) -> Option<LibraryAction> {
-        let mut chip_row = |ui: &mut egui::Ui, label: &str, cats: &[Category]| {
+        let extra = self.extra.get_or_insert_with(library::extra_folders).clone();
+        if let Category::Library(f) = &self.category {
+            if library::kind(f) == Kind::Images && !extra.contains(f) {
+                // The folder was removed.
+                self.category = Category::Library(library::BUILT_IN[0].0.into());
+            }
+        }
+        let mut chip_row = |ui: &mut egui::Ui, label: &str, cats: Vec<(Category, String)>| {
             ui.label(egui::RichText::new(label).small().weak());
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                for &c in cats {
-                    ui.selectable_value(&mut self.category, c, egui::RichText::new(c.name()).small());
+                for (c, name) in cats {
+                    ui.selectable_value(&mut self.category, c, egui::RichText::new(name).small());
                 }
             });
         };
-        chip_row(ui, "PROJECT", &Category::PROJECT);
-        chip_row(ui, "LIBRARY", &Category::LIBRARY);
+        chip_row(ui, "PROJECT", vec![(Category::MeshMaps, "Mesh Maps".into()), (Category::Images, "Images".into())]);
+        let folders = library::BUILT_IN.iter().map(|b| b.0.to_string()).chain(extra);
+        chip_row(ui, "LIBRARY", folders.map(|f| (Category::Library(f.clone()), library::title(&f))).collect());
         ui.separator();
-        match self.category {
+        match self.category.clone() {
             Category::MeshMaps => self.mesh_maps(ui, gpu, p),
             Category::Images => {
                 images(ui, p);
                 None
             }
-            Category::SmartMaterials => self.smart_materials(ui),
-            _ => {
-                ui.label(egui::RichText::new("Nothing here yet.").weak());
-                None
+            Category::Library(folder) => {
+                let action = if library::kind(&folder) == Kind::SmartMaterials { self.smart_materials(ui) } else { self.folder(ui, &folder) };
+                ui.horizontal(|ui| {
+                    if ui.small_button("Refresh").clicked() {
+                        self.refresh();
+                    }
+                    if ui.small_button("Show in file browser").clicked() {
+                        let dir = library::dir(&folder);
+                        let _ = std::fs::create_dir_all(&dir);
+                        crate::prefs::open_folder(&dir);
+                    }
+                });
+                action
             }
         }
     }
@@ -215,18 +227,123 @@ impl Library {
                 });
             }
         });
-        ui.horizontal(|ui| {
-            if ui.small_button("Refresh").clicked() {
-                self.smart = None;
-            }
-            if ui.small_button("Show in file browser").clicked() {
-                let dir = crate::smartmat::library_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                crate::prefs::open_folder(&dir);
-            }
-        });
         chosen.map(LibraryAction::InsertSmartMaterial)
     }
+
+    /// Any library folder other than smart materials.
+    fn folder(&mut self, ui: &mut egui::Ui, folder: &str) -> Option<LibraryAction> {
+        let kind = library::kind(folder);
+        let thumbnails = matches!(kind, Kind::Alphas | Kind::Stencils | Kind::Images);
+        let view = self.folders.entry(folder.to_string()).or_insert_with(|| {
+            let items = library::scan(folder);
+            let thumbs = thumbnails.then(|| spawn_thumbnails(ui.ctx(), items.iter().map(|it| it.path.clone()).collect()));
+            FolderView { items: items.into_iter().map(|it| (it, Thumb::Loading)).collect(), thumbs }
+        });
+        if let Some(rx) = &view.thumbs {
+            loop {
+                match rx.try_recv() {
+                    Ok((i, img)) => {
+                        view.items[i].1 = match img {
+                            Some(img) => {
+                                let name = format!("library {}", view.items[i].0.path.display());
+                                Thumb::Ready(ui.ctx().load_texture(name, img, egui::TextureOptions::LINEAR))
+                            }
+                            None => Thumb::Unreadable,
+                        };
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        view.thumbs = None;
+                        break;
+                    }
+                }
+            }
+        }
+        if view.items.is_empty() {
+            ui.label(egui::RichText::new("Empty. Add files to the folder (Show in file browser), then Refresh.").weak());
+            return None;
+        }
+        // What double-click and the context menu do; None lists the files without actions.
+        let use_item: Option<(&str, fn(PathBuf) -> LibraryAction)> = match kind {
+            Kind::Alphas => Some(("Use as brush alpha", LibraryAction::UseAlpha)),
+            Kind::Stencils | Kind::Images => Some(("Load as stencil", LibraryAction::LoadStencil)),
+            Kind::Environments => Some(("Load environment", LibraryAction::LoadEnvironment)),
+            Kind::SmartMaterials | Kind::Reserved => None,
+        };
+        let mut action = None;
+        let mut item_ui = |resp: egui::Response, it: &library::Item| {
+            let file = it.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let Some((label, make)) = use_item else {
+                resp.on_hover_text(file);
+                return;
+            };
+            let resp = resp.on_hover_text(format!("{file}\nDouble-click: {}", label.to_lowercase()));
+            if resp.double_clicked() {
+                action = Some(make(it.path.clone()));
+            }
+            resp.context_menu(|ui| {
+                if ui.button(label).clicked() {
+                    action = Some(make(it.path.clone()));
+                    ui.close();
+                }
+            });
+        };
+        if thumbnails {
+            ui.horizontal_wrapped(|ui| {
+                for (it, thumb) in &view.items {
+                    let resp = ui
+                        .vertical(|ui| {
+                            ui.set_width(72.0);
+                            let size = egui::vec2(72.0, 72.0);
+                            match thumb {
+                                Thumb::Ready(t) => {
+                                    ui.add(egui::Image::new(t).fit_to_exact_size(size).corner_radius(3.0));
+                                }
+                                Thumb::Loading | Thumb::Unreadable => {
+                                    let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                                    ui.painter().rect_filled(r, 3.0, egui::Color32::from_gray(30));
+                                    let text = if matches!(thumb, Thumb::Unreadable) { "unreadable" } else { "…" };
+                                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(10.0), egui::Color32::from_gray(110));
+                                }
+                            }
+                            ui.add(egui::Label::new(egui::RichText::new(&it.name).small()).truncate());
+                        })
+                        .response
+                        .interact(egui::Sense::click());
+                    item_ui(resp, it);
+                }
+            });
+        } else {
+            for (it, _) in &view.items {
+                let resp = ui.add(egui::Label::new(&it.name).sense(egui::Sense::click()));
+                item_ui(resp, it);
+            }
+        }
+        action
+    }
+}
+
+/// Makes thumbnails of `paths` in the background; each arrives as (index, image, or None when
+/// the file can't be read). The thread stops early when the receiver is dropped.
+fn spawn_thumbnails(ctx: &egui::Context, paths: Vec<PathBuf>) -> mpsc::Receiver<(usize, Option<egui::ColorImage>)> {
+    let (tx, rx) = mpsc::channel();
+    let ctx = ctx.clone();
+    let spawned = std::thread::Builder::new().name("library thumbnails".into()).spawn(move || {
+        for (i, path) in paths.iter().enumerate() {
+            let img = image::open(path).ok().map(|img| {
+                let t = img.thumbnail(LIBRARY_THUMB, LIBRARY_THUMB).to_rgba8();
+                egui::ColorImage::from_rgba_unmultiplied([t.width() as usize, t.height() as usize], t.as_raw())
+            });
+            if tx.send((i, img)).is_err() {
+                return;
+            }
+            ctx.request_repaint();
+        }
+    });
+    if let Err(e) = spawned {
+        log::error!("could not start the thumbnail thread: {e}");
+    }
+    rx
 }
 
 fn images(ui: &mut egui::Ui, p: &Project) {
