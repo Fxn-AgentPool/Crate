@@ -41,19 +41,25 @@ appear after **Refresh**. Thumbnails are made in the background and appear as th
 | Category | Row | Folder | Files listed |
 |---|---|---|---|
 | Mesh Maps | Project | — | The six [mesh maps](mesh-maps.md), with a thumbnail of the first UDIM tile. Unbaked maps show **not baked**; out-of-date maps have an orange name. |
-| Images | Project | — | Imported images, with their size. Hover shows the source file. |
+| Images | Project | — | Imported images (including stencils and brush alphas), with thumbnails, sorted by name. Hover shows the size and the source file. |
 | Smart Materials | Library | `smart-materials` | `.smat` files, with thumbnails. Created with **Save as smart material**. |
 | Materials | Library | `materials` | Reserved: every file, by name, with no actions yet. |
 | Smart Masks | Library | `smart-masks` | Reserved: every file, by name, with no actions yet. |
 | Brushes | Library | `brushes` | Reserved: every file, by name, with no actions yet. |
 | Alphas | Library | `alphas` | Images, with thumbnails. Color images are used by their luminance. |
 | Stencils | Library | `stencils` | Images, with thumbnails. |
-| Environments | Library | `environments` | `.hdr` and `.exr` files, by name. |
+| Environments | Library | `environments` | `.hdr` and `.exr` files, with a wide preview of the whole panorama. |
 | *other folder* | Library | its name | Images, with thumbnails. |
 
 Images are PNG, JPEG, TGA, TIFF and EXR files. Items are sorted by name. Subfolders inside a
 category folder are not scanned. A file that can't be read shows **unreadable** instead of a
 thumbnail; using it reports the error in the status bar.
+
+Thumbnails and previews keep the image's aspect ratio: images fit a square tile, environments
+a tile twice as wide as it is high. HDR and EXR files are tone-mapped as the viewport shows a
+material (filmic, exposure 0); other images are shown as they are. Thumbnails of the project's
+images are made from their source files, in the background, when **Images** is first shown and
+when an image is added.
 
 | Item | Double-click | Drag | Right-click |
 |---|---|---|---|
