@@ -10,7 +10,7 @@ struct Params {
     mode: u32,
     samples: u32,
     ignore_backfaces: u32,
-    _pad: u32,
+    in_layer: u32,         // layer of pos_map / nrm_map to read
     max_distance: f32,     // world units
     cos_spread: f32,       // cos of half the AO cone angle
     curvature_radius: f32, // world units
@@ -147,12 +147,12 @@ fn cone_dir(i: u32, count: u32, rot: f32, cos_max: f32) -> vec3f {
 fn main(@builtin(global_invocation_id) gid: vec3u) {
     let xy = vec2u(gid.x, gid.y + params.row_start);
     if xy.x >= params.res || gid.y >= params.row_count || xy.y >= params.res { return; }
-    let pos = textureLoad(pos_map, xy, params.layer, 0);
+    let pos = textureLoad(pos_map, xy, params.in_layer, 0);
     if pos.a == 0.0 {
         textureStore(out_map, xy, params.layer, vec4f(select(1.0, 0.5, params.mode == 1u)));
         return;
     }
-    let n = normalize(textureLoad(nrm_map, xy, params.layer, 0).xyz * 2.0 - 1.0);
+    let n = normalize(textureLoad(nrm_map, xy, params.in_layer, 0).xyz * 2.0 - 1.0);
     let tbn = basis(n);
     // Seed from the position so padding texels reproduce their source texel.
     let seed = hash(bitcast<u32>(pos.x) ^ hash(bitcast<u32>(pos.y) ^ hash(bitcast<u32>(pos.z))));

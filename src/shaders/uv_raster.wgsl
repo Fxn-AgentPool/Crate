@@ -1,5 +1,6 @@
 // Rasterizes the mesh in UV space for one UDIM tile, writing object-space position,
-// normal and material ID per texel. Texture row 0 is the top of the tile (v = 1).
+// normal, material ID and tangent per texel. The tangent's w is sign * (part + 1), for
+// high-poly baking (highbake.wgsl). Texture row 0 is the top of the tile (v = 1).
 
 struct Params {
     bbox_min: vec4f,
@@ -16,6 +17,7 @@ struct VsIn {
     @location(2) tangent: vec4f,
     @location(3) uv: vec2f,
     @location(4) material: u32,
+    @location(5) group: u32,
 };
 
 struct VsOut {
@@ -23,6 +25,8 @@ struct VsOut {
     @location(0) pos: vec3f,
     @location(1) normal: vec3f,
     @location(2) @interpolate(flat) material: u32,
+    @location(3) tangent: vec4f,
+    @location(4) @interpolate(flat) group: u32,
 };
 
 @vertex
@@ -33,6 +37,8 @@ fn vs_main(v: VsIn) -> VsOut {
     o.pos = v.pos;
     o.normal = v.normal;
     o.material = v.material;
+    o.tangent = v.tangent;
+    o.group = v.group;
     return o;
 }
 
@@ -40,6 +46,7 @@ struct FsOut {
     @location(0) pos: vec4f,
     @location(1) normal: vec4f,
     @location(2) id: vec4f,
+    @location(3) tangent: vec4f,
 };
 
 fn id_color(i: u32) -> vec3f {
@@ -58,5 +65,7 @@ fn fs_main(in: VsOut) -> FsOut {
     o.pos = vec4f(in.pos, 1.0);
     o.normal = vec4f(normalize(in.normal) * 0.5 + 0.5, 1.0);
     o.id = vec4f(id_color(in.material), 1.0);
+    let sign = select(-1.0, 1.0, in.tangent.w >= 0.0);
+    o.tangent = vec4f(in.tangent.xyz, sign * f32(in.group + 1u));
     return o;
 }

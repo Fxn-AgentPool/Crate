@@ -485,7 +485,7 @@ pub const PROJECTIONS: &[&str] = &["UV", "Triplanar"];
 pub const NOISE_TYPES: &[&str] = &["Perlin", "Simplex", "Value"];
 pub const AXES: &[&str] = &["X", "Y", "Z", "Custom"];
 pub const SPACES: &[&str] = &["Object", "World"];
-pub const MAP_NAMES: &[&str] = &["AO", "Curvature", "Thickness", "World Normal", "Position", "ID"];
+pub const MAP_NAMES: &[&str] = &["AO", "Curvature", "Thickness", "World Normal", "Position", "ID", "Normal", "Height"];
 pub const MATH_OPS: &[&str] =
     &["Add", "Subtract", "Multiply", "Divide", "Power", "Min", "Max", "Abs", "Smoothstep"];
 pub const METRICS: &[&str] = &["Euclidean", "Manhattan"];

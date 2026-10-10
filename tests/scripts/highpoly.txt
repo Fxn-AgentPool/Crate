@@ -1,0 +1,52 @@
+# High-poly baking (docs/reference/mesh-maps.md#high-poly-mesh) against analytic references
+# made by tests/data/make_highpoly.py.
+
+# A flat plane baked from a sine-wave heightfield: Normal and Height match the formula.
+new tests/data/hp_low.obj 1024
+high-poly tests/data/hp_high.obj
+bake-settings frontal=0.04 rear=0.04
+bake all
+expect-misses 0.1
+save-map normal target/tests/highpoly/normal.png
+expect-same target/tests/highpoly/normal.png tests/data/hp_normal_ref.png 3
+save-map height target/tests/highpoly/height.png
+expect-same target/tests/highpoly/height.png tests/data/hp_height_ref.png 3
+
+# Exports carry the baked normal (glTF preset: OpenGL normals; nothing painted on top).
+export target/tests/highpoly/export
+expect-same target/tests/highpoly/export/hp_low_Normal.1001.png tests/data/hp_normal_ref.png 3
+
+# The Normal map becomes the material's normal (shown by the Normal channel view); turning
+# Apply Normal map off leaves the flat plane's normal.
+size 512x512
+camera 0 55 1.3
+render target/tests/highpoly/lit.png
+view normal
+render target/tests/highpoly/applied.png
+bake-settings apply_normal=off
+render target/tests/highpoly/flat.png
+expect-different target/tests/highpoly/applied.png target/tests/highpoly/flat.png 40
+bake-settings apply_normal=on
+view normal-map
+render target/tests/highpoly/view_normal_map.png
+
+# Two parts: with Match by name, A_low only sees A_high (lower); without, B_high is hit first.
+new tests/data/hp_parts_low.obj 1024
+high-poly tests/data/hp_parts_high.obj
+bake-settings frontal=0.05 rear=0.05
+bake height
+save-map height target/tests/highpoly/match_on.png
+expect-same target/tests/highpoly/match_on.png tests/data/hp_match_on_ref.png 2
+bake-settings match_by_name=off
+bake outdated
+save-map height target/tests/highpoly/match_off.png
+expect-same target/tests/highpoly/match_off.png tests/data/hp_match_off_ref.png 2
+
+# Saving and reopening keeps the baked maps and the high-poly settings.
+save target/tests/highpoly/Parts.crate
+open target/tests/highpoly/Parts.crate
+save-map height target/tests/highpoly/reopened.png
+expect-same target/tests/highpoly/match_off.png target/tests/highpoly/reopened.png 1
+
+# Without a high poly, Normal and Height can't be baked.
+high-poly off

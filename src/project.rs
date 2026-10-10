@@ -148,7 +148,7 @@ impl Project {
 
     pub fn start_bake(&mut self, gpu: &Gpu, maps: &[MeshMap]) {
         let res = self.tile_resolution();
-        let job = self.maps.start_bake(gpu, res, maps);
+        let job = self.maps.start_bake(gpu, res, maps, &self.import_settings);
         for m in job.maps() {
             self.saved_maps.remove(m);
         }
@@ -406,11 +406,13 @@ impl Project {
             self.caches = Default::default();
         }
         let settings = self.maps.settings;
+        let high_poly = self.maps.high_poly.clone();
         let statuses: Vec<_> = crate::meshmaps::MeshMap::ALL.iter().map(|m| self.maps.status(*m)).collect();
         self.original_mesh = path.to_path_buf();
         self.gpu_mesh = crate::viewport::GpuMesh::new(gpu, &mesh);
         self.maps = MeshMaps::new(gpu, &mesh, res);
         self.maps.settings = settings;
+        self.maps.high_poly = high_poly;
         self.mesh = mesh;
         self.maps.bake_blocking(gpu, &self.gpu_mesh, res, &[MeshMap::Position, MeshMap::WorldNormal]);
         // Other maps keep their old data in name only: they must be rebaked.

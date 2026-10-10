@@ -20,7 +20,8 @@ pub const PAINT_PLANES: usize = 5;
 pub struct SceneUniform {
     pub bbox_min: [f32; 4],
     pub bbox_size: [f32; 4],
-    /// x: bit per mesh map that has been baked, y: tile count, z: map resolution
+    /// x: bit per mesh map that has been baked, y: tile count, z: map resolution,
+    /// w: 1 = apply the baked Normal map to the material
     pub info: [u32; 4],
 }
 
@@ -81,6 +82,10 @@ pub fn layout(gpu: &Gpu) -> wgpu::BindGroupLayout {
     for b in 9..=16 {
         entries.push(gpu::texture_entry(b, fs, arr, true));
     }
+    // 18 Normal (tangent space), 19 Height
+    for b in 18..=19 {
+        entries.push(gpu::texture_entry(b, fs, arr, true));
+    }
     entries.push(wgpu::BindGroupLayoutEntry {
         binding: 17,
         visibility: fs,
@@ -123,6 +128,8 @@ struct Scene {
 @group(1) @binding(15) var images: texture_2d_array<f32>;
 @group(1) @binding(16) var cache: texture_2d_array<f32>;
 @group(1) @binding(17) var<storage, read> params: array<vec4f>;
+@group(1) @binding(18) var mm_tnrm: texture_2d_array<f32>;
+@group(1) @binding(19) var mm_height: texture_2d_array<f32>;
 
 // Texture coordinate of a point within its tile (row 0 is the top of the tile).
 fn tile_tex(tile_uv: vec2f) -> vec2f {
@@ -161,6 +168,15 @@ fn mesh_position(tc: vec2f, layer: i32) -> vec3f {
 fn mesh_world_normal(tc: vec2f, layer: i32) -> vec3f {
     if !map_baked(1u) || layer < 0 { return vec3f(0.5, 0.5, 1.0); }
     return textureSampleLevel(mm_nrm, samp_clamp, tc, layer, 0.0).xyz;
+}
+// Tangent-space Normal map from the high poly, encoded n * 0.5 + 0.5; alpha 0 = missed texel.
+fn mesh_normal_map(tc: vec2f, layer: i32) -> vec4f {
+    if !map_baked(6u) || layer < 0 { return vec4f(0.5, 0.5, 1.0, 1.0); }
+    return textureSampleLevel(mm_tnrm, samp_clamp, tc, layer, 0.0);
+}
+fn mesh_height(tc: vec2f, layer: i32) -> f32 {
+    if !map_baked(7u) || layer < 0 { return 0.5; }
+    return textureSampleLevel(mm_height, samp_clamp, tc, layer, 0.0).r;
 }
 "#;
 
@@ -343,7 +359,7 @@ impl SceneResources {
         let u = SceneUniform {
             bbox_min: bbox_min.extend(0.0).into(),
             bbox_size: bbox_size.max(glam::Vec3::splat(1e-6)).extend(0.0).into(),
-            info: [baked, maps.layers, maps.res, 0],
+            info: [baked, maps.layers, maps.res, maps.settings.apply_normal as u32],
         };
         gpu.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         // Mesh map textures are only replaced on reallocation, but rebinding on every
@@ -370,6 +386,8 @@ impl SceneResources {
         entries.push(wgpu::BindGroupEntry { binding: 15, resource: tv(&self.images.view) });
         entries.push(wgpu::BindGroupEntry { binding: 16, resource: tv(&self.cache.view) });
         entries.push(wgpu::BindGroupEntry { binding: 17, resource: self.params.as_entire_binding() });
+        entries.push(wgpu::BindGroupEntry { binding: 18, resource: tv(&maps.tnormal.view) });
+        entries.push(wgpu::BindGroupEntry { binding: 19, resource: tv(&maps.height.view) });
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene"),
             layout: &self.layout,

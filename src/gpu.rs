@@ -142,6 +142,27 @@ impl Gpu {
     }
 }
 
+impl Gpu {
+    /// Reads a buffer (which needs `COPY_SRC`) back to the CPU.
+    pub fn read_buffer(&self, buffer: &wgpu::Buffer) -> Vec<u8> {
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: buffer.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+        self.queue.submit([enc.finish()]);
+        let slice = staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.wait_idle();
+        let data = slice.get_mapped_range().expect("mapped readback buffer").to_vec();
+        staging.unmap();
+        data
+    }
+}
+
 pub fn shader(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),

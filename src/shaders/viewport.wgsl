@@ -85,6 +85,13 @@ fn mesh_map_display(s: Surface) -> vec3f {
         case 2u: { return show(vec3f(mesh_ao(tc, s.layer))); }
         case 3u: { return show(vec3f(mesh_curvature(tc, s.layer))); }
         case 4u: { return show(vec3f(mesh_thickness(tc, s.layer))); }
+        case 6u: {
+            // Texels that missed the high poly are red.
+            let n = mesh_normal_map(tc, s.layer);
+            if n.a < 0.5 { return show(vec3f(1.0, 0.05, 0.05)); }
+            return show(n.xyz);
+        }
+        case 7u: { return show(vec3f(mesh_height(tc, s.layer))); }
         default: { return show(mesh_id(tc, s.layer)); }
     }
 }
