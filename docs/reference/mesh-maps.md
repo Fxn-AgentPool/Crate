@@ -160,8 +160,8 @@ see-through and drawn without wireframes:
 | Scroll | Zoom |
 | Double-click | Frame the mesh |
 
-The preview's camera starts at the viewport's view each time the window opens, and then moves
-independently of it.
+Each time the window opens, the preview's camera looks from the viewport's direction and frames
+the whole mesh. It then moves independently of the viewport's camera.
 
 - **High poly** and **Cage** need a high-poly mesh and are disabled without one.
 - While the window is open and **High poly** or **Cage** is on, the high-poly file is read in

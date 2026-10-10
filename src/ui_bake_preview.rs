@@ -23,6 +23,12 @@ impl BakePane {
         Self { view: None, camera: Camera::default(), texture: None }
     }
 
+    /// Frames the mesh, a little tighter than its bounding sphere: the preview is small.
+    pub fn frame(&mut self, mesh: &crate::mesh::Mesh) {
+        self.camera.frame(mesh.center(), mesh.radius());
+        self.camera.distance *= 0.7;
+    }
+
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -69,7 +75,7 @@ impl BakePane {
             }
         }
         if response.double_clicked() {
-            self.camera.frame(doc.mesh.center(), doc.mesh.radius());
+            self.frame(&doc.mesh);
         }
 
         let ppp = ui.ctx().pixels_per_point();

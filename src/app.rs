@@ -247,10 +247,11 @@ impl eframe::App for CrateApp {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
             }
-            // The bake preview is part of the Mesh Maps window; its camera starts at the
-            // viewport's view whenever the window opens.
+            // The bake preview is part of the Mesh Maps window; whenever the window opens, its
+            // camera looks from the viewport's direction and frames the whole mesh.
             if self.show_mesh_maps && !doc.maps.preview.open {
                 self.bake_pane.camera = self.camera;
+                self.bake_pane.frame(&doc.mesh);
             }
             doc.maps.preview.open = self.show_mesh_maps;
             doc.update_preview(&self.gpu);
@@ -1210,10 +1211,16 @@ impl CrateApp {
                     }
                     let (width, height) = (ui.available_width() * 0.35, ui.available_height());
                     ui.horizontal_top(|ui| {
-                        ui.allocate_ui(egui::vec2(width, height), |ui| {
+                        // Top-down: the column would otherwise inherit the split's left-to-right
+                        // layout and put the sections side by side.
+                        let top_down = egui::Layout::top_down(egui::Align::Min);
+                        ui.allocate_ui_with_layout(egui::vec2(width, height), top_down, |ui| {
+                            ui.set_width(width);
                             egui::ScrollArea::vertical().id_salt("mesh maps settings").max_height(height).show(ui, |ui| {
-                                ui.set_width(width - 16.0);
-                                self.mesh_maps_ui(ui);
+                                ui.with_layout(top_down, |ui| {
+                                    ui.set_width(width - 16.0);
+                                    self.mesh_maps_ui(ui);
+                                });
                             });
                         });
                         ui.separator();
@@ -1347,10 +1354,16 @@ impl CrateApp {
         ui.separator();
         egui::CollapsingHeader::new("High poly").default_open(true).show(ui, |ui| {
             let before = (doc.maps.settings, doc.maps.high_poly.clone());
-            ui.horizontal(|ui| {
-                let name = doc.maps.high_poly.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into());
-                ui.label(egui::RichText::new(name).monospace());
-            });
+            // The file name only, so a long path doesn't widen the settings; the path on hover.
+            match &doc.maps.high_poly {
+                Some(p) => {
+                    let name = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+                    ui.add(egui::Label::new(egui::RichText::new(name).monospace()).truncate()).on_hover_text(p.display().to_string());
+                }
+                None => {
+                    ui.label(egui::RichText::new("none").monospace());
+                }
+            }
             ui.horizontal(|ui| {
                 if ui.add_enabled(!baking, egui::Button::new("Browse…")).clicked() {
                     if let Some(p) = rfd::FileDialog::new().add_filter("Mesh", &["glb", "gltf", "obj"]).set_title("High-poly mesh").pick_file() {
