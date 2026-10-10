@@ -33,11 +33,11 @@ Add `--auto-cage` to bake with [Auto cage](../reference/mesh-maps.md#auto-cage).
 
 ## Check the cage
 
-1. Under **High poly → Preview**, turn on **High poly** and **Cage**.
-2. Orbit around the asset. Where high-poly detail shows through the blue cage, raise **Frontal
-   distance** or turn on **Auto cage** until the cage covers it.
-3. Turn off **Low poly** to see the parts of the high poly that lie inside the low poly.
-4. Turn off **High poly** and **Cage** to go back to the normal view.
+1. Under **High poly**, click **Show preview**. The preview pane opens next to the settings,
+   with the low poly in blue, the high poly in white and the cage in red.
+2. Drag in the pane to orbit around the asset. Where white high-poly detail pokes out of the
+   red cage, raise **Frontal distance** or turn on **Auto cage** until the cage covers it.
+3. To see one part more clearly, lower the others' opacity or turn them off.
 
 See [Bake preview](../reference/mesh-maps.md#bake-preview).
 

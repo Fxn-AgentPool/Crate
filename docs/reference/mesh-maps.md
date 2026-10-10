@@ -129,29 +129,52 @@ baked surface. A Missing Normal map is flat and changes nothing.
 
 ### Bake preview
 
-**Mesh Maps → High poly → Preview** shows the meshes a high-poly bake uses in the viewport, so
-you can check the cage before baking:
+**Mesh Maps → High poly → Show preview** extends the Mesh Maps window with a preview pane: its
+own view of the meshes a high-poly bake uses, so you can check the cage before baking. The
+viewport is not affected.
 
-| Toggle | Default | Shows |
-|---|---|---|
-| Low poly | on | The low-poly mesh, as the viewport shows it otherwise (material, channel or mesh map). |
-| High poly | off | The high-poly mesh in light gray, lit from the camera. |
-| Cage | off | The outer cage: every low-poly vertex moved outward along its normal by **Frontal distance**, or with **Auto cage** on, by the auto cage's frontal distance. Drawn as a translucent blue surface with its edges. |
+| Part | Color | Default opacity | Shows |
+|---|---|---|---|
+| Low poly | blue | 0.5 | The low-poly mesh. |
+| High poly | white | 0.5 | The high-poly mesh. |
+| Cage | red | 0.3 | The outer cage: every low-poly vertex moved outward along its normal by **Frontal distance**, or with **Auto cage** on, by the auto cage's frontal distance. |
+
+Each part has a checkbox (all on by default) and an opacity from 0 to 1. All parts are
+see-through and drawn without wireframes:
+
+- Of each part, only the surface nearest to the camera is drawn, so a part's back side and
+  insides don't show.
+- Where parts overlap, they're layered by distance at each pixel: a nearer part covers the
+  parts behind it by its opacity, whatever the order of the list.
+- Surfaces are lit from the camera, and are more opaque where they're seen at a grazing angle,
+  so outlines stay visible.
+
+**Navigation**, with the pointer over the pane:
+
+| Input | Action |
+|---|---|
+| Drag | Orbit |
+| Middle-drag, or `Shift`+drag | Pan |
+| Scroll | Zoom |
+| Double-click | Frame the mesh |
+
+The pane's camera starts at the viewport's view each time the pane is shown, and then moves
+independently of it.
 
 - **High poly** and **Cage** need a high-poly mesh and are disabled without one.
-- Turning on **High poly** or **Cage** reads the high-poly file in the background; meanwhile the
-  window shows **Loading preview…**. With **Auto cage** on, the cage is measured as for a bake.
-  The file is read again when it changes, or when **Auto cage** or (with Auto cage on) **Match
-  by name** changes. Changes to **Frontal distance** show immediately.
-- High-poly detail that shows through the cage lies outside it. The rays start on the cage, so
-  they miss that detail (see [Misses](#misses)).
+- While the pane shows **High poly** or **Cage**, the high-poly file is read in the background;
+  meanwhile the pane shows **Loading preview…**. With **Auto cage** on, the cage is measured as
+  for a bake. The file is read again when it changes, or when **Auto cage** or (with Auto cage
+  on) **Match by name** changes. Changes to **Frontal distance** show immediately.
+- High-poly detail that pokes out of the red cage lies outside it. The rays start on the cage,
+  so they miss that detail (see [Misses](#misses)).
 - At hard edges, where a low-poly vertex has several normals, the cage has gaps, just as the
   rays do.
 - The rear side (**Rear distance**) is not shown.
-- Painting still paints the low poly, even while it's hidden.
-- If the high poly can't be read, or needs larger GPU buffers than the GPU allows, the window
+- If the high poly can't be read, or needs larger GPU buffers than the GPU allows, the pane
   shows the error, and **High poly** and **Cage** show nothing.
-- The toggles are not saved. Opening a project or reimporting its mesh resets them.
+- The pane, checkboxes and opacities are not saved. Opening a project or reimporting its mesh
+  resets them.
 
 ## Bake status
 

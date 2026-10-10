@@ -25,9 +25,16 @@ red and why the distances are settings rather than fixed values.
 Red texels show a problem only after a bake. The [bake preview](../reference/mesh-maps.md#bake-preview)
 shows its cause beforehand: the cage itself, drawn around the high poly. It draws only the outer
 side, because that's where the rays start and where most problems show: detail poking through.
-The rear side lies inside the low poly, where it would be hidden anyway. The cage is translucent
-so the high poly stays visible through it, and the preview reads the high poly in the background,
-because a sculpt of millions of triangles takes seconds to load.
+
+The three meshes lie within a hair of each other, so drawn as they are, each hides the others or
+flickers through them. The preview therefore has its own pane rather than taking over the
+viewport, gives each mesh one flat color, and makes all of them see-through. Two things keep
+that readable. Only the nearest surface of each mesh is drawn, so the back of the cage doesn't
+cloud the view. And the meshes are layered by distance at every pixel rather than in a fixed
+order, so whichever surface is in front really looks in front, which is exactly the question
+when detail pokes out of the cage. Wireframes are left out: on a dense sculpt they turn into
+solid color. The preview reads the high poly in the background, because a sculpt of millions of
+triangles takes seconds to load.
 
 ## Auto cage
 
