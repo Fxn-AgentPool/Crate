@@ -6,3 +6,7 @@
 
 # Projects saved inside the repository while testing
 *.painter/
+
+# Python bytecode (Blender add-on tests)
+__pycache__/
+*.pyc
