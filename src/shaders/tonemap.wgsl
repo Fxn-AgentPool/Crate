@@ -31,11 +31,13 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4f {
     let p = vec2i(in.pos.xy);
-    // Coverage of the mesh in this pixel, from the multisampled depth.
+    // Coverage of the mesh in this pixel, from the multisampled depth, or from alpha where
+    // only something translucent (the bake preview's cage) covers it.
     var covered = 0.0;
     for (var i = 0; i < 4; i++) {
         covered += select(0.0, 0.25, textureLoad(depth, p, i) < 1.0);
     }
+    covered = max(covered, clamp(textureLoad(hdr, p, 0).a, 0.0, 1.0));
     let background = mix(params.background_top.rgb, params.background_bottom.rgb, in.uv.y);
     if covered == 0.0 {
         // Background gradient, already display-referred.

@@ -12,7 +12,7 @@ use wgpu::util::DeviceExt;
 use crate::bvh::{self, Bvh};
 use crate::cage::LowMesh;
 use crate::gpu::Gpu;
-use crate::mesh::ImportSettings;
+use crate::mesh::{ImportSettings, Mesh};
 
 /// Per-triangle shading data, in BVH order. `n0[3]` holds the material index and `n1[3]` the
 /// match id, as bit patterns.
@@ -122,16 +122,7 @@ pub fn load(
     let mesh = crate::mesh::import_high(path, import)?;
     let (low_match, high_match) = match_parts(low_groups, &mesh.groups, match_by_name);
     let cage = cage.map(|req| {
-        let t = std::time::Instant::now();
-        let samples = crate::cage::samples(&mesh, &high_match);
-        let c = crate::cage::compute(&req.low, &low_match, &samples, req.diagonal);
-        log::info!(
-            "auto cage: {} samples in {:.2}s, up to {:.4} frontal, {:.4} rear",
-            samples.len(),
-            t.elapsed().as_secs_f32(),
-            c.max_frontal / req.diagonal,
-            c.max_rear / req.diagonal
-        );
+        let c = measure_cage(&mesh, &high_match, &req.low, &low_match, req.diagonal);
         Cage {
             vertices: req.low.vertices.iter().zip(c.frontal.iter().zip(&c.rear)).map(|(v, (&f, &r))| [v.uv[0], v.uv[1], f, r]).collect(),
             max_frontal: c.max_frontal,
@@ -155,6 +146,21 @@ pub fn load(
         })
         .collect();
     Ok(HighCpu { nodes: bvh.nodes, tris: bvh.tris, data, low_match, materials: mesh.materials, cage })
+}
+
+/// Measures the auto cage of `low` from the high-poly mesh (see cage.rs).
+pub fn measure_cage(high: &Mesh, high_match: &[u32], low: &LowMesh, low_match: &[u32], diagonal: f32) -> crate::cage::Cage {
+    let t = std::time::Instant::now();
+    let samples = crate::cage::samples(high, high_match);
+    let c = crate::cage::compute(low, low_match, &samples, diagonal);
+    log::info!(
+        "auto cage: {} samples in {:.2}s, up to {:.4} frontal, {:.4} rear",
+        samples.len(),
+        t.elapsed().as_secs_f32(),
+        c.max_frontal / diagonal,
+        c.max_rear / diagonal
+    );
+    c
 }
 
 /// Pairs `<name>_low` parts with `<name>_high` parts (ignoring case). Returns a match id per

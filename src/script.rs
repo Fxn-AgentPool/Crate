@@ -239,6 +239,22 @@ impl Session {
                 p.maps.settings.high_poly = crate::highpoly::stamp(p.maps.high_poly.as_ref());
                 p.maps.refresh_status();
             }
+            "bake-preview" => {
+                let parts = crate::bakepreview::Parts::parse(rest.first().context("bake-preview low,high,cage | off")?)?;
+                let p = self.project()?;
+                if parts.needs_high() && p.maps.high_poly.is_none() {
+                    bail!("the bake preview's high poly and cage need a high-poly mesh (high-poly <mesh>)");
+                }
+                p.maps.preview.parts = parts;
+                p.update_preview(&gpu);
+                while p.maps.preview.loading() {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    p.update_preview(&gpu);
+                }
+                if let Some(e) = p.maps.preview.error() {
+                    bail!("{e}");
+                }
+            }
             "bake-settings" => {
                 let p = self.project()?;
                 let on = |v: &str| -> Result<bool> {
@@ -910,7 +926,13 @@ impl Session {
         let gpu = self.gpu.clone();
         let p = self.project.as_mut().context("no project")?;
         p.finish_background_work(&gpu);
-        let vp = self.viewport.as_mut().unwrap();
+        // Settings may have changed since `bake-preview`: bring the preview up to date.
+        p.update_preview(&gpu);
+        while p.maps.preview.loading() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            p.update_preview(&gpu);
+        }
+        let vp =self.viewport.as_mut().unwrap();
         if let Err(e) = vp.set_material(&gpu, p.viewport_code()) {
             bail!("material shader failed to compile:\n{e}");
         }
@@ -921,6 +943,7 @@ impl Session {
             &p.gpu_mesh,
             p.scene.bind_group.as_ref().unwrap(),
             &self.view,
+            Some(&p.maps.preview),
             self.size.0,
             self.size.1,
         );

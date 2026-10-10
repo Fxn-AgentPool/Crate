@@ -154,6 +154,7 @@ fn render(args: &[String]) -> Result<()> {
         &project.gpu_mesh,
         project.scene.bind_group.as_ref().unwrap(),
         &view,
+        None,
         o.size.0,
         o.size.1,
     );

@@ -1,4 +1,5 @@
 mod app;
+mod bakepreview;
 mod bvh;
 mod cache;
 mod cage;

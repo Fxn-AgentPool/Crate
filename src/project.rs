@@ -174,6 +174,10 @@ impl Project {
         changed
     }
 
+    pub fn update_preview(&mut self, gpu: &Gpu) {
+        self.maps.update_preview(gpu, &self.import_settings);
+    }
+
     pub fn finish_background_work(&mut self, gpu: &Gpu) {
         while self.bake_job.is_some() {
             self.tick(gpu, Duration::from_secs(3600));

@@ -1,0 +1,46 @@
+# Bake preview (docs/reference/mesh-maps.md#bake-preview): the low poly, the high poly and the
+# outer cage in renders. The plane hp_low.obj, the sine wave hp_high.obj (tests/data).
+
+new tests/data/hp_low.obj 1024
+size 512x384
+camera 30 20 1.2
+render target/tests/bake_preview/low.png
+
+# Without a high poly, the high poly and the cage can't be shown.
+bake-preview low
+render target/tests/bake_preview/low_only.png
+expect-same target/tests/bake_preview/low.png target/tests/bake_preview/low_only.png 0
+
+high-poly tests/data/hp_high.obj
+bake-preview high
+render target/tests/bake_preview/high.png
+expect-different target/tests/bake_preview/low.png target/tests/bake_preview/high.png 40
+bake-preview low,high
+render target/tests/bake_preview/low_high.png
+expect-different target/tests/bake_preview/high.png target/tests/bake_preview/low_high.png 40
+
+# The cage follows Frontal distance without reloading, and the auto cage replaces it.
+bake-settings frontal=0.01
+bake-preview low,high,cage
+render target/tests/bake_preview/cage_small.png
+expect-different target/tests/bake_preview/low_high.png target/tests/bake_preview/cage_small.png 20
+bake-settings frontal=0.08
+render target/tests/bake_preview/cage_large.png
+expect-different target/tests/bake_preview/cage_small.png target/tests/bake_preview/cage_large.png 20
+bake-settings auto_cage=on
+render target/tests/bake_preview/cage_auto.png
+expect-different target/tests/bake_preview/cage_large.png target/tests/bake_preview/cage_auto.png 20
+# Frontal distance doesn't matter with auto cage on.
+bake-settings frontal=0.01
+render target/tests/bake_preview/cage_auto2.png
+expect-same target/tests/bake_preview/cage_auto.png target/tests/bake_preview/cage_auto2.png 0
+
+# The cage alone, over the background.
+bake-preview cage
+render target/tests/bake_preview/cage_only.png
+expect-different target/tests/bake_preview/cage_auto.png target/tests/bake_preview/cage_only.png 20
+
+# Off shows the low poly as before.
+bake-preview off
+render target/tests/bake_preview/off.png
+expect-same target/tests/bake_preview/low.png target/tests/bake_preview/off.png 0

@@ -351,6 +351,8 @@ pub struct MeshMaps {
     low_groups: Vec<String>,
     /// Low-poly geometry, for measuring the auto cage.
     low: Arc<LowMesh>,
+    /// The bake preview (docs/reference/mesh-maps.md#bake-preview).
+    pub preview: crate::bakepreview::Preview,
     /// Percentage of texels the last high-poly bake missed.
     pub last_misses: Option<f32>,
     /// Names of the IDs in the ID map when it was baked from a high poly (its materials);
@@ -495,6 +497,7 @@ impl MeshMaps {
             high_poly: None,
             low_groups: mesh.groups.clone(),
             low: Arc::new(LowMesh { vertices: mesh.vertices.clone(), indices: mesh.indices.clone() }),
+            preview: Default::default(),
             last_misses: None,
             id_names: Vec::new(),
             report: None,
@@ -598,6 +601,19 @@ impl MeshMaps {
 
     /// Starts baking `maps`. Raster maps are always baked first, since every other map
     /// reads them.
+    /// Advances the bake preview; doesn't block (see `bakepreview::Preview::update`).
+    pub fn update_preview(&mut self, gpu: &Gpu, import: &ImportSettings) {
+        let src = crate::bakepreview::Source {
+            high_poly: self.high_poly.as_deref(),
+            import,
+            low: &self.low,
+            low_groups: &self.low_groups,
+            settings: &self.settings,
+            diagonal: self.diagonal,
+        };
+        self.preview.update(gpu, src);
+    }
+
     pub fn start_bake(&mut self, gpu: &Gpu, tile_resolution: u32, maps: &[MeshMap], import: &ImportSettings) -> BakeJob {
         let res = if self.settings.resolution == 0 { tile_resolution } else { self.settings.resolution };
         self.settings.high_poly = crate::highpoly::stamp(self.high_poly.as_ref());

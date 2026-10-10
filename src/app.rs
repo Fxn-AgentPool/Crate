@@ -245,6 +245,10 @@ impl eframe::App for CrateApp {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
             }
+            doc.update_preview(&self.gpu);
+            if doc.maps.preview.loading() {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            }
             match doc.maps.report.take() {
                 Some(Ok(msg)) => self.message = Some((msg, ui.input(|i| i.time))),
                 Some(Err(e)) => self.error = Some(e),
@@ -740,6 +744,7 @@ impl CrateApp {
             &doc.gpu_mesh,
             doc.scene.bind_group.as_ref().unwrap(),
             &self.view,
+            Some(&doc.maps.preview),
             w,
             h,
         );
@@ -1344,7 +1349,24 @@ impl CrateApp {
                 ui.label("Apply Normal map");
                 ui.checkbox(&mut s.apply_normal, "");
                 ui.end_row();
+                ui.label("Preview");
+                let has_high = doc.maps.high_poly.is_some();
+                let p = &mut doc.maps.preview.parts;
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut p.low, "Low poly");
+                    ui.add_enabled(has_high, egui::Checkbox::new(&mut p.high, "High poly"))
+                        .on_disabled_hover_text("Needs a high-poly mesh.");
+                    ui.add_enabled(has_high, egui::Checkbox::new(&mut p.cage, "Cage"))
+                        .on_hover_text("The outer cage: where the rays start")
+                        .on_disabled_hover_text("Needs a high-poly mesh.");
+                });
+                ui.end_row();
             });
+            if doc.maps.preview.loading() {
+                ui.label("Loading preview…");
+            } else if let Some(e) = doc.maps.preview.error() {
+                ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+            }
             if (doc.maps.settings, doc.maps.high_poly.clone()) != before {
                 if doc.maps.high_poly != before.1 {
                     doc.maps.last_misses = None;
