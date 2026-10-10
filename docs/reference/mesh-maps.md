@@ -131,7 +131,8 @@ baked surface. A Missing Normal map is flat and changes nothing.
 
 **Mesh Maps → High poly → Show preview** extends the Mesh Maps window with a preview pane: its
 own view of the meshes a high-poly bake uses, so you can check the cage before baking. The
-viewport is not affected.
+viewport is not affected. With the pane, the window can be resized by its edges (980 × 620 points
+at first); the settings scroll in a column on the left and the view fills the rest.
 
 | Part | Color | Default opacity | Shows |
 |---|---|---|---|

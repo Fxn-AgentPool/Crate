@@ -39,6 +39,9 @@ pub struct CrateApp {
     show_import_log: bool,
     show_mesh_maps: bool,
     bake_pane: crate::ui_bake_preview::BakePane,
+    /// Where the Mesh Maps window was last shown, and whether with the preview pane: it keeps
+    /// its place when the pane opens or closes.
+    mesh_maps_rect: Option<(egui::Rect, bool)>,
     /// Diagnostics of an import that failed, shown in the Import Log.
     failed_import_log: Option<Vec<Diagnostic>>,
     /// Maps checked in the Mesh Maps window.
@@ -100,6 +103,7 @@ impl CrateApp {
             doc: None,
             camera: Camera::default(),
             bake_pane: crate::ui_bake_preview::BakePane::new(),
+            mesh_maps_rect: None,
             view: ViewSettings::default(),
             new_project: None,
             show_import_log: false,
@@ -1195,15 +1199,48 @@ impl CrateApp {
 
         if self.show_mesh_maps {
             let mut open = true;
-            egui::Window::new("Mesh Maps").open(&mut open).show(ctx, |ui| {
+            // With the preview pane, the window is a separate, resizable one: settings in a
+            // scrolling column on the left, the view filling the rest. Without, it fits the
+            // settings.
+            let wide = self.doc.as_ref().is_some_and(|d| d.maps.preview.open);
+            let mut window = egui::Window::new("Mesh Maps").open(&mut open);
+            if wide {
+                window = window
+                    .id(egui::Id::new("mesh maps with preview"))
+                    .resizable(true)
+                    .default_size([980.0, 620.0])
+                    .min_size([640.0, 380.0]);
+            }
+            if let Some((rect, was_wide)) = self.mesh_maps_rect {
+                if was_wide != wide {
+                    window = window.current_pos(rect.min);
+                }
+            }
+            let shown = window.show(ctx, |ui| {
+                if !wide {
+                    self.mesh_maps_ui(ui);
+                    return;
+                }
+                const SETTINGS_WIDTH: f32 = 340.0;
+                let height = ui.available_height();
                 ui.horizontal_top(|ui| {
-                    ui.vertical(|ui| self.mesh_maps_ui(ui));
-                    if let Some(doc) = self.doc.as_mut().filter(|d| d.maps.preview.open) {
-                        ui.separator();
-                        ui.vertical(|ui| self.bake_pane.ui(ui, &self.gpu, &self.renderer, doc));
-                    }
+                    ui.allocate_ui(egui::vec2(SETTINGS_WIDTH, height), |ui| {
+                        egui::ScrollArea::vertical().id_salt("mesh maps settings").max_height(height).show(ui, |ui| {
+                            ui.set_width(SETTINGS_WIDTH - 16.0);
+                            self.mesh_maps_ui(ui);
+                        });
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        if let Some(doc) = self.doc.as_mut() {
+                            self.bake_pane.ui(ui, &self.gpu, &self.renderer, doc);
+                        }
+                    });
                 });
             });
+            if let Some(r) = shown {
+                self.mesh_maps_rect = Some((r.response.rect, wide));
+            }
             self.show_mesh_maps = open;
         }
     }

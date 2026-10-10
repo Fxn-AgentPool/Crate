@@ -9,8 +9,8 @@ use crate::camera::Camera;
 use crate::gpu::Gpu;
 use crate::project::Project;
 
-/// Size of the view, in points.
-const VIEW_SIZE: Vec2 = Vec2::new(520.0, 440.0);
+/// Room left under the view for the loading or error line, in points.
+const STATUS_HEIGHT: f32 = 22.0;
 
 pub struct BakePane {
     view: Option<BakeView>,
@@ -51,7 +51,9 @@ impl BakePane {
             row(ui, &mut parts.cage, "Cage", egui::Color32::from_rgb(255, 80, 60), has_high);
         });
 
-        let (rect, response) = ui.allocate_exact_size(VIEW_SIZE, egui::Sense::click_and_drag());
+        // The view fills the rest of the pane.
+        let size = (ui.available_size() - Vec2::new(0.0, STATUS_HEIGHT)).max(Vec2::splat(64.0));
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let shift = ui.input(|i| i.modifiers.shift);
         let delta = response.drag_delta();
         let delta = glam::Vec2::new(delta.x, delta.y);
