@@ -30,8 +30,8 @@ Creates a project from a mesh. Optionally bakes mesh maps, runs a script, and ex
 Always saves the project.
 
 ```
-crate new <MESH> -o <PROJECT> [--tile-resolution N] [--high-poly FILE] [--bake MAPS] [--script FILE]
-            [--export DIR] [EXPORT OPTIONS] [--set NAME=VALUE]...
+crate new <MESH> -o <PROJECT> [--tile-resolution N] [--high-poly FILE] [--auto-cage] [--bake MAPS]
+            [--script FILE] [--export DIR] [EXPORT OPTIONS] [--set NAME=VALUE]...
 ```
 
 | Argument / option | Default | Description |
@@ -40,6 +40,7 @@ crate new <MESH> -o <PROJECT> [--tile-resolution N] [--high-poly FILE] [--bake M
 | `-o`, `--output` | — | Project directory to create. `.crate` is added if missing. |
 | `--tile-resolution` | `2048` | `1024`, `2048` or `4096`. |
 | `--high-poly` | none | High-poly mesh to bake from (`.glb`, `.gltf` or `.obj`). See [Mesh maps](mesh-maps.md#high-poly-mesh). |
+| `--auto-cage` | off | Turn on [Auto cage](mesh-maps.md#auto-cage) for the high-poly bake. |
 | `--bake` | none | `all`, or a comma-separated list: `ao`, `curvature`, `thickness`, `id`, `normal`, `height`. `all` includes Normal and Height when `--high-poly` is given. Position and World Normal are always baked. |
 | `--script` | none | Script to run on the new project before saving. |
 | `--export` | none | Export textures to this directory after the script. |

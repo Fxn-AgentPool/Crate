@@ -29,12 +29,18 @@ From the command line, set the high poly when creating the project:
 crate new lowpoly.glb -o Asset.crate --high-poly highpoly.glb --bake all
 ```
 
+Add `--auto-cage` to bake with [Auto cage](../reference/mesh-maps.md#auto-cage).
+
 ## Fix missed texels
 
 Press `Shift+C` until the viewport shows **Normal**. Red areas missed the high poly.
 
-- **Red where the high poly sticks out further than the low poly**: raise **Frontal distance**.
-- **Red where the high poly lies inside the low poly**: raise **Rear distance**.
+- **Red in many places, or you don't know the right distances**: turn on **Auto cage** under
+  **High poly**. Crate then fits the distances to the high poly around every low-poly vertex.
+- **Red where the high poly sticks out further than the low poly**: raise **Frontal distance**
+  (with Auto cage off).
+- **Red where the high poly lies inside the low poly**: raise **Rear distance** (with Auto cage
+  off).
 - **Red on a whole part**: check that the part's `_low` and `_high` names match, or turn off
   **Match by name**.
 
@@ -43,8 +49,8 @@ Rebake after each change.
 ## Fix wrong detail
 
 - **Detail from a neighboring part shows up** (for example a bolt's edge on the plate under it):
-  name the parts in `_low`/`_high` pairs and keep **Match by name** on, or lower **Frontal
-  distance**.
+  name the parts in `_low`/`_high` pairs and keep **Match by name** on, or turn on **Auto cage**,
+  or lower **Frontal distance**.
 - **Waviness or seams along hard edges of the low poly**: split those edges in the low poly
   (separate UV islands with hard edges) and reimport, or soften the low poly's normals so the
   rays spread evenly.

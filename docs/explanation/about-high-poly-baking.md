@@ -16,11 +16,32 @@ poly, so somewhere along that line, a little outside or a little inside the low-
 lies the matching high-poly point. **Frontal distance** and **Rear distance** bound that search:
 the ray starts outside the surface and travels inward, and the first high-poly surface it meets
 is taken. The volume these distances sweep around the low poly is what other bakers call a
-**cage**; Crate's is a uniform offset along the normals.
+**cage**; Crate's is a uniform offset along the normals, unless [Auto cage](#auto-cage) is on.
 
 Too small a cage misses parts of the high poly that stick out further; too large a cage reaches
 neighboring geometry and picks up the wrong surface. That trade-off is why misses are shown in
 red and why the distances are settings rather than fixed values.
+
+## Auto cage
+
+A single pair of distances is a compromise for the whole asset: a deep groove in one place and a
+thin panel next to another part elsewhere want different cages. Other bakers solve this with a
+cage mesh that the artist edits by hand. Crate instead measures one: **Auto cage** asks, for
+every piece of the high poly, which part of the low poly it belongs to, and how far out or in it
+lies. Each low-poly vertex then gets just the distance its surroundings need, plus a margin.
+
+"Belongs to" is the closest point on the low poly, restricted by the `_low`/`_high` names. Here
+closest points are a good fit, even though they fail for picking the hit itself: an error only
+makes the cage a little larger, and the rays still decide which surface is taken. The same
+weakness shows where unnamed parts touch, though: a bolt's high poly may be closest to the plate
+under it and swell the plate's cage until its rays reach the bolt. Naming parts in pairs avoids
+that. Distances are capped at a tenth of the bounding box diagonal, so a stray high-poly piece far
+from the low poly can't inflate the cage without limit.
+
+The cage follows the same interpolated normals as the rays, and vertices at the same position
+share their distances, so the cage doesn't tear open at hard edges. Auto cage is off by default
+so that existing projects bake exactly as before, and because a uniform cage is easier to
+predict when you tune it by hand.
 
 ## Why interpolated normals
 

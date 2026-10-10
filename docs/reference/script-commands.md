@@ -59,7 +59,7 @@ full file name is used. An argument with an extension is a file path, relative t
 | `reimport <mesh>` | Replace the mesh, keeping layers and paint. Mesh maps become out of date. |
 | `bake [maps]` | Bake mesh maps: `all` (AO, curvature, thickness, ID, and Normal and Height when a high poly is set), `outdated`, or names: `ao`, `curvature`, `thickness`, `id`, `normal` (or `normal-map`), `height` (or `height-map`), `position`, `worldnormal`. |
 | `high-poly <mesh>` | Set the high-poly mesh to bake from. `high-poly off` removes it. |
-| `bake-settings key=value...` | Change [bake settings](mesh-maps.md#bake-settings): `resolution` (0 = tile resolution), `samples`, `max_distance`, `spread_angle`, `ignore_backfaces`, `curvature_radius`, `padding`, and for the high poly `frontal`, `rear`, `match_by_name`, `apply_normal` (`on`/`off`). |
+| `bake-settings key=value...` | Change [bake settings](mesh-maps.md#bake-settings): `resolution` (0 = tile resolution), `samples`, `max_distance`, `spread_angle`, `ignore_backfaces`, `curvature_radius`, `padding`, and for the high poly `auto_cage`, `frontal`, `rear`, `match_by_name`, `apply_normal` (`on`/`off` for `auto_cage`, `match_by_name` and `apply_normal`). |
 | `save-map <map> <file.png> [udim]` | Save one tile of a mesh map (default: the first tile) as a 16-bit PNG, encoded as in [Mesh maps](mesh-maps.md#maps). Map names as for `bake`. |
 | `export <dir> [key=value]...` | Export textures. Keys: `preset`, `format`, `normal`, `padding`, `resolution`, `tiles`, `template` (as in [Command line](command-line.md#export-options)). |
 | `info` | Print the project summary. |

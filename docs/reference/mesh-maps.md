@@ -17,7 +17,7 @@ separate [high-poly mesh](#high-poly-mesh) when one is set.
 | Thickness | 1 | `[0, 1]`, 1 = thick | yes | Mesh Map node |
 | ID | RGB | One color per material (glTF) or `usemtl` group (OBJ) | yes | ID Select |
 | Normal | RGB | Tangent-space normal, encoded `n * 0.5 + 0.5`; `(0.5, 0.5, 1)` = flat | only | The material (see [Normal map](#normal-map)), Mesh Map node |
-| Height | 1 | `[0, 1]`, 0.5 = on the low-poly surface, 1 = Frontal distance above it, 0 = Rear distance below | only | Mesh Map node |
+| Height | 1 | `[0, 1]`, 0.5 = on the low-poly surface, 1 = Frontal distance above it, 0 = Rear distance below (see [How texels are baked](#how-texels-are-baked)) | only | Mesh Map node |
 
 Position and World Normal always describe the low-poly surface, because that's the surface
 painting projects onto. **Normal** and **Height** need a high-poly mesh; without one they stay
@@ -44,8 +44,9 @@ painting projects onto. **Normal** and **Height** need a high-poly mesh; without
 | Setting | Default | Description |
 |---|---|---|
 | High poly mesh | none | A `.glb`, `.gltf` or `.obj` file. **Browse…** sets it, **Clear** removes it. It needs no UVs, and is imported with the low-poly mesh's scale and up axis. Up to 10 million triangles. |
-| Frontal distance | 0.01 | How far outside the low-poly surface rays start, relative to the bounding box diagonal of the low-poly mesh. |
-| Rear distance | 0.01 | How far inside the low-poly surface rays still find the high poly, relative to the bounding box diagonal. |
+| Auto cage | off | Measures Frontal and Rear distance per low-poly vertex from the high poly, instead of using the two settings below (see [Auto cage](#auto-cage)). |
+| Frontal distance | 0.01 | How far outside the low-poly surface rays start, relative to the bounding box diagonal of the low-poly mesh. Disabled while Auto cage is on. |
+| Rear distance | 0.01 | How far inside the low-poly surface rays still find the high poly, relative to the bounding box diagonal. Disabled while Auto cage is on. |
 | Match by name | on | Restricts each low-poly part to the high-poly part with the same name (see below). |
 | Apply Normal map | on | Combines the baked Normal map with the material's normal (see below). |
 
@@ -57,22 +58,47 @@ baked maps are saved in the project.
 For every texel, a ray starts at the low-poly surface point moved **Frontal distance** outward
 along the low-poly normal (interpolated across the triangle), and travels inward for **Frontal
 distance + Rear distance**. The first front-facing high-poly triangle it meets is the hit.
-Back-facing triangles are skipped.
+Back-facing triangles are skipped. With **Auto cage** on, each texel's Frontal and Rear distance
+are the cage's, interpolated across the triangle from its vertices.
 
 | Map | Value at a hit |
 |---|---|
 | Normal | The high poly's interpolated vertex normal at the hit, in the low poly's tangent space. |
-| Height | `0.5 + 0.5 × d / max(Frontal, Rear)`, clamped to `[0, 1]`, where `d` is the hit's signed distance from the low-poly surface (positive outside). |
+| Height | `0.5 + 0.5 × d / max(Frontal, Rear)`, clamped to `[0, 1]`, where `d` is the hit's signed distance from the low-poly surface (positive outside). With Auto cage on, Frontal and Rear are the cage's largest distances, so the scale is the same across the whole map. |
 | ID | The color of the hit triangle's material. |
 | AO, Curvature, Thickness | Computed at the hit point with the high poly's normal, against the high-poly mesh. |
 
 A texel whose ray finds nothing is a **miss**: Normal is flat, Height 0.5, ID is the low poly's,
 and AO, Curvature and Thickness are computed from the low-poly surface against the high poly.
 
+### Auto cage
+
+With **Auto cage** on, Crate measures the cage from the two meshes before projecting:
+
+1. **Samples.** Every high-poly vertex and triangle center is a sample. Above 4 million, an
+   evenly spaced subset of 4 million is used.
+2. **Matching.** Each sample is matched to the closest point of the low-poly triangles its part
+   may hit (see [Match by name](#match-by-name)). Samples farther than 0.1 × the bounding box
+   diagonal from all of them are ignored.
+3. **Distance.** The sample's distance from that point, divided by `max(cos θ, 0.5)`, where θ
+   is the angle between the low poly's interpolated normal there and the triangle's face
+   normal, is how far a ray must reach. It counts as frontal when the sample lies on
+   the outer side of the triangle's plane, as rear otherwise.
+4. **Vertices.** Each low-poly vertex takes the largest frontal and the largest rear distance of
+   the samples matched to triangles that use it. Vertices at the same position share their
+   values, so the cage has no gaps at hard edges and UV seams.
+5. **Margin.** Each distance becomes `1.1 × distance + 0.002 × diagonal`, limited to
+   `0.1 × diagonal`. A vertex with no samples gets `0.002 × diagonal`.
+
+The frontal and rear distances of vertices are independent: a low poly that lies inside its high
+poly gets a frontal cage and a thin rear one.
+
 ### Misses
 
 After a bake, the status bar and the Mesh Maps window show the share of missed texels, for
-example **High-poly bake: 0.4% of texels missed**. While the viewport shows the Normal map
+example **High-poly bake: 0.4% of texels missed**. With Auto cage on, the status bar also shows
+the cage's largest distances relative to the bounding box diagonal, for example
+**High-poly bake: 0.1% of texels missed (auto cage: up to 0.014 frontal, 0.006 rear)**. While the viewport shows the Normal map
 (`Shift+C`, or the script command `view normal-map`), missed texels are drawn red.
 
 ### Match by name
@@ -109,8 +135,8 @@ baked surface. A Missing Normal map is flat and changes nothing.
 | Up to date | Baked with the current mesh, high poly and settings. |
 | Out of date | The mesh, the high poly or a setting it depends on changed. Old data is still used until rebaked. |
 
-Changing the high-poly mesh, Frontal distance, Rear distance or Match by name makes Normal,
-Height, AO, Curvature, Thickness and ID out of date.
+Changing the high-poly mesh, Auto cage, Match by name, or (with Auto cage off) Frontal distance
+or Rear distance makes Normal, Height, AO, Curvature, Thickness and ID out of date.
 
 Position and World Normal are baked automatically on import, because painting requires them.
 
