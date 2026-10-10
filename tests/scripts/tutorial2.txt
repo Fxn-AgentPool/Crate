@@ -19,7 +19,7 @@ move-below Grime
 expect-layers Grime Decal "Blue paint"
 
 # Load the stencil
-stencil-add assets/D_BasicDecals01_015.png
+stencil-add assets/D_SampleDecal.png
 render target/tutorial2/02_stencil.png
 
 # Line it up: arrows inside the recessed panel, two-thirds of its height

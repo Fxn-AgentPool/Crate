@@ -17,7 +17,7 @@ rename Grime
 brush-values base_color=#3B2F22 roughness=0.9 metallic=off
 brush size=60 hardness=0.2 flow=0.5
 stroke 0.3,0.8 0.5,0.85 0.7,0.8
-stencil-add assets/D_BasicDecals01_015.png
+stencil-add assets/D_SampleDecal.png
 stencil visible=false
 render target/saveload/before.png
 save target/saveload/Crate.crate

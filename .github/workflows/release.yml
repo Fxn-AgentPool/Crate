@@ -60,6 +60,7 @@ jobs:
           mkdir "$dir"
           cp "target/release/${{ matrix.exe }}" README.md "$dir/"
           cp -r docs "$dir/docs"
+          cp -r assets "$dir/assets"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$dir.zip" "$dir" > /dev/null
             echo "ARCHIVE=$dir.zip" >> "$GITHUB_ENV"

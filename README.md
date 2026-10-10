@@ -96,7 +96,7 @@ Renders, exports and test projects are written under `target/`.
 Every push to `main` (including merged pull requests) runs `.github/workflows/release.yml`: it
 runs the unit tests, builds Crate for Windows and Linux, and publishes a GitHub release tagged
 `v<version>-build.<run number>` with `crate-<version>-windows-x64.zip` and
-`crate-<version>-linux-x64.tar.gz` (the program, this README and `docs/`). The script and
+`crate-<version>-linux-x64.tar.gz` (the program, this README, `docs/` and the sample files in `assets/`). The script and
 command-line tests need a GPU, so they aren't run there; run them locally before pushing. The
 version is the one in `Cargo.toml`.
 
