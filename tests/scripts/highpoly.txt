@@ -48,5 +48,15 @@ open target/tests/highpoly/Parts.crate
 save-map height target/tests/highpoly/reopened.png
 expect-same target/tests/highpoly/match_off.png target/tests/highpoly/reopened.png 1
 
+# Auto cage (docs/reference/mesh-maps.md#auto-cage): the default distances (0.01) are too small
+# for the wave (0.03 / 1.41 of the diagonal), but the measured cage reaches it everywhere.
+new tests/data/hp_low.obj 1024
+high-poly tests/data/hp_high.obj
+bake-settings auto_cage=on
+bake normal
+expect-misses 0.1
+save-map normal target/tests/highpoly/auto_cage_normal.png
+expect-same target/tests/highpoly/auto_cage_normal.png tests/data/hp_normal_ref.png 3
+
 # Without a high poly, Normal and Height can't be baked.
 high-poly off

@@ -1328,11 +1328,15 @@ impl CrateApp {
             });
             let s = &mut doc.maps.settings;
             egui::Grid::new("high poly settings").num_columns(2).show(ui, |ui| {
+                ui.label("Auto cage");
+                ui.checkbox(&mut s.auto_cage, "")
+                    .on_hover_text("Measure Frontal and Rear distance per vertex from the high poly");
+                ui.end_row();
                 ui.label("Frontal distance");
-                ui.add(egui::DragValue::new(&mut s.frontal).speed(0.0005).range(0.0..=1.0));
+                ui.add_enabled(!s.auto_cage, egui::DragValue::new(&mut s.frontal).speed(0.0005).range(0.0..=1.0));
                 ui.end_row();
                 ui.label("Rear distance");
-                ui.add(egui::DragValue::new(&mut s.rear).speed(0.0005).range(0.0..=1.0));
+                ui.add_enabled(!s.auto_cage, egui::DragValue::new(&mut s.rear).speed(0.0005).range(0.0..=1.0));
                 ui.end_row();
                 ui.label("Match by name");
                 ui.checkbox(&mut s.match_by_name, "");

@@ -259,6 +259,7 @@ impl Session {
                         "ignore_backfaces" => s.ignore_backfaces = on(v)?,
                         "curvature_radius" => s.curvature_radius = v.parse()?,
                         "padding" => s.padding = v.parse()?,
+                        "auto_cage" => s.auto_cage = on(v)?,
                         "frontal" => s.frontal = v.parse()?,
                         "rear" => s.rear = v.parse()?,
                         "match_by_name" => s.match_by_name = on(v)?,

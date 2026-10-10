@@ -1,6 +1,7 @@
 mod app;
 mod bvh;
 mod cache;
+mod cage;
 mod camera;
 mod channels;
 mod cli;

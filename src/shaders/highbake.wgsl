@@ -1,7 +1,8 @@
 // High-poly projection: for every texel, a ray from the low-poly surface (moved Frontal
 // distance outward) travels inward along the low-poly normal and takes the first front-facing
 // high-poly triangle. Writes the Normal (tangent space), Height and ID maps, and the hit
-// position and normal that the AO, Curvature and Thickness bakes then use.
+// position and normal that the AO, Curvature and Thickness bakes then use. With auto cage, the
+// distances come per texel from cage_raster.wgsl.
 // See docs/reference/mesh-maps.md#high-poly-mesh.
 
 struct Params {
@@ -9,9 +10,10 @@ struct Params {
     res: u32,
     row_start: u32,
     row_count: u32,
-    frontal: f32,   // world units
-    rear: f32,      // world units
-    // bit 0: write Normal, bit 1: write Height, bit 2: write ID
+    // World units; with auto cage, the cage's largest distances (they scale Height).
+    frontal: f32,
+    rear: f32,
+    // bit 0: write Normal, bit 1: write Height, bit 2: write ID, bit 3: auto cage
     flags: u32,
     _pad: u32,
 };
@@ -55,6 +57,8 @@ const NONE: u32 = 0xffffffffu;
 @group(0) @binding(13) var out_id: texture_storage_2d_array<rgba8unorm, write>;
 // [0] covered texels, [1] missed texels
 @group(0) @binding(14) var<storage, read_write> counters: array<atomic<u32>, 2>;
+// Auto cage of this tile: frontal, rear per texel (world units).
+@group(0) @binding(15) var cage_map: texture_2d<f32>;
 
 struct Hit {
     t: f32,
@@ -162,8 +166,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         lo = low_match[part - 1u];
     }
 
-    let o = pos.xyz + ng * params.frontal;
-    let hit = trace(o, -ng, params.frontal + params.rear, lo);
+    var frontal = params.frontal;
+    var rear = params.rear;
+    if (params.flags & 8u) != 0u {
+        let c = textureLoad(cage_map, sxy, 0).xy;
+        frontal = c.x;
+        rear = c.y;
+    }
+    let o = pos.xyz + ng * frontal;
+    let hit = trace(o, -ng, frontal + rear, lo);
     let missed = hit.tri == NONE;
     if pos.a > 0.75 {
         atomicAdd(&counters[0], 1u);
@@ -190,7 +201,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         textureStore(out_tnrm, xy, layer, vec4f(n_ts * 0.5 + 0.5, 1.0));
     }
     if (params.flags & 2u) != 0u {
-        let d = params.frontal - hit.t;
+        let d = frontal - hit.t;
         let h = clamp(0.5 + 0.5 * d / max(max(params.frontal, params.rear), 1e-12), 0.0, 1.0);
         textureStore(out_height, xy, layer, vec4f(h));
     }

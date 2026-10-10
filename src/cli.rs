@@ -111,6 +111,9 @@ pub enum Command {
         /// High-poly mesh to bake from (.glb, .gltf or .obj).
         #[arg(long)]
         high_poly: Option<PathBuf>,
+        /// Measure the high-poly bake's cage per vertex instead of using fixed distances.
+        #[arg(long)]
+        auto_cage: bool,
         /// Mesh maps to bake: all, or a list such as ao,curvature.
         #[arg(long, value_delimiter = ',')]
         bake: Vec<String>,
@@ -238,11 +241,14 @@ fn q(p: &Path) -> String {
 /// Runs a subcommand. Returns the JSON result fields beyond ok/error/files.
 pub fn run(cli: &Cli, cmd: &Command) -> Result<serde_json::Value> {
     match cmd {
-        Command::New { mesh, output, tile_resolution, high_poly, bake, script: script_file, export, export_opts, vars } => {
+        Command::New { mesh, output, tile_resolution, high_poly, auto_cage, bake, script: script_file, export, export_opts, vars } => {
             let mut s = session(parse_vars(vars)?)?;
             s.run(&format!("new {} {tile_resolution}", q(mesh)))?;
             if let Some(h) = high_poly {
                 s.run(&format!("high-poly {}", q(h)))?;
+            }
+            if *auto_cage {
+                s.run("bake-settings auto_cage=on")?;
             }
             if !bake.is_empty() {
                 s.run(&format!("bake {}", bake.join(" ")))?;

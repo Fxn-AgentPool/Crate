@@ -11,11 +11,13 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::bvh::Bvh;
+use crate::cage::LowMesh;
 use crate::gpu::{self, Gpu};
 use crate::highpoly::{HighCpu, HighGpu};
 use crate::mesh::{ImportSettings, Mesh};
@@ -115,6 +117,8 @@ pub struct BakeSettings {
     pub curvature_radius: f32,
     /// Texels.
     pub padding: u32,
+    /// High poly: measure Frontal and Rear distance per vertex instead (see cage.rs).
+    pub auto_cage: bool,
     /// High poly: ray start outside the low-poly surface, relative to the bounding box diagonal.
     pub frontal: f32,
     /// High poly: how far inside the surface rays still search, relative to the diagonal.
@@ -136,6 +140,7 @@ impl Default for BakeSettings {
             ignore_backfaces: true,
             curvature_radius: 0.005,
             padding: 8,
+            auto_cage: false,
             frontal: 0.01,
             rear: 0.01,
             match_by_name: true,
@@ -154,7 +159,9 @@ impl BakeSettings {
         if map.from_high()
             && (self.high_poly != old.high_poly
                 || (self.high_poly != 0
-                    && (self.frontal != old.frontal || self.rear != old.rear || self.match_by_name != old.match_by_name)))
+                    && (self.auto_cage != old.auto_cage
+                        || (!self.auto_cage && (self.frontal != old.frontal || self.rear != old.rear))
+                        || self.match_by_name != old.match_by_name)))
         {
             return true;
         }
@@ -194,6 +201,8 @@ pub const NRM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub const SCALAR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 pub const SRC_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// Auto cage per texel: frontal, rear (world units).
+const CAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
 
 pub struct MapTexture {
     pub texture: wgpu::Texture,
@@ -292,6 +301,9 @@ struct HighBake {
     hnrm: wgpu::Texture,
     /// Covered and missed texels, summed over all tiles.
     counters: wgpu::Buffer,
+    /// Auto cage of the tile being baked: frontal and rear distance per texel (1×1 and unused
+    /// without auto cage).
+    cage: wgpu::Texture,
 }
 
 /// A bake in progress. Advanced a little each frame so the UI stays responsive.
@@ -337,6 +349,8 @@ pub struct MeshMaps {
     pub high_poly: Option<PathBuf>,
     /// Low-poly part names, for matching.
     low_groups: Vec<String>,
+    /// Low-poly geometry, for measuring the auto cage.
+    low: Arc<LowMesh>,
     /// Percentage of texels the last high-poly bake missed.
     pub last_misses: Option<f32>,
     /// Names of the IDs in the ID map when it was baked from a high poly (its materials);
@@ -355,6 +369,7 @@ pub struct MeshMaps {
 
     raster_pipeline: wgpu::RenderPipeline,
     raster_layout: wgpu::BindGroupLayout,
+    cage_pipeline: wgpu::RenderPipeline,
     dilate_init: wgpu::ComputePipeline,
     dilate_step: wgpu::ComputePipeline,
     dilate_gather: wgpu::ComputePipeline,
@@ -414,6 +429,33 @@ impl MeshMaps {
             cache: None,
         });
 
+        let cage_module = gpu::shader(d, "cage raster", include_str!("shaders/cage_raster.wgsl"));
+        let cage_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("cage raster"),
+            layout: Some(&pl),
+            vertex: wgpu::VertexState {
+                module: &cage_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 16,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x4],
+                })],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &cage_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(CAGE_FORMAT.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let dilate = gpu::shader(d, "dilate", include_str!("shaders/dilate.wgsl"));
         let compute = |module: &wgpu::ShaderModule, entry: &str| {
             d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -452,6 +494,7 @@ impl MeshMaps {
             settings,
             high_poly: None,
             low_groups: mesh.groups.clone(),
+            low: Arc::new(LowMesh { vertices: mesh.vertices.clone(), indices: mesh.indices.clone() }),
             last_misses: None,
             id_names: Vec::new(),
             report: None,
@@ -463,6 +506,7 @@ impl MeshMaps {
             diagonal: size.length(),
             raster_pipeline,
             raster_layout,
+            cage_pipeline,
             dilate_init,
             dilate_step,
             dilate_gather,
@@ -592,7 +636,11 @@ impl MeshMaps {
         let high = match &self.high_poly {
             Some(path) if maps.iter().any(|m| m.from_high()) => {
                 let (path, import, groups, by_name) = (path.clone(), import.clone(), self.low_groups.clone(), self.settings.match_by_name);
-                Some(HighState::Loading(std::thread::spawn(move || crate::highpoly::load(&path, &import, &groups, by_name))))
+                let cage = self
+                    .settings
+                    .auto_cage
+                    .then(|| crate::highpoly::CageRequest { low: self.low.clone(), diagonal: self.diagonal });
+                Some(HighState::Loading(std::thread::spawn(move || crate::highpoly::load(&path, &import, &groups, by_name, cage))))
             }
             _ => None,
         };
@@ -634,18 +682,20 @@ impl MeshMaps {
                     .map_err(|_| "loading the high poly failed".to_string())?
                     .map_err(|e| format!("Could not load the high-poly mesh: {e:#}"))?;
                 let d = &gpu.device;
-                let tex = |label, format| {
+                let tex_sized = |label, format, size: u32, usage| {
                     d.create_texture(&wgpu::TextureDescriptor {
                         label: Some(label),
-                        size: wgpu::Extent3d { width: self.res, height: self.res, depth_or_array_layers: 1 },
+                        size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
                         mip_level_count: 1,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | usage,
                         view_formats: &[],
                     })
                 };
+                let tex = |label, format| tex_sized(label, format, self.res, wgpu::TextureUsages::STORAGE_BINDING);
+                let cage_size = if cpu.cage.is_some() { self.res } else { 1 };
                 let counters = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("bake counters"),
                     contents: bytemuck::cast_slice(&[0u32; 2]),
@@ -656,6 +706,7 @@ impl MeshMaps {
                     hpos: tex("projected position", POS_FORMAT),
                     hnrm: tex("projected normal", NRM_FORMAT),
                     counters,
+                    cage: tex_sized("auto cage", CAGE_FORMAT, cage_size, wgpu::TextureUsages::RENDER_ATTACHMENT),
                 }));
                 Ok(true)
             }
@@ -717,7 +768,13 @@ impl MeshMaps {
             };
             match step {
                 Step::Raster { tile } => self.raster_tile(gpu, mesh, tile, job.settings.padding),
-                Step::Project { tile, row_start } => self.project_rows(gpu, &job.maps, high.expect("high poly loaded"), tile, row_start),
+                Step::Project { tile, row_start } => {
+                    let high = high.expect("high poly loaded");
+                    if row_start == 0 {
+                        self.raster_cage(gpu, mesh, high, tile);
+                    }
+                    self.project_rows(gpu, &job.maps, high, tile, row_start)
+                }
                 Step::Ray { map, tile, row_start } => self.ray_rows(gpu, map, tile, row_start, high),
             }
             gpu.wait_idle();
@@ -755,7 +812,12 @@ impl MeshMaps {
             let c: &[u32] = bytemuck::cast_slice(&c);
             let pct = if c[0] > 0 { c[1] as f32 * 100.0 / c[0] as f32 } else { 0.0 };
             self.last_misses = Some(pct);
-            self.report = Some(Ok(format!("High-poly bake: {pct:.1}% of texels missed")));
+            let mut msg = format!("High-poly bake: {pct:.1}% of texels missed");
+            if let Some(c) = &h.mesh.cage {
+                let (f, r) = (c.max_frontal / self.diagonal, c.max_rear / self.diagonal);
+                msg += &format!(" (auto cage: up to {f:.3} frontal, {r:.3} rear)");
+            }
+            self.report = Some(Ok(msg));
         }
         true
     }
@@ -930,6 +992,51 @@ impl MeshMaps {
         gpu.queue.submit([enc.finish()]);
     }
 
+    /// Rasterizes the auto cage of one tile in UV space, like `raster_tile` does the low poly.
+    fn raster_cage(&self, gpu: &Gpu, mesh: &GpuMesh, high: &HighBake, layer: u32) {
+        let Some(cage) = &high.mesh.cage else { return };
+        let d = &gpu.device;
+        let (tu, tv) = self.tile_offset(mesh, layer);
+        let params = RasterParams {
+            bbox_min: self.bbox_min.extend(0.0).into(),
+            bbox_size: self.bbox_size.extend(0.0).into(),
+            tile: [tu, tv, 0.0, 0.0],
+        };
+        let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cage raster params"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cage raster"),
+            layout: &self.raster_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() }],
+        });
+        let view = high.cage.create_view(&Default::default());
+        let mut enc = d.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("cage raster"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.cage_pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.set_vertex_buffer(0, cage.vertices.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+
     /// High-poly projection of `rows` of one tile: Normal, Height, ID (as requested) and the
     /// projected surface that `ray_rows` traces from.
     fn project_rows(&mut self, gpu: &Gpu, maps: &[MeshMap], high: &HighBake, layer: u32, row_start: u32) {
@@ -940,16 +1047,14 @@ impl MeshMaps {
         let flags = maps.contains(&MeshMap::Normal) as u32
             | (maps.contains(&MeshMap::Height) as u32) << 1
             | (maps.contains(&MeshMap::Id) as u32) << 2;
-        let params = ProjectParams {
-            layer,
-            res: self.res,
-            row_start,
-            row_count: rows,
-            frontal: s.frontal * self.diagonal,
-            rear: s.rear * self.diagonal,
-            flags,
-            _pad: 0,
+        // With auto cage, the per-texel cage replaces the distances, and their maximum scales
+        // Height.
+        let (frontal, rear, flags) = match &high.mesh.cage {
+            Some(c) => (c.max_frontal, c.max_rear, flags | 8),
+            None => (s.frontal * self.diagonal, s.rear * self.diagonal, flags),
         };
+        let params = ProjectParams { layer, res: self.res, row_start, row_count: rows, frontal, rear, flags, _pad: 0 };
+        let cage = high.cage.create_view(&Default::default());
         let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("project params"),
             contents: bytemuck::bytes_of(&params),
@@ -982,6 +1087,7 @@ impl MeshMaps {
                 wgpu::BindGroupEntry { binding: 12, resource: tex_res(&height) },
                 wgpu::BindGroupEntry { binding: 13, resource: tex_res(&id) },
                 wgpu::BindGroupEntry { binding: 14, resource: high.counters.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: tex_res(&cage) },
             ],
         });
         let mut enc = d.create_command_encoder(&Default::default());

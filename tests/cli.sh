@@ -84,6 +84,7 @@ check "missing library item fails" bash -c "! APPDATA=$OUT/user XDG_CONFIG_HOME=
 check "missing project exits 1" test "$code" -eq 1
 "$P" export > /dev/null 2>&1; code=$?
 check "high-poly bake" bash -c "'$P' new tests/data/hp_low.obj -o $OUT/High.crate --tile-resolution 1024 --high-poly tests/data/hp_high.obj --bake normal,height --json | grep -q '\"Normal\":\"Up to date\"'"
+check "auto cage bake" bash -c "'$P' new tests/data/hp_low.obj -o $OUT/AutoCage.crate --tile-resolution 1024 --high-poly tests/data/hp_high.obj --auto-cage --bake normal > /dev/null && grep -q '\"auto_cage\": true' $OUT/AutoCage.crate/project.json"
 check "bad high poly fails" bash -c "! '$P' new tests/data/hp_low.obj -o $OUT/Bad.crate --high-poly README.md --bake normal > /dev/null 2>&1"
 check "usage error exits 2" test "$code" -eq 2
 

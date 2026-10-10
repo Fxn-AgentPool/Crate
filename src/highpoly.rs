@@ -3,12 +3,14 @@
 //! See docs/reference/mesh-maps.md#high-poly-mesh.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, Bvh};
+use crate::cage::LowMesh;
 use crate::gpu::Gpu;
 use crate::mesh::ImportSettings;
 
@@ -31,6 +33,8 @@ pub struct HighCpu {
     pub low_match: Vec<u32>,
     /// Material names; the ID map's colors follow this order.
     pub materials: Vec<String>,
+    /// The auto cage, if requested.
+    pub cage: Option<Cage>,
 }
 
 pub struct HighGpu {
@@ -39,6 +43,23 @@ pub struct HighGpu {
     pub data: wgpu::Buffer,
     pub low_match: wgpu::Buffer,
     pub materials: Vec<String>,
+    /// Auto cage: per low-poly vertex `[u, v, frontal, rear]`, drawn with the low poly's index
+    /// buffer (shaders/cage_raster.wgsl).
+    pub cage: Option<GpuCage>,
+}
+
+pub struct GpuCage {
+    pub vertices: wgpu::Buffer,
+    /// Largest distances, in world units.
+    pub max_frontal: f32,
+    pub max_rear: f32,
+}
+
+/// The auto cage of a bake: per-vertex distances, with the UVs to rasterize them.
+pub struct Cage {
+    pub vertices: Vec<[f32; 4]>,
+    pub max_frontal: f32,
+    pub max_rear: f32,
 }
 
 impl HighCpu {
@@ -63,7 +84,17 @@ impl HighCpu {
         };
         // Storage buffers can't be empty.
         let low_match = if self.low_match.is_empty() { vec![0] } else { self.low_match };
+        let cage = self.cage.map(|c| GpuCage {
+            vertices: gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cage vertices"),
+                contents: bytemuck::cast_slice(&c.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            max_frontal: c.max_frontal,
+            max_rear: c.max_rear,
+        });
         Ok(HighGpu {
+            cage,
             nodes: buf("high bvh nodes", bytemuck::cast_slice(&self.nodes)),
             tris: buf("high bvh tris", bytemuck::cast_slice(&self.tris)),
             data: buf("high tri data", bytemuck::cast_slice(&self.data)),
@@ -73,10 +104,40 @@ impl HighCpu {
     }
 }
 
-/// Imports the high poly with the low poly's import settings and prepares it for tracing.
-pub fn load(path: &Path, import: &ImportSettings, low_groups: &[String], match_by_name: bool) -> Result<HighCpu> {
+/// What the auto cage is measured against: the low poly and its bounding box diagonal.
+pub struct CageRequest {
+    pub low: Arc<LowMesh>,
+    pub diagonal: f32,
+}
+
+/// Imports the high poly with the low poly's import settings and prepares it for tracing, and
+/// measures the auto cage when `cage` is given.
+pub fn load(
+    path: &Path,
+    import: &ImportSettings,
+    low_groups: &[String],
+    match_by_name: bool,
+    cage: Option<CageRequest>,
+) -> Result<HighCpu> {
     let mesh = crate::mesh::import_high(path, import)?;
     let (low_match, high_match) = match_parts(low_groups, &mesh.groups, match_by_name);
+    let cage = cage.map(|req| {
+        let t = std::time::Instant::now();
+        let samples = crate::cage::samples(&mesh, &high_match);
+        let c = crate::cage::compute(&req.low, &low_match, &samples, req.diagonal);
+        log::info!(
+            "auto cage: {} samples in {:.2}s, up to {:.4} frontal, {:.4} rear",
+            samples.len(),
+            t.elapsed().as_secs_f32(),
+            c.max_frontal / req.diagonal,
+            c.max_rear / req.diagonal
+        );
+        Cage {
+            vertices: req.low.vertices.iter().zip(c.frontal.iter().zip(&c.rear)).map(|(v, (&f, &r))| [v.uv[0], v.uv[1], f, r]).collect(),
+            max_frontal: c.max_frontal,
+            max_rear: c.max_rear,
+        }
+    });
     let bvh = Bvh::build(&mesh);
     log::info!("high poly: {} triangles, {} BVH nodes", bvh.tris.len(), bvh.nodes.len());
     let data = bvh
@@ -93,7 +154,7 @@ pub fn load(path: &Path, import: &ImportSettings, low_groups: &[String], match_b
             }
         })
         .collect();
-    Ok(HighCpu { nodes: bvh.nodes, tris: bvh.tris, data, low_match, materials: mesh.materials })
+    Ok(HighCpu { nodes: bvh.nodes, tris: bvh.tris, data, low_match, materials: mesh.materials, cage })
 }
 
 /// Pairs `<name>_low` parts with `<name>_high` parts (ignoring case). Returns a match id per
