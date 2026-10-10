@@ -70,7 +70,7 @@ Normal channel (RNM).
 
 **New…** next to the preset in the Export dialog creates a preset from the selected one.
 Presets are stored as JSON in the `export-presets` folder of the user configuration directory
-(`%APPDATA%\Painter` on Windows, `~/.config/painter` on Linux) and can be shared as files.
+(`%APPDATA%\Crate` on Windows, `~/.config/crate` on Linux) and can be shared as files.
 
 Valid component sources, as written in the preset editor:
 

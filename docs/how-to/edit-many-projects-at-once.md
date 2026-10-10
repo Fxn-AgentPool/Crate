@@ -1,6 +1,6 @@
 # How to edit many projects at once
 
-This guide shows you how to apply the same change to many Painter projects, for example to
+This guide shows you how to apply the same change to many Crate projects, for example to
 add a layer, change a value, or re-export everything with a new preset.
 
 ## Write the change as a script
@@ -20,10 +20,10 @@ set opacity=0.8
 ## Run it on every project
 
 ```
-painter batch darken-grime.txt "assets/*.painter" --save
+crate batch darken-grime.txt "assets/*.crate" --save
 ```
 
-- Quote wildcard patterns; Painter expands them itself, the same way on every platform.
+- Quote wildcard patterns; Crate expands them itself, the same way on every platform.
 - Without `--save`, the edits are applied in memory only. Run once without it to check that the
   script works everywhere.
 - By default the batch stops at the first project that fails. To process the rest and see every
@@ -38,7 +38,7 @@ export "exports/${project}" preset="Unreal Engine"
 ```
 
 ```
-painter batch reexport.txt "assets/*.painter"
+crate batch reexport.txt "assets/*.crate"
 ```
 
 No `--save` is needed when the script only exports.
@@ -48,7 +48,7 @@ No `--save` is needed when the script only exports.
 Add `--json` to get a per-project report:
 
 ```
-painter batch darken-grime.txt "assets/*.painter" --save --keep-going --json
+crate batch darken-grime.txt "assets/*.crate" --save --keep-going --json
 ```
 
 The `projects` array lists each project with `ok`, `error` and `seconds`, and `failed` counts the

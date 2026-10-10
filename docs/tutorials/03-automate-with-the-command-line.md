@@ -1,6 +1,6 @@
-# Automate Painter from the command line
+# Automate Crate from the command line
 
-In this tutorial, we will texture the crate again, but this time without opening Painter's
+In this tutorial, we will texture the crate again, but this time without opening Crate's
 window. We'll create a project, apply a material with a script, export textures, and then reuse
 the same script to make a second, red crate in a single command.
 
@@ -8,8 +8,8 @@ You don't need to have done the other tutorials. It takes about 10 minutes.
 
 ## What you need
 
-- Painter installed, with `painter` on your `PATH`. Check with `painter --version`.
-- A terminal, opened in the folder that contains Painter's sample `assets` folder (it holds
+- Crate installed, with `crate` on your `PATH`. Check with `crate --version`.
+- A terminal, opened in the folder that contains Crate's sample `assets` folder (it holds
   `assets/crate.glb`).
 
 ## Create a project
@@ -17,19 +17,19 @@ You don't need to have done the other tutorials. It takes about 10 minutes.
 First, we'll make a project from the crate and bake its mesh maps, all in one command:
 
 ```
-painter new assets/crate.glb -o Crate.painter --bake all
+crate new assets/crate.glb -o Crate.crate --bake all
 ```
 
-Painter works for a few seconds and prints:
+Crate works for a few seconds and prints:
 
 ```
   tiles [1001, 1002], materials ["Top", "Bottom", "Center", "Frame"]
   baked in 0.59s
-  saved …\Crate.painter (0 paint pages written) in 1.15s
+  saved …\Crate.crate (0 paint pages written) in 1.15s
 ```
 
-A `Crate.painter` folder has appeared next to `assets`. It's an ordinary project: you could open
-it in the application with `painter Crate.painter`.
+A `Crate.crate` folder has appeared next to `assets`. It's an ordinary project: you could open
+it in the application with `crate Crate.crate`.
 
 ## Write a material script
 
@@ -56,19 +56,19 @@ values, and so on. Notice `${color}`: instead of a fixed color, the script takes
 Now we'll run the script on our project, giving `color` a value, and save:
 
 ```
-painter run paint.txt --project Crate.painter --set color=#2A4C7D --save
+crate run paint.txt --project Crate.crate --set color=#2A4C7D --save
 ```
 
-Painter echoes each command as it runs it:
+Crate echoes each command as it runs it:
 
 ```
-  opened …\Crate.painter in 0.65s
+  opened …\Crate.crate in 0.65s
 > add-fill
 > rename Paint
 > set base_color=#2A4C7D roughness=0.6
 …
 > set amount=0.4
-  saved …\Crate.painter (0 paint pages written) in 0.01s
+  saved …\Crate.crate (0 paint pages written) in 0.01s
 ```
 
 Notice that `${color}` was replaced by `#2A4C7D`.
@@ -76,10 +76,10 @@ Notice that `${color}` was replaced by `#2A4C7D`.
 Let's see what happens if we forget the variable. Run the same command without `--set`:
 
 ```
-painter run paint.txt --project Crate.painter --save
+crate run paint.txt --project Crate.crate --save
 ```
 
-This time Painter stops with:
+This time Crate stops with:
 
 ```
 error: paint.txt:4: variable ${color} is not set (use --set color=...)
@@ -92,10 +92,10 @@ Nothing was saved: a failing script never leaves a half-finished project behind.
 Next, we'll export textures for a game engine:
 
 ```
-painter export Crate.painter -o textures
+crate export Crate.crate -o textures
 ```
 
-Painter lists the files it writes:
+Crate lists the files it writes:
 
 ```
   crate_BaseColor.1001.png
@@ -116,10 +116,10 @@ Finally, we'll make a red crate, from mesh to exported textures, in a single com
 we'll ask for a JSON result, the way another program would:
 
 ```
-painter new assets/crate.glb -o RedCrate.painter --bake all --script paint.txt --set color=#C03020 --export red-textures --json
+crate new assets/crate.glb -o RedCrate.crate --bake all --script paint.txt --set color=#C03020 --export red-textures --json
 ```
 
-Instead of progress messages, Painter prints one line of JSON when it finishes. It starts with:
+Instead of progress messages, Crate prints one line of JSON when it finishes. It starts with:
 
 ```
 {"command":"new","files":["…\red-textures\crate_BaseColor.1001.png", …

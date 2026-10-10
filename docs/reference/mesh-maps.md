@@ -39,3 +39,10 @@ The MVP bakes from the imported mesh only. Baking from a separate high-poly mesh
 | Out of date | The mesh or settings changed. Old data is still used until rebaked. |
 
 Position and World Normal are baked automatically on import, because painting requires them.
+
+## In the Library
+
+**Library → Mesh Maps** shows every map with a thumbnail of its first UDIM tile and its status:
+**not baked** for Missing, an orange name for Out of date. Double-clicking a map adds it as a mask
+layer of the selected layer; dragging it onto the Node Editor adds a Mesh Map node. See
+[Windows and panels](windows-and-panels.md#library).

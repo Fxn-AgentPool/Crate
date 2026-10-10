@@ -24,7 +24,7 @@ Baking runs in the background. You can keep working; generators update when each
 - **To save memory and bake time on large assets**, set **Resolution** below the tile resolution.
   Generators remain usable at half resolution.
 
-Rebake after each change. Press `Shift+C` in the viewport to cycle through baked maps and check
-them.
+Rebake after each change. To check the maps, look at their thumbnails in **Library → Mesh Maps**,
+or press `Shift+C` in the viewport to cycle through them.
 
 See [Mesh maps](../reference/mesh-maps.md) for every setting and value range.

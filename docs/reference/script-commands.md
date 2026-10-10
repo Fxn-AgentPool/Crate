@@ -1,14 +1,14 @@
 # Script commands
 
-Scripts drive Painter without a window: `painter run`, `painter batch`, `painter new --script`,
-or `painter --script` for the application. Each command mirrors a user action.
+Scripts drive Crate without a window: `crate run`, `crate batch`, `crate new --script`,
+or `crate --script` for the application. Each command mirrors a user action.
 
 ## Syntax
 
 - One command per line. Arguments are separated by spaces; quote arguments that contain spaces:
   `rename "Bare metal"`.
 - Lines starting with `#` are comments. Empty lines are ignored.
-- With `painter run -c`, commands are separated by `;` instead of lines.
+- With `crate run -c`, commands are separated by `;` instead of lines.
 - A failing command stops the script with an error naming the file, line and command.
 
 ### Variables
@@ -18,7 +18,7 @@ or `painter --script` for the application. Each command mirrors a user action.
 1. a `--set name=value` option, then
 2. the environment variable `name`.
 
-An unset variable is an error. In `painter batch`, `${project}` is the current project's name.
+An unset variable is an error. In `crate batch`, `${project}` is the current project's name.
 
 ```
 add-fill
@@ -41,7 +41,7 @@ set base_color=${color}
 | Command | Description |
 |---|---|
 | `new <mesh> [resolution]` | New project from a mesh. Resolution `1024`, `2048` (default) or `4096`. |
-| `open <project>` | Open a `.painter` project. |
+| `open <project>` | Open a `.crate` project. |
 | `save [project]` | Save. Without a path, saves to where the project was opened or last saved. |
 | `reimport <mesh>` | Replace the mesh, keeping layers and paint. Mesh maps become out of date. |
 | `bake [maps]` | Bake mesh maps: `all` (AO, curvature, thickness, ID), `outdated`, or names: `ao`, `curvature`, `thickness`, `id`, `position`, `worldnormal`. |
@@ -65,7 +65,7 @@ set base_color=${color}
 | `add-generator <type>` | Add a generator effect: `edge-wear`, `dirt`, `curvature-mask`, `position-gradient`. |
 | `add-mask-paint`, `add-mask-fill`, `add-mask-levels` | Add a paint, fill or levels effect to the mask. |
 | `save-smart [name]` | Save the selected layer as a smart material. |
-| `add-smart <name or file.psmat>` | Add a smart material from the library or a file. |
+| `add-smart <name or file.smat>` | Add a smart material from the library or a file. |
 | `delete-smart <name>` | Delete a smart material from the library. |
 
 ### `set`
@@ -118,6 +118,8 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. |
 | `tiles on\|off` | Tint by UDIM tile. |
 | `environment <file.hdr\|exr>`, `exposure <ev>` | Lighting. |
+| `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
+| `preview off` | Render the material again. |
 | `render <file.png>` | Render the viewport to an image. |
 
 ## Checks

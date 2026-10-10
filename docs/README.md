@@ -1,18 +1,19 @@
-# Painter documentation
+# Crate documentation
 
-> **Status: MVP implemented.** These are the user docs for the Painter application, which
-> lives in its own repository (see its README for building and running it). The docs were
+> **Status: MVP implemented.** These are the user docs for Crate. They live next to the code
+> (see the [repository README](../README.md) for building and running it). The docs were
 > written first, as the specification; where the implementation made a different choice, the
 > docs were updated to match. When the software and these docs disagree, either the software
 > has a bug or the docs need a deliberate update — never silently both.
 >
-> Tutorials 1 and 2 are replayed automatically by the application repository's
-> `tests/scripts/tutorial1.txt` and `tutorial2.txt`, and the command line by its
-> `tests/cli.sh`; the sample files they use are in its `assets/` folder.
+> Tutorials 1 and 2 are replayed automatically by `tests/scripts/tutorial1.txt` and
+> `tutorial2.txt`, and the command line by `tests/cli.sh`; the sample files they use are in
+> `assets/`.
 >
-> "Painter" is a working title.
+> Crate was called Painter during development. Projects, smart materials and settings from that
+> time still open.
 
-Painter is a realtime 3D texture painting application for UDIM assets. It combines:
+Crate is a realtime 3D texture painting application for UDIM assets. It combines:
 
 - a **multi-channel layer stack** for everyday texturing,
 - a **node graph** underneath it for procedural work,
@@ -34,7 +35,7 @@ Lessons that take you through texturing an asset from start to finish. Start her
 
 1. [Texture your first asset](tutorials/01-texture-your-first-asset.md)
 2. [Project a decal with a stencil](tutorials/02-project-a-decal-with-a-stencil.md)
-3. [Automate Painter from the command line](tutorials/03-automate-with-the-command-line.md)
+3. [Automate Crate from the command line](tutorials/03-automate-with-the-command-line.md)
 
 ### How-to guides
 
@@ -46,13 +47,14 @@ Directions for specific tasks, assuming you already know your way around.
 - [How to paint through a stencil](how-to/paint-through-a-stencil.md)
 - [How to mask a layer with a generator](how-to/mask-a-layer-with-a-generator.md)
 - [How to edit a layer as a node graph](how-to/edit-a-layer-as-a-graph.md)
+- [How to preview and rewire nodes quickly](how-to/preview-and-rewire-nodes.md)
 - [How to create a smart material](how-to/create-a-smart-material.md)
 - [How to speed up a slow graph](how-to/speed-up-a-slow-graph.md)
 - [How to export textures for a game engine](how-to/export-textures.md)
 - [How to create projects from the command line](how-to/create-projects-from-the-command-line.md)
 - [How to reimport meshes from Blender](how-to/reimport-meshes-from-blender.md)
 - [How to edit many projects at once](how-to/edit-many-projects-at-once.md)
-- [How to call Painter from other tools](how-to/call-painter-from-other-tools.md)
+- [How to call Crate from other tools](how-to/call-crate-from-other-tools.md)
 
 ### Reference
 
@@ -64,6 +66,7 @@ Technical descriptions of the machinery. Structured like the application.
 - [Layers and masks](reference/layers.md)
 - [Blend modes](reference/blend-modes.md)
 - [Nodes](reference/nodes.md)
+- [Node Editor](reference/node-editor.md)
 - [Paint buffer](reference/paint-buffer.md)
 - [Brushes, tools and stencils](reference/brushes-tools-stencils.md)
 - [Mesh maps](reference/mesh-maps.md)

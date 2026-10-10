@@ -17,6 +17,12 @@ Generators need baked mesh maps. If you haven't baked them, see
    - For a gradient from bottom to top, such as dust or water marks: **Position Gradient**.
 4. Adjust the generator's parameters in the **Properties** panel.
 
+## Use a mesh map directly
+
+For a mask straight from a baked map, such as ambient occlusion or thickness, select the layer and
+double-click the map in **Library → Mesh Maps**. It's added as a mask layer, which you can refine
+like a generator.
+
 ## Refine it
 
 - **To sharpen or soften the transition**, add a **Levels** mask layer above the generator, and

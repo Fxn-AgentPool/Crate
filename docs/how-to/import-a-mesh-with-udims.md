@@ -15,7 +15,7 @@ This guide shows you how to create a project from a mesh whose UVs span several 
 4. If the mesh was authored Z-up, set **Up axis** to `Z`.
 5. If the mesh is in centimeters and you want world-unit brush sizes in meters, set **Scale** to
    `0.01`.
-6. Click **Create**, and choose where to save the `.painter` project directory.
+6. Click **Create**, and choose where to save the `.crate` project directory.
 
 ## Check the result
 

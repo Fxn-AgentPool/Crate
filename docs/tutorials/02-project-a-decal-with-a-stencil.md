@@ -10,12 +10,12 @@ about 10 minutes.
 
 ## What you need
 
-- The `Crate.painter` project from the first tutorial.
-- The sample decal that ships with Painter: `assets/D_BasicDecals01_015.png`.
+- The `Crate.crate` project from the first tutorial.
+- The sample decal that ships with Crate: `assets/D_BasicDecals01_015.png`.
 
 ## Open the project and frame the side
 
-1. Choose **File → Open Project** and open `Crate.painter`.
+1. Choose **File → Open Project** and open `Crate.crate`.
 2. Orbit the crate until you're looking straight at one of its sides. Each side has a recessed
    panel in the middle, surrounded by a frame.
 3. Zoom with the mouse wheel until that side fills most of the viewport.

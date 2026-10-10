@@ -8,7 +8,7 @@ detail while keeping a single material. Film pipelines have relied on them for a
 game tools increasingly support them.
 
 Substance Painter historically mapped UV regions to separate *texture sets*, and added UDIM
-support later. Mari was built around UDIMs from the start. Painter follows Mari here: tiles are
+support later. Mari was built around UDIMs from the start. Crate follows Mari here: tiles are
 simply where texels live. You don't manage them individually. You paint across them, and
 projection takes care of tile boundaries.
 
@@ -19,7 +19,7 @@ The obvious storage for paint is one full texture per tile per Paint node. On a 
 around 13 GB for **one** paint layer, nearly all
 of it empty, because most paint layers touch a small part of the asset.
 
-Painter divides each tile into 128 × 128 **pages**. On disk and in the undo history, only pages
+Crate divides each tile into 128 × 128 **pages**. On disk and in the undo history, only pages
 that contain paint are stored, so a layer of scratches on one corner of a crate costs a few
 megabytes, not gigabytes.
 
@@ -48,7 +48,7 @@ format or how paint is addressed. See [About the MVP scope](about-mvp-scope.md).
 ## Seams and padding
 
 Texture filtering and mipmapping sample slightly outside UV islands. If those texels are empty,
-seams show up as thin dark lines. Painter dilates paint by a few texels into empty space at bake
+seams show up as thin dark lines. Crate dilates paint by a few texels into empty space at bake
 time, and export can dilate all the way to fill empty space ("infinite padding").
 
 Tile boundaries are a special case. A UV island that ends at a tile edge has its neighbor in a

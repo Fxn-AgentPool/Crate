@@ -4,15 +4,15 @@ In this tutorial, we will texture a painted metal crate from scratch. We'll give
 paint, let bare metal show through on its worn edges, paint some grime by hand, and export the
 result as textures ready for a game engine.
 
-Along the way we'll meet the main parts of Painter: projects, mesh maps, layers, masks, the brush
+Along the way we'll meet the main parts of Crate: projects, mesh maps, layers, masks, the brush
 and export.
 
 It takes about 20 minutes.
 
 ## What you need
 
-- Painter, installed and running.
-- The sample crate that ships with Painter: `assets/crate.glb`. It uses two UDIM tiles,
+- Crate, installed and running.
+- The sample crate that ships with Crate: `assets/crate.glb`. It uses two UDIM tiles,
   `1001` and `1002`.
 
 ## Create the project
@@ -22,7 +22,7 @@ First, we'll create a project from the crate.
 1. Choose **File → New Project**.
 2. Select `assets/crate.glb`.
 3. Leave **Tile resolution** at `2048`, and click **Create**.
-4. Save the project as `Crate.painter` in your documents folder.
+4. Save the project as `Crate.crate` in your documents folder.
 
 The crate appears in the viewport, in plain gray. Press `U`: a grid appears, with the crate's
 UVs spread across two tiles, labeled `1001` and `1002`. Press `U` again to hide it.
@@ -32,7 +32,7 @@ it.
 
 ## Bake mesh maps
 
-Painter needs to know the crate's shape (where its edges and crevices are) before it can wear
+Crate needs to know the crate's shape (where its edges and crevices are) before it can wear
 them procedurally. We get this by baking mesh maps.
 
 1. Choose **Window → Mesh Maps**.
@@ -122,7 +122,7 @@ Finally, we'll export textures that any glTF-compatible engine can use.
 2. Leave **Preset** at **glTF Metal/Rough**.
 3. Click **Export**.
 
-When it finishes, Painter shows the export folder. It contains six files, three maps for each
+When it finishes, Crate shows the export folder. It contains six files, three maps for each
 of the two tiles:
 
 ```

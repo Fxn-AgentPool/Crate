@@ -1,17 +1,17 @@
 # Command line
 
 ```
-painter [PATH] [--script FILE]
-painter <COMMAND> [OPTIONS]
+crate [PATH] [--script FILE]
+crate <COMMAND> [OPTIONS]
 ```
 
-Without a command, `painter` opens the application. `PATH` is a mesh to import or a `.painter`
+Without a command, `crate` opens the application. `PATH` is a mesh to import or a `.crate`
 project to open; `--script` runs a [script](script-commands.md) after the application starts.
 
-With a command, Painter runs headless: no window opens. Headless commands need the same GPU as
+With a command, Crate runs headless: no window opens. Headless commands need the same GPU as
 the application (see [Limits and requirements](limits.md)).
 
-`painter --help` and `painter <COMMAND> --help` list every option.
+`crate --help` and `crate <COMMAND> --help` list every option.
 
 ## Global options
 
@@ -19,7 +19,7 @@ the application (see [Limits and requirements](limits.md)).
 |---|---|
 | `--json` | Print one JSON result object on stdout when the command finishes (see "JSON result"). Progress messages are suppressed, or sent to stderr with `-v`. |
 | `-v`, `--verbose` | More output. `-v`: progress messages and info logging. `-vv`: debug logging. |
-| `-h`, `--help` | Help for Painter or a command. |
+| `-h`, `--help` | Help for Crate or a command. |
 | `-V`, `--version` | Version. |
 
 ## Commands
@@ -30,14 +30,14 @@ Creates a project from a mesh. Optionally bakes mesh maps, runs a script, and ex
 Always saves the project.
 
 ```
-painter new <MESH> -o <PROJECT> [--tile-resolution N] [--bake MAPS] [--script FILE]
+crate new <MESH> -o <PROJECT> [--tile-resolution N] [--bake MAPS] [--script FILE]
             [--export DIR] [EXPORT OPTIONS] [--set NAME=VALUE]...
 ```
 
 | Argument / option | Default | Description |
 |---|---|---|
 | `MESH` | — | Mesh file: `.glb`, `.gltf` or `.obj`. |
-| `-o`, `--output` | — | Project directory to create. `.painter` is added if missing. |
+| `-o`, `--output` | — | Project directory to create. `.crate` is added if missing. |
 | `--tile-resolution` | `2048` | `1024`, `2048` or `4096`. |
 | `--bake` | none | `all`, or a comma-separated list: `ao`, `curvature`, `thickness`, `id`. Position and World Normal are always baked. |
 | `--script` | none | Script to run on the new project before saving. |
@@ -50,12 +50,12 @@ Replaces a project's mesh, keeping layers and paint, rebakes mesh maps that beca
 and saves. See [Mesh import and UDIM tiles](mesh-and-udims.md#reimport).
 
 ```
-painter reimport <PROJECT> <MESH> [--no-bake] [--export DIR] [EXPORT OPTIONS]
+crate reimport <PROJECT> <MESH> [--no-bake] [--export DIR] [EXPORT OPTIONS]
 ```
 
 | Argument / option | Description |
 |---|---|
-| `PROJECT` | The `.painter` project. |
+| `PROJECT` | The `.crate` project. |
 | `MESH` | The new mesh. Its file name becomes `{mesh}` in exported file names. |
 | `--no-bake` | Leave out-of-date mesh maps out of date. |
 | `--export` | Export textures to this directory afterwards. |
@@ -65,7 +65,7 @@ painter reimport <PROJECT> <MESH> [--no-bake] [--export DIR] [EXPORT OPTIONS]
 Exports a project's textures. See [Export](export.md).
 
 ```
-painter export <PROJECT> -o <DIR> [EXPORT OPTIONS]
+crate export <PROJECT> -o <DIR> [EXPORT OPTIONS]
 ```
 
 ### Export options
@@ -88,8 +88,8 @@ defaults.
 Runs a script, optionally on an existing project.
 
 ```
-painter run <SCRIPT | -> [--project PROJECT] [--save] [--set NAME=VALUE]...
-painter run -c "<COMMANDS>" [--project PROJECT] [--save] [--set NAME=VALUE]...
+crate run <SCRIPT | -> [--project PROJECT] [--save] [--set NAME=VALUE]...
+crate run -c "<COMMANDS>" [--project PROJECT] [--save] [--set NAME=VALUE]...
 ```
 
 | Argument / option | Description |
@@ -105,24 +105,24 @@ painter run -c "<COMMANDS>" [--project PROJECT] [--save] [--set NAME=VALUE]...
 Runs one script on many projects in a single GPU session.
 
 ```
-painter batch <SCRIPT> <PROJECT>... [--save] [--keep-going] [--set NAME=VALUE]...
+crate batch <SCRIPT> <PROJECT>... [--save] [--keep-going] [--set NAME=VALUE]...
 ```
 
 | Argument / option | Description |
 |---|---|
 | `SCRIPT` | Script run once per project, after the project is opened. |
-| `PROJECT` | Projects; `*` and `?` are expanded by Painter, so quoting a pattern works on every platform. |
+| `PROJECT` | Projects; `*` and `?` are expanded by Crate, so quoting a pattern works on every platform. |
 | `--save` | Save each project after its script. |
 | `--keep-going` | Continue with the next project when one fails. Without it, the batch stops at the first failure. |
 | `--set` | Script variable, repeatable. The variable `project` is set to each project's name. |
 
 ### `watch`
 
-Watches a mesh file. When it changes, Painter reimports it, rebakes out-of-date mesh maps,
+Watches a mesh file. When it changes, Crate reimports it, rebakes out-of-date mesh maps,
 saves, and optionally exports. Runs until interrupted (`Ctrl+C`) or until `--count` reimports.
 
 ```
-painter watch <PROJECT> --mesh <FILE> [--export DIR] [EXPORT OPTIONS] [--interval MS] [--count N]
+crate watch <PROJECT> --mesh <FILE> [--export DIR] [EXPORT OPTIONS] [--interval MS] [--count N]
 ```
 
 | Option | Default | Description |
@@ -141,7 +141,7 @@ tile resolution, enabled channels, the layer tree with masks, mesh map status, a
 there are unsaved changes.
 
 ```
-painter info <PROJECT>
+crate info <PROJECT>
 ```
 
 ## Exit codes
@@ -151,7 +151,7 @@ painter info <PROJECT>
 | `0` | Success. |
 | `1` | The command failed: a missing or invalid file, a failing script line, or at least one failed project in `batch`. |
 | `2` | Invalid command-line usage. |
-| `3` | The GPU does not support Painter. |
+| `3` | The GPU does not support Crate. |
 
 ## JSON result
 
@@ -189,6 +189,9 @@ Example:
 ## Files
 
 User files (preferences, export presets, the smart material library) are read from the user
-configuration directory: `%APPDATA%\Painter` on Windows, `$XDG_CONFIG_HOME/painter` (usually
-`~/.config/painter`) on Linux. Relative paths in commands and scripts are relative to the
+configuration directory: `%APPDATA%\Crate` on Windows, `$XDG_CONFIG_HOME/crate` (usually
+`~/.config/crate`) on Linux. Relative paths in commands and scripts are relative to the
 current directory.
+
+Settings saved before the rename to Crate, in a `Painter` (Linux: `painter`) folder, are moved
+to the new folder the first time Crate starts.

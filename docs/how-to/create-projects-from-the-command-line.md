@@ -1,12 +1,12 @@
 # How to create projects from the command line
 
-This guide shows you how to turn a mesh into a ready-to-use Painter project, and optionally
+This guide shows you how to turn a mesh into a ready-to-use Crate project, and optionally
 textures, without opening the application.
 
 ## Create a project
 
 ```
-painter new crate.glb -o Crate.painter --bake all
+crate new crate.glb -o Crate.crate --bake all
 ```
 
 - To choose the tile resolution, add `--tile-resolution 1024` or `4096` (default `2048`).
@@ -20,7 +20,7 @@ painter new crate.glb -o Crate.painter --bake all
 To set up layers as part of the same command, pass a [script](../reference/script-commands.md):
 
 ```
-painter new crate.glb -o Crate.painter --bake all --script base-material.txt
+crate new crate.glb -o Crate.crate --bake all --script base-material.txt
 ```
 
 To start from a smart material in your library, the script can be a single line:
@@ -34,7 +34,7 @@ add-smart "Worn Red Paint"
 Add an export directory and, if needed, export options:
 
 ```
-painter new crate.glb -o Crate.painter --bake all --script base-material.txt --export textures --preset "Unity HDRP"
+crate new crate.glb -o Crate.crate --bake all --script base-material.txt --export textures --preset "Unity HDRP"
 ```
 
 ## Make several variants
@@ -43,8 +43,8 @@ Use a variable in the script (for example `set base_color=${color}`) and run `ne
 variant:
 
 ```
-painter new crate.glb -o CrateRed.painter --bake all --script paint.txt --set color=#C03020
-painter new crate.glb -o CrateBlue.painter --bake all --script paint.txt --set color=#2A4C7D
+crate new crate.glb -o CrateRed.crate --bake all --script paint.txt --set color=#C03020
+crate new crate.glb -o CrateBlue.crate --bake all --script paint.txt --set color=#2A4C7D
 ```
 
 See [Command line](../reference/command-line.md#new) for every option.

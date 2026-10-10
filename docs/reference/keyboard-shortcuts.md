@@ -1,8 +1,8 @@
 # Keyboard shortcuts
 
 Default shortcuts. All keyboard shortcuts can be remapped under **Edit → Preferences →
-Shortcuts**: click an entry and press the new key combination. Mouse navigation and the Node
-Editor keys are fixed.
+Shortcuts**: click an entry and press the new key combination. Mouse navigation and the keys
+inside the Node Editor are fixed.
 
 ## Viewport navigation
 
@@ -67,11 +67,31 @@ Editor keys are fixed.
 | Duplicate | `Ctrl+D` |
 | Delete | `Delete` |
 | Edit as graph | `G` |
-| Back to Layers panel | `Esc` (in Node Editor) |
-| Add node | `Tab` or right-click (in Node Editor) |
-| Delete node | `Delete` (in Node Editor) |
-| Frame all nodes | `Home` (in Node Editor) |
+| Open / close the Node Editor | `Ctrl+Space` |
+| Close the Node Editor | `Esc` (in Node Editor) |
 | Select several layers | `Ctrl` + click |
+
+## Node Editor
+
+While the pointer is over the Node Editor, these keys apply there. The full list, with mouse
+gestures and what each operation does, is in [Node Editor](node-editor.md).
+
+| Action | Input |
+|---|---|
+| Add node | `Tab`, `Shift+A`, or right-click empty space |
+| Node menu | Right-click a node |
+| Box select / pan | Left-drag empty space / right-drag or `Alt` + left-drag |
+| Preview node output | `Ctrl+Shift` + click |
+| Lazy connect | `Alt` + right-drag (with `Shift`: choose sockets) |
+| Cut links | `Ctrl` + right-drag |
+| Merge selected | `Ctrl+0` mix, `Ctrl++` add, `Ctrl+-` subtract, `Ctrl+8` multiply, `Ctrl+/` divide, `Ctrl+,` min, `Ctrl+.` max |
+| Swap | `Alt+S` |
+| Dissolve / delete / delete unused | `Ctrl+X` / `Delete` / `Alt+X` |
+| Duplicate / align | `Shift+D` / `Shift+=` |
+| Link active to selected | `K` |
+| Copy settings / reset | `Shift+C` / `Backspace` |
+| Select all / none | `A` / `Alt+A` |
+| Frame all nodes | `Home` |
 
 ## File and history
 

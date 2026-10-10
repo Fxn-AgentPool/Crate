@@ -2,12 +2,12 @@
 
 A texturing project can contain dozens of layers, each with procedural masks, across many UDIM
 tiles at 4K. Evaluating all of that into textures every time something changes would be far too
-slow for interactive work. Painter stays realtime by evaluating as little as possible, and in the
+slow for interactive work. Crate stays realtime by evaluating as little as possible, and in the
 right place.
 
 ## Evaluating where the pixels are
 
-Painter compiles the node graph into a single GPU shader. In the viewport, that shader runs
+Crate compiles the node graph into a single GPU shader. In the viewport, that shader runs
 **once per screen pixel**: for each pixel it looks up the surface position and UV, then evaluates
 the whole graph for that point.
 

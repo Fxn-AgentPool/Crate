@@ -10,12 +10,15 @@
 | System memory | 8 GB | 32 GB |
 | Input | Mouse | Pen tablet with pressure (Windows Ink, Wacom WinTab, libinput) |
 
-macOS is not supported in the MVP. On Linux, Painter runs under X11 or Wayland; native file
-dialogs need an XDG desktop portal. If the GPU lacks a required feature, Painter shows which one
+macOS is not supported in the MVP. On Linux, Crate runs under X11 or Wayland; native file
+dialogs need an XDG desktop portal. If the GPU lacks a required feature, Crate shows which one
 at startup instead of opening a project.
 
-User files (preferences, export presets, the smart material library) live in `%APPDATA%\Painter`
-on Windows and `$XDG_CONFIG_HOME/painter` (usually `~/.config/painter`) on Linux.
+User files (preferences, export presets, the smart material library) live in `%APPDATA%\Crate`
+on Windows and `$XDG_CONFIG_HOME/crate` (usually `~/.config/crate`) on Linux.
+
+Settings saved before the rename to Crate, in a `Painter` (Linux: `painter`) folder, are moved
+to the new folder the first time Crate starts.
 
 ## Project limits
 

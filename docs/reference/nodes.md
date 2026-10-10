@@ -1,7 +1,7 @@
 # Nodes
 
-The **Node Editor** shows the graph behind a layer, mask or stack. Open it with `G` on a selected
-layer, or with **Window → Node Editor**.
+The [Node Editor](node-editor.md) shows the graph behind a layer, mask or stack, or the whole
+project. Open it with `G` on a selected layer, with `Ctrl+Space`, or with **Window → Node Editor**.
 
 ## Socket types
 
@@ -86,6 +86,10 @@ parameter values baked into them. The result closely matches the generator.
 | Fill | — → Material | Same as [Fill layer properties](layers.md#fill-layer-properties). |
 | Stack | Material slots → Material | Ordered layer slots. Displayed by the Layers panel. |
 | Mask Stack | Float slots → Float | Ordered mask layer slots. |
+
+In the Node Editor, a Stack shows two inputs per layer (the layer's content, and its mask) and a
+**+ New layer** input: connecting a material there adds a layer. A Mask Stack shows one input
+per node-based mask effect and a **+ New effect** input that adds one.
 
 ### Filters (non-local)
 

@@ -10,7 +10,7 @@ the approach that makes Substance Painter feel immediate.
 on a flat 2D canvas aligned with the screen. Then, in a separate step called *baking*, that
 canvas is projected through the camera onto the surface and written into the textures.
 
-Painter uses buffer painting internally and offers both experiences on top of it.
+Crate uses buffer painting internally and offers both experiences on top of it.
 
 ## Why a buffer
 

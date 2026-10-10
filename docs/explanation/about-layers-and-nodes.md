@@ -1,11 +1,11 @@
 # About layers and nodes
 
 Texturing tools have historically split into two camps. Layer-based tools such as Substance
-Painter or Photoshop present a list, which is quick to read and quick to edit. Node-based tools
+Crate or Photoshop present a list, which is quick to read and quick to edit. Node-based tools
 such as Mari, Substance Designer or Houdini present a graph, which can express things a list
 cannot: reusing one result in several places, branching, and combining masks from many sources.
 
-Painter doesn't make you choose, because the two are not actually different things.
+Crate doesn't make you choose, because the two are not actually different things.
 
 ## A layer stack is a graph drawn as a list
 
@@ -19,7 +19,7 @@ Each step takes the result below, the layer's content, a mask, a blend mode and 
 That is exactly what a Merge node does. A layer stack is therefore a particular *shape* of node
 graph: linear, with one input per step.
 
-Painter makes that shape a first-class node, the **Stack** node. The Layers panel is a view of a
+Crate makes that shape a first-class node, the **Stack** node. The Layers panel is a view of a
 Stack node and nothing more. There is no second data model to keep in sync. When you add a layer,
 a slot is added to the Stack node; when you group layers, a nested Stack node is created.
 
@@ -39,7 +39,7 @@ even if some rows are summaries.
 
 ## Why layers are multi-channel
 
-In Painter, as in Substance Painter, one layer carries every channel at once: color, roughness,
+In Crate, as in Substance Painter, one layer carries every channel at once: color, roughness,
 metallic, height and so on. Mari is traditionally organized per channel, with a separate stack or
 graph per channel.
 
@@ -48,7 +48,7 @@ by different artists or from different sources. For most asset work, though, a s
 *one thing* that changes color, roughness and height together. With per-channel stacks, that one
 scratch becomes three layers in three places that must be kept in sync by hand.
 
-Painter uses a **Material** socket type to carry all channels down one wire. Per-channel control
+Crate uses a **Material** socket type to carry all channels down one wire. Per-channel control
 is still available, through per-channel toggles and blend modes on each layer, and **Material
 Split** and **Material Combine** in the graph, but it is the exception rather than the default.
 
