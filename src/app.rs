@@ -65,6 +65,9 @@ pub struct CrateApp {
     environment: Option<PathBuf>,
     bindings: crate::shortcuts::Bindings,
     thumbs: crate::thumbs::Thumbnails,
+    updater: crate::ui_update::Updater,
+    /// Start the program again on exit (after an update).
+    restart: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -72,6 +75,8 @@ enum Pending {
     New,
     Open,
     Quit,
+    /// Quit, then start the version an update installed.
+    Restart,
 }
 
 impl CrateApp {
@@ -114,7 +119,12 @@ impl CrateApp {
             environment: None,
             bindings: crate::shortcuts::Bindings::new(&prefs_for_bindings.shortcuts),
             thumbs: crate::thumbs::Thumbnails::new(&paint_gpu),
+            updater: Default::default(),
+            restart: false,
         };
+        if app.prefs.check_updates_at_startup {
+            app.updater.check(&cc.egui_ctx, true);
+        }
         if app.gpu_error.is_some() {
             return app;
         }
@@ -193,6 +203,25 @@ impl CrateApp {
 }
 
 impl eframe::App for CrateApp {
+    fn on_exit(&mut self) {
+        if !self.restart {
+            return;
+        }
+        // The update put the new program where this one was started from.
+        match crate::update::program_path().ok_or("can't locate the program") {
+            Ok(exe) => {
+                let mut cmd = std::process::Command::new(exe);
+                if let Some(path) = self.doc.as_ref().and_then(|d| d.path.clone()) {
+                    cmd.arg(path);
+                }
+                if let Err(e) = cmd.spawn() {
+                    log::error!("couldn't restart Crate: {e}");
+                }
+            }
+            Err(e) => log::error!("couldn't restart Crate: {e}"),
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Some(e) = &self.gpu_error {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -456,6 +485,13 @@ impl CrateApp {
                     ui.checkbox(&mut self.show_mesh_maps, "Mesh Maps");
                     ui.checkbox(&mut self.show_import_log, "Import Log");
                 });
+                ui.menu_button("Help", |ui| {
+                    let label = if self.updater.available().is_some() { "Update Available…" } else { "Check for Updates…" };
+                    if ui.button(label).clicked() {
+                        self.updater.open = true;
+                        self.updater.check(ui.ctx(), false);
+                    }
+                });
             });
         });
     }
@@ -465,6 +501,13 @@ impl CrateApp {
             ui.horizontal(|ui| {
                 if let Some(e) = &self.error {
                     ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+                    ui.separator();
+                }
+                if let Some(v) = self.updater.available() {
+                    let r = ui.add(egui::Label::new(egui::RichText::new(format!("Crate {v} is available")).color(egui::Color32::from_rgb(110, 200, 120))).sense(Sense::click()));
+                    if r.on_hover_text("Help → Check for Updates…").clicked() {
+                        self.updater.open = true;
+                    }
                     ui.separator();
                 }
                 let Some(doc) = &self.doc else {
@@ -867,6 +910,10 @@ impl CrateApp {
             Pending::New => self.new_project = Some(NewProjectDialog::new()),
             Pending::Open => self.open_project_dialog(),
             Pending::Quit => self.allow_close = true,
+            Pending::Restart => {
+                self.allow_close = true;
+                self.restart = true;
+            }
         }
     }
 
@@ -902,7 +949,7 @@ impl CrateApp {
             Some(_) => self.pending = None,
             None => {}
         }
-        if matches!(action, Pending::Quit) && self.allow_close {
+        if matches!(action, Pending::Quit | Pending::Restart) && self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -1023,6 +1070,12 @@ impl CrateApp {
 
     fn dialogs(&mut self, ctx: &egui::Context) {
         self.new_project_dialog(ctx);
+        if self.updater.ui(ctx) {
+            self.guarded(Pending::Restart);
+            if self.allow_close {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
 
         if self.show_import_log {
             let mut open = true;

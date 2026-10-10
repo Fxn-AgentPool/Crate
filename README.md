@@ -100,6 +100,11 @@ runs the unit tests, builds Crate for Windows and Linux, and publishes a GitHub 
 command-line tests need a GPU, so they aren't run there; run them locally before pushing. The
 version is the one in `Cargo.toml`.
 
+The workflow compiles its run number into the program (`CRATE_BUILD`), which is how installed
+copies recognize newer releases (**Help → Check for Updates…**, `crate update`; see
+[Updates](docs/reference/updates.md)). Local builds have no build number: they are development
+builds, which check for releases but never install them.
+
 ## Code layout
 
 | Path | Contents |
@@ -117,5 +122,6 @@ version is the one in `Cargo.toml`.
 | `src/ui_graph.rs`, `src/ui_graph/wrangler.rs` | Node Editor and its Node Wrangler operations |
 | `src/ui_library.rs` | Library panel (mesh maps, images, smart materials) |
 | `src/cli.rs` | Command-line interface |
+| `src/update.rs`, `src/ui_update.rs`, `build.rs` | Updates from GitHub releases |
 | `src/script.rs`, `src/headless.rs` | Script runner and headless mode |
 | `docs/` | User documentation |

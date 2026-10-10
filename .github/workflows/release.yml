@@ -17,6 +17,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Compiled into the program (src/update.rs): it identifies the release for updates.
+  CRATE_BUILD: ${{ github.run_number }}
+  CRATE_COMMIT: ${{ github.sha }}
 
 jobs:
   build:

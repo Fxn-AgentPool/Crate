@@ -19,11 +19,19 @@ pub struct Preferences {
     pub undo_steps: usize,
     /// Shortcut overrides, e.g. Undo -> "Ctrl+Z".
     pub shortcuts: std::collections::BTreeMap<crate::shortcuts::Action, String>,
+    /// Look for a newer release when the application starts (docs/reference/updates.md).
+    pub check_updates_at_startup: bool,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
-        Self { gpu_cache_budget_gb: 8.0, undo_budget_gb: 2.0, undo_steps: 64, shortcuts: Default::default() }
+        Self {
+            gpu_cache_budget_gb: 8.0,
+            undo_budget_gb: 2.0,
+            undo_steps: 64,
+            shortcuts: Default::default(),
+            check_updates_at_startup: true,
+        }
     }
 }
 
