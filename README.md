@@ -20,54 +20,59 @@ cargo build --release
 ## Running
 
 ```
-target/release/painter                     # empty window: File > New Project
-target/release/painter assets/crate.glb    # start with a mesh
-target/release/painter --script setup.txt  # run a script (see below), then continue in the UI
+painter                       # empty window: File > New Project
+painter assets/crate.glb      # start with a mesh
+painter Crate.painter         # open a project
+painter --script setup.txt    # run a script, then continue in the window
 ```
 
-## Scripts and tests
+## Command line
 
-Every user action has a script command, so workflows can be replayed without a window:
+Subcommands run headless, for pipelines (documented in Painter-docs, *Command line* and
+*Script commands*):
 
 ```
-target/release/painter --headless run tests/scripts/tutorial1.txt
+painter new crate.glb -o Crate.painter --bake all --script paint.txt --set color=#C03020 --export textures
+painter reimport Crate.painter crate_v2.glb --export textures
+painter export Crate.painter -o textures --preset "Unreal Engine"
+painter run paint.txt --project Crate.painter --save        # or -c "cmd; cmd", or - for stdin
+painter batch edit.txt "projects/*.painter" --save --keep-going
+painter watch Crate.painter --mesh crate.glb --export textures
+painter info Crate.painter
 ```
 
-`tests/scripts/` contains:
+Add `--json` for one machine-readable result on stdout. Exit codes: 0 success, 1 failure,
+2 usage error, 3 unsupported GPU.
+
+`integrations/blender/painter_bridge.py` is a Blender add-on (File > Export > Painter Project)
+that exports glTF and runs `painter reimport`.
+
+## Tests
+
+`tests/scripts/` holds scripts that replay workflows headless and check the results:
 
 | Script | Checks |
 |---|---|
 | `tutorial1.txt` | Tutorial 1 end to end, including the six exported files. |
 | `tutorial2.txt` | Tutorial 2: stencil, Paint Through in Manual mode, buffer transform, bake. |
-| `painting.txt` | Live and Manual painting, undo/redo, buffer transform. |
+| `painting.txt` | Live and Manual painting, undo/redo, buffer transform, mask paint. |
 | `caches.txt` | Cached nodes, Blur and Height to Normal; cached and uncached renders match. |
 | `save_load.txt` | Saving and reopening a project renders identically; re-saving writes nothing. |
 | `smart_material.txt` | Saving a smart material and adding it to another project renders identically. |
 
-Run them all (from a POSIX shell):
+`tests/cli.sh` checks every command-line subcommand, variables, JSON output, watch mode and exit
+codes. `tests/blender_bridge_test.py` runs the Blender add-on in Blender's background mode.
+
+Run them (from a POSIX shell, after `cargo build --release`):
 
 ```
-for t in tests/scripts/*.txt; do target/release/painter --headless run "$t" || echo "FAILED: $t"; done
+for t in tests/scripts/*.txt; do target/release/painter run "$t" || echo "FAILED: $t"; done
+bash tests/cli.sh
+blender --background --factory-startup --python tests/blender_bridge_test.py -- \
+    "$PWD/target/release/painter" "$PWD/target/tests/cli/Crate.painter" "$PWD/target/tests/blender"
 ```
 
-Renders and exports are written under `target/`.
-
-The full command list is in `src/script.rs`. The most common:
-
-| Command | Effect |
-|---|---|
-| `new <mesh> [resolution]` | New project |
-| `bake [maps…]` | Bake mesh maps |
-| `add-fill [name]`, `add-paint [name]` | Add layers |
-| `set key=value…` | Layer or node parameters (`base_color=#2A4C7D`, `amount=0.4`) |
-| `add-black-mask`, `add-generator edge-wear` | Masks |
-| `brush …`, `brush-values …`, `tool paint`, `stroke x,y x,y…` | Painting (viewport fractions) |
-| `mode manual`, `buffer-transform dx dy deg scale`, `bake-buffer` | Paint buffer |
-| `stencil-add <image>`, `stencil-transform dx dy deg scale` | Stencils |
-| `node <var> <type>`, `link a.out b.in`, `cache <var> on` | Node graph |
-| `camera <yaw> <pitch> [zoom]`, `view <channel or map>`, `render <out.png>` | Viewport |
-| `export <dir> [preset=…]`, `save <dir.painter>`, `open <dir.painter>` | Files |
-| `expect-layers …`, `expect-files …`, `expect-same a.png b.png` | Assertions |
+Renders, exports and test projects are written under `target/`.
 
 ## Code layout
 
@@ -83,4 +88,5 @@ The full command list is in `src/script.rs`. The most common:
 | `src/projectfile.rs`, `src/smartmat.rs` | `.painter` projects and `.psmat` smart materials |
 | `src/viewport.rs` | Viewport rendering (PBR, HDRI, tone mapping) |
 | `src/app.rs`, `src/ui_*.rs` | User interface (egui) |
+| `src/cli.rs` | Command-line interface |
 | `src/script.rs`, `src/headless.rs` | Script runner and headless mode |

@@ -119,7 +119,12 @@ impl PainterApp {
             return app;
         }
         if let Some(path) = initial_mesh {
-            app.open_mesh(path, ImportSettings::default());
+            // A .painter directory opens as a project; anything else is imported as a mesh.
+            if path.is_dir() {
+                app.open_project(&path);
+            } else {
+                app.open_mesh(path, ImportSettings::default());
+            }
         }
         if let Some(script) = script {
             app.run_startup_script(&script);
@@ -460,7 +465,7 @@ impl PainterApp {
                 let m = &doc.mesh;
                 ui.label(format!(
                     "{} · {} triangles · tiles {} · {}²",
-                    m.source.file_name().unwrap_or_default().to_string_lossy(),
+                    doc.original_mesh.file_name().unwrap_or_default().to_string_lossy(),
                     m.triangle_count(),
                     m.tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", "),
                     doc.tile_resolution(),

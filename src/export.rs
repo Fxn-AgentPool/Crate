@@ -568,7 +568,7 @@ pub fn export(gpu: &Gpu, p: &mut Project, eval: &mut UvEvaluator, s: &ExportSett
     let presets = all_presets();
     let preset = presets.iter().find(|x| x.name == s.preset).with_context(|| format!("unknown preset {}", s.preset))?.clone();
     std::fs::create_dir_all(&s.output_dir).with_context(|| format!("creating {}", s.output_dir.display()))?;
-    let mesh_name = p.mesh.source.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mesh_name = p.original_mesh.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let project_name = p.name.clone().unwrap_or_else(|| mesh_name.clone());
     let res = p.tile_resolution();
     let out_res = if s.resolution == 0 || s.resolution >= res { res } else { s.resolution.next_power_of_two().min(res) };

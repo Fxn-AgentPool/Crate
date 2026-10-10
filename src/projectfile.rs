@@ -275,7 +275,7 @@ pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, ex
         version: VERSION,
         mesh: MeshRef {
             file: mesh_file,
-            original: p.mesh.source.display().to_string(),
+            original: p.original_mesh.display().to_string(),
             settings: p.import_settings.clone(),
         },
         tile_resolution: p.tile_resolution(),
@@ -499,6 +499,7 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
         bail!("the project's mesh failed to import");
     }
     let mut p = Project::new(gpu, mesh, settings);
+    p.original_mesh = PathBuf::from(&file.mesh.original);
     p.channels = file.channels;
     p.graph = graph_from_file(file.graph, &file.root_stack)?;
     p.maps.settings = file.mesh_maps.settings;

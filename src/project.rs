@@ -29,6 +29,9 @@ pub struct Project {
     pub name: Option<String>,
     /// The .painter directory, once saved.
     pub path: Option<std::path::PathBuf>,
+    /// The mesh file the user imported (the project keeps its own copy in mesh/). Its name is
+    /// what {mesh} means in export file names.
+    pub original_mesh: std::path::PathBuf,
     /// Unknown project.json keys, preserved on save.
     pub file_extra: serde_json::Map<String, serde_json::Value>,
     /// Hash of every paint page as last written to disk: (node, udim, px, py).
@@ -92,6 +95,7 @@ impl Project {
         let mut p = Self {
             name: None,
             path: None,
+            original_mesh: mesh.source.clone(),
             file_extra: Default::default(),
             saved_pages: Default::default(),
             saved_maps: Default::default(),
@@ -374,6 +378,7 @@ impl Project {
         }
         let settings = self.maps.settings;
         let statuses: Vec<_> = crate::meshmaps::MeshMap::ALL.iter().map(|m| self.maps.status(*m)).collect();
+        self.original_mesh = path.to_path_buf();
         self.gpu_mesh = crate::viewport::GpuMesh::new(gpu, &mesh);
         self.maps = MeshMaps::new(gpu, &mesh, res);
         self.maps.settings = settings;

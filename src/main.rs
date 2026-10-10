@@ -3,6 +3,7 @@ mod bvh;
 mod cache;
 mod camera;
 mod channels;
+mod cli;
 mod compile;
 mod export;
 mod gpu;
@@ -29,27 +30,41 @@ mod ui_paint;
 mod ui_windows;
 mod viewport;
 
+use std::process::ExitCode;
 use std::sync::Arc;
 
-fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,painter=info"))
-        .init();
+use clap::Parser;
+
+fn init_logging(default: &str) {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default)).init();
+}
+
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Older form used by the test scripts: painter --headless run|render ...
     if args.first().map(String::as_str) == Some("--headless") {
-        return headless::run(&args[1..]);
+        init_logging("error");
+        return match headless::run(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {e:?}");
+                ExitCode::from(cli::EXIT_FAILED)
+            }
+        };
     }
-    // painter [mesh] [--script startup.txt]
-    let mut initial_mesh = None;
-    let mut script = None;
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == "--script" {
-            script = it.next().map(std::path::PathBuf::from);
-        } else {
-            initial_mesh = Some(std::path::PathBuf::from(a));
-        }
+    let cli = cli::Cli::parse();
+    if cli.command.is_some() {
+        init_logging(match cli.verbose {
+            0 => "error",
+            1 => "error,painter=info",
+            _ => "warn,painter=debug",
+        });
+        return ExitCode::from(cli::main(cli));
     }
 
+    init_logging("warn,painter=info");
+    let initial = cli.path.clone();
+    let script = cli.script.clone();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Painter")
@@ -59,10 +74,15 @@ fn main() -> anyhow::Result<()> {
     if let egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup {
         create.device_descriptor = Arc::new(gpu::device_descriptor);
     }
-    eframe::run_native(
+    match eframe::run_native(
         "Painter",
         options,
-        Box::new(move |cc| Ok(Box::new(app::PainterApp::new(cc, initial_mesh, script)))),
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))
+        Box::new(move |cc| Ok(Box::new(app::PainterApp::new(cc, initial, script)))),
+    ) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(cli::EXIT_FAILED)
+        }
+    }
 }

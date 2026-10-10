@@ -1,7 +1,58 @@
-//! Headless script runner: `painter --headless run <script.txt>`.
+//! Headless script runner: `painter run <script.txt>` (and `painter --headless run`).
 //!
 //! Each line is a command mirroring a user action, so the tutorials can be replayed and
-//! checked automatically. Lines starting with `#` are comments.
+//! checked automatically, and pipelines can drive Painter. Lines starting with `#` are
+//! comments; `${name}` is replaced by a variable (`--set name=value` or the environment).
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Where `say!` output goes: 0 = stdout, 1 = stderr, 2 = nowhere.
+pub static OUTPUT: AtomicU8 = AtomicU8::new(0);
+
+macro_rules! say {
+    ($($arg:tt)*) => {
+        match $crate::script::OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => println!($($arg)*),
+            1 => eprintln!($($arg)*),
+            _ => {}
+        }
+    };
+}
+pub(crate) use say;
+
+/// What a run produced, for `--json` reports.
+#[derive(Default, Debug, Clone, serde::Serialize)]
+pub struct Report {
+    pub files: Vec<String>,
+    pub warnings: Vec<String>,
+    pub saved: Vec<String>,
+}
+
+pub static REPORT: Mutex<Option<Report>> = Mutex::new(None);
+
+pub fn report_reset() {
+    *REPORT.lock().unwrap() = Some(Report::default());
+}
+
+pub fn report_take() -> Report {
+    REPORT.lock().unwrap().take().unwrap_or_default()
+}
+
+/// Path as text with the platform's separators (no mixed / and \).
+pub fn norm(p: &Path) -> String {
+    p.components().collect::<PathBuf>().display().to_string()
+}
+
+fn report(f: impl FnOnce(&mut Report)) {
+    if let Some(r) = REPORT.lock().unwrap().as_mut() {
+        f(r);
+    }
+}
+
+pub fn set_output(mode: u8) {
+    OUTPUT.store(mode, Ordering::Relaxed);
+}
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +83,8 @@ pub struct Session {
     pub evaluator: crate::export::UvEvaluator,
     /// Script variables naming nodes (`node <var> <type>`).
     pub vars: std::collections::HashMap<String, crate::graph::NodeId>,
+    /// `${name}` substitutions (`--set name=value`); the environment is the fallback.
+    pub defines: std::collections::HashMap<String, String>,
 }
 
 impl Session {
@@ -45,6 +98,7 @@ impl Session {
             stencil_overlay: crate::stencil::StencilOverlay::new(&gpu),
             evaluator: crate::export::UvEvaluator::new(&gpu),
             vars: Default::default(),
+            defines: Default::default(),
             gpu,
             project: None,
             viewport: None,
@@ -65,16 +119,49 @@ impl Session {
     }
 
     pub fn run_file(&mut self, path: &Path) -> Result<()> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let text = if path == Path::new("-") {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+            t
+        } else {
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
+        };
+        self.run_text(&text, &path.display().to_string())
+    }
+
+    /// Runs script text; `origin` names it in error messages.
+    pub fn run_text(&mut self, text: &str, origin: &str) -> Result<()> {
         for (n, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            println!("> {line}");
-            self.run(line).with_context(|| format!("{}:{}: {line}", path.display(), n + 1))?;
+            let line = self.substitute(line).with_context(|| format!("{origin}:{}", n + 1))?;
+            say!("> {line}");
+            self.run(&line).with_context(|| format!("{origin}:{}: {line}", n + 1))?;
         }
         Ok(())
+    }
+
+    /// Replaces `${name}` with a variable from `--set`, then the environment.
+    fn substitute(&self, line: &str) -> Result<String> {
+        let mut out = String::new();
+        let mut rest = line;
+        while let Some(start) = rest.find("${") {
+            out.push_str(&rest[..start]);
+            let end = rest[start..].find('}').with_context(|| format!("unterminated ${{ in: {line}"))? + start;
+            let name = &rest[start + 2..end];
+            let value = self
+                .defines
+                .get(name)
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+                .with_context(|| format!("variable ${{{name}}} is not set (use --set {name}=...)"))?;
+            out.push_str(&value);
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+        Ok(out)
     }
 
     pub fn run(&mut self, line: &str) -> Result<()> {
@@ -89,12 +176,12 @@ impl Session {
                 let settings = ImportSettings { tile_resolution: res, ..Default::default() };
                 let mesh = mesh::import(&path, &settings)?;
                 for d in &mesh.diagnostics {
-                    println!("  [{:?}] {}: {}", d.severity, d.code, d.message);
+                    say!("  [{:?}] {}: {}", d.severity, d.code, d.message);
                 }
                 if mesh.has_errors() {
                     bail!("import aborted");
                 }
-                println!("  tiles {:?}, materials {:?}", mesh.tiles, mesh.materials);
+                say!("  tiles {:?}, materials {:?}", mesh.tiles, mesh.materials);
                 self.camera = Camera::default();
                 self.camera.frame(mesh.center(), mesh.radius());
                 let p = Project::new(&gpu, mesh, settings);
@@ -104,16 +191,25 @@ impl Session {
                 self.project = Some(p);
             }
             "bake" => {
+                let p = self.project()?;
                 let maps: Vec<MeshMap> = if rest.is_empty() || rest[0] == "all" {
                     vec![MeshMap::AmbientOcclusion, MeshMap::Curvature, MeshMap::Thickness, MeshMap::Id]
+                } else if rest[0] == "outdated" {
+                    MeshMap::ALL
+                        .into_iter()
+                        .filter(|m| p.maps.status(*m) == crate::meshmaps::MapStatus::OutOfDate)
+                        .collect()
                 } else {
                     rest.iter().map(|m| parse_map(m)).collect::<Result<_>>()?
                 };
-                let p = self.project()?;
+                if maps.is_empty() {
+                    say!("  nothing to bake");
+                    return Ok(());
+                }
                 let t = std::time::Instant::now();
                 p.start_bake(&gpu, &maps);
                 p.finish_background_work(&gpu);
-                println!("  baked in {:.2}s", t.elapsed().as_secs_f32());
+                say!("  baked in {:.2}s", t.elapsed().as_secs_f32());
             }
             "add-fill" | "add-paint" => {
                 let p = self.project()?;
@@ -207,11 +303,11 @@ impl Session {
             }
             "undo" => {
                 let p = self.project()?;
-                println!("  undid {:?}", p.undo(&gpu));
+                say!("  undid {:?}", p.undo(&gpu));
             }
             "redo" => {
                 let p = self.project()?;
-                println!("  redid {:?}", p.redo(&gpu));
+                say!("  redid {:?}", p.redo(&gpu));
             }
             "layers" => {
                 let p = self.project()?;
@@ -417,12 +513,17 @@ impl Session {
                 let t = std::time::Instant::now();
                 let report = crate::export::export(&gpu, p, &mut self.evaluator, &s)?;
                 for w in &report.warnings {
-                    println!("  warning: {w}");
+                    say!("  warning: {w}");
                 }
                 for f in &report.files {
-                    println!("  {}", f.file_name().unwrap_or_default().to_string_lossy());
+                    say!("  {}", f.file_name().unwrap_or_default().to_string_lossy());
                 }
-                println!("  exported {} files in {:.2}s", report.files.len(), t.elapsed().as_secs_f32());
+                let (files, warnings) = (report.files.clone(), report.warnings.clone());
+                self::report(|r| {
+                    r.files.extend(files.iter().map(|f| norm(f)));
+                    r.warnings.extend(warnings);
+                });
+                say!("  exported {} files in {:.2}s", report.files.len(), t.elapsed().as_secs_f32());
             }
             "expect-files" => {
                 // expect-files <dir> <name>... : exactly these files exist in dir
@@ -437,12 +538,42 @@ impl Session {
                 anyhow::ensure!(found == want, "expected files {want:?}, found {found:?}");
             }
             "save" => {
-                let dir = crate::projectfile::with_extension(self.path(rest.first().context("save <dir.painter>")?));
+                // save [dir.painter]: without a path, saves where the project was opened or saved.
+                let dir = match rest.first() {
+                    Some(d) => crate::projectfile::with_extension(self.path(d)),
+                    None => self
+                        .project
+                        .as_ref()
+                        .and_then(|p| p.path.clone())
+                        .context("the project has never been saved; use save <dir.painter>")?,
+                };
                 let vs = crate::projectfile::ViewportState { camera: Some(self.camera), ..Default::default() };
                 let p = self.project.as_mut().context("no project")?;
                 let t = std::time::Instant::now();
                 let pages = crate::projectfile::save(&gpu, p, &dir, &vs, None)?;
-                println!("  saved {} ({pages} paint pages written) in {:.2}s", dir.display(), t.elapsed().as_secs_f32());
+                say!("  saved {} ({pages} paint pages written) in {:.2}s", dir.display(), t.elapsed().as_secs_f32());
+                report(|r| r.saved.push(norm(&dir)));
+            }
+            "reimport" => {
+                let path = self.path(rest.first().context("reimport <mesh>")?);
+                let p = self.project.as_mut().context("no project")?;
+                p.reimport(&gpu, &path)?;
+                for d in &p.mesh.diagnostics {
+                    say!("  [{:?}] {}: {}", d.severity, d.code, d.message);
+                    if d.severity >= crate::mesh::Severity::Warning {
+                        let msg = format!("{}: {}", d.code, d.message);
+                        report(|r| r.warnings.push(msg));
+                    }
+                }
+                say!("  tiles {:?}, {} triangles", p.mesh.tiles, p.mesh.triangle_count());
+                let mut vp = Viewport::new(&gpu, &p.scene.layout);
+                vp.set_mesh(&gpu, &p.gpu_mesh);
+                self.viewport = Some(vp);
+                self.paint = PaintEngine::new(&gpu);
+            }
+            "info" => {
+                let p = self.project()?;
+                say!("{}", serde_json::to_string_pretty(&project_info(p))?);
             }
             "open" => {
                 let dir = self.path(rest.first().context("open <dir.painter>")?);
@@ -455,7 +586,7 @@ impl Session {
                 vp.set_mesh(&gpu, &loaded.project.gpu_mesh);
                 self.viewport = Some(vp);
                 self.project = Some(loaded.project);
-                println!("  opened {} in {:.2}s", dir.display(), t.elapsed().as_secs_f32());
+                say!("  opened {} in {:.2}s", dir.display(), t.elapsed().as_secs_f32());
             }
             "ungroup" => {
                 let p = self.project.as_mut().context("no project")?;
@@ -535,7 +666,7 @@ impl Session {
                     bail!("cache error: {e}");
                 }
                 for e in p.caches.entries.values() {
-                    println!("  cache n{} {:?} computed={} {:.1} ms", e.node, e.cache, e.signature.is_some(), e.cost_ms);
+                    say!("  cache n{} {:?} computed={} {:.1} ms", e.node, e.cache, e.signature.is_some(), e.cost_ms);
                 }
             }
             "save-smart" => {
@@ -546,7 +677,7 @@ impl Session {
                     p.edit(&gpu, "rename", |g| ops::slot_mut(g, l).unwrap().name = name);
                 }
                 let path = crate::smartmat::save(&gpu, p, l, None)?;
-                println!("  saved {}", path.display());
+                say!("  saved {}", path.display());
             }
             "add-smart" => {
                 let name = rest.first().context("add-smart <name or path>")?;
@@ -573,7 +704,7 @@ impl Session {
                 anyhow::ensure!(a.dimensions() == b.dimensions(), "images differ in size");
                 let max = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
                 anyhow::ensure!(max <= tol, "images differ by up to {max} (tolerance {tol})");
-                println!("  same (max difference {max})");
+                say!("  same (max difference {max})");
             }
             "expect-different" => {
                 // expect-different <a.png> <b.png> [min channel difference, default 20]
@@ -582,7 +713,7 @@ impl Session {
                 let min: u8 = rest.get(2).map(|t| t.parse()).transpose()?.unwrap_or(20);
                 let max = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
                 anyhow::ensure!(max >= min, "images are too similar (max difference {max}, expected at least {min})");
-                println!("  different (max difference {max})");
+                say!("  different (max difference {max})");
             }
             "bake-buffer" => {
                 let p = self.project.as_mut().context("no project")?;
@@ -614,7 +745,8 @@ impl Session {
             "render" => {
                 let out = self.path(rest.first().context("render <out.png>")?);
                 self.render(&out)?;
-                println!("  wrote {}", out.display());
+                say!("  wrote {}", out.display());
+                report(|r| r.files.push(norm(&out)));
             }
             _ => bail!("unknown command {cmd}"),
         }
@@ -659,10 +791,10 @@ pub fn print_layers(p: &Project) {
     fn walk(p: &Project, stack: crate::graph::NodeId, depth: usize) {
         for s in p.graph.node(stack).slots.iter().rev() {
             let kind = ops::layer_kind(&p.graph, s);
-            println!("  {}{:?} {:?}{}", "  ".repeat(depth), kind, s.name, if s.mask.is_some() { " [mask]" } else { "" });
+            say!("  {}{:?} {:?}{}", "  ".repeat(depth), kind, s.name, if s.mask.is_some() { " [mask]" } else { "" });
             if let Some(m) = s.mask {
                 for ms in p.graph.node(m).mask_slots.iter().rev() {
-                    println!("  {}    mask: {:?}", "  ".repeat(depth), ms.name);
+                    say!("  {}    mask: {:?}", "  ".repeat(depth), ms.name);
                 }
             }
             if kind == ops::LayerKind::Group {
@@ -822,4 +954,47 @@ fn set_value(p: &mut Project, gpu: &Gpu, key: &str, v: &str) -> Result<()> {
     let name = def.name;
     p.edit(gpu, "set", |g| g.set(node, name, value));
     Ok(())
+}
+
+/// Summary of a project for `painter info` and the `info` command.
+pub fn project_info(p: &Project) -> serde_json::Value {
+    fn layers(p: &Project, stack: crate::graph::NodeId) -> Vec<serde_json::Value> {
+        p.graph
+            .get(stack)
+            .map(|n| n.slots.iter().rev())
+            .into_iter()
+            .flatten()
+            .map(|s| {
+                let kind = ops::layer_kind(&p.graph, s);
+                let mut v = serde_json::json!({
+                    "name": s.name,
+                    "kind": kind.name(),
+                    "visible": s.visible,
+                    "opacity": s.opacity,
+                    "mask": s.mask.and_then(|m| p.graph.get(m)).map(|m| m.mask_slots.iter().rev().map(|ms| ms.name.clone()).collect::<Vec<_>>()),
+                });
+                if kind == ops::LayerKind::Group {
+                    v["layers"] = serde_json::Value::from(layers(p, s.content.unwrap_or(0)));
+                }
+                v
+            })
+            .collect()
+    }
+    let maps: serde_json::Map<String, serde_json::Value> = MeshMap::ALL
+        .iter()
+        .map(|m| (m.name().to_string(), serde_json::Value::from(p.maps.status(*m).label())))
+        .collect();
+    serde_json::json!({
+        "name": p.name,
+        "path": p.path.as_ref().map(|x| norm(x)),
+        "mesh": norm(&p.original_mesh),
+        "triangles": p.mesh.triangle_count(),
+        "materials": p.mesh.materials,
+        "tiles": p.mesh.tiles,
+        "tile_resolution": p.tile_resolution(),
+        "channels": Channel::ALL.iter().filter(|c| p.channels.is_enabled(**c)).map(|c| c.name()).collect::<Vec<_>>(),
+        "layers": layers(p, p.graph.root),
+        "mesh_maps": maps,
+        "unsaved_changes": p.has_unsaved_changes(),
+    })
 }
