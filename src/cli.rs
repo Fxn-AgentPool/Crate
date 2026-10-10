@@ -1,7 +1,7 @@
 //! Command-line interface for pipelines. See docs/reference/command-line.md.
 //!
 //! `crate` with no subcommand opens the application. Subcommands run headless:
-//! new, reimport, export, run, batch, watch and info.
+//! new, reimport, export, run, batch, watch, info and update.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -20,7 +20,7 @@ pub const EXIT_GPU: u8 = 3;
 #[derive(Parser)]
 #[command(
     name = "crate",
-    version,
+    version = crate::update::version_str(),
     about = "Realtime UDIM texture painting. Without a subcommand, opens the application.",
     args_conflicts_with_subcommands = true
 )]
@@ -203,6 +203,12 @@ pub enum Command {
         /// The .crate project.
         project: PathBuf,
     },
+    /// Check GitHub for a newer release and install it (no GPU needed).
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn parse_vars(v: &Vars) -> Result<Vec<(String, String)>> {
@@ -330,6 +336,7 @@ pub fn run(cli: &Cli, cmd: &Command) -> Result<serde_json::Value> {
         Command::Watch { project, mesh, export, export_opts, interval, count } => {
             watch(cli, project, mesh, export.as_deref(), export_opts, *interval, *count)
         }
+        Command::Update { check } => update(*check),
         Command::Info { project } => {
             let mut s = session(Vec::new())?;
             s.run(&format!("open {}", q(project)))?;
@@ -503,6 +510,7 @@ pub fn main(cli: Cli) -> u8 {
         Command::Batch { .. } => "batch",
         Command::Watch { .. } => "watch",
         Command::Info { .. } => "info",
+        Command::Update { .. } => "update",
     };
     let t = Instant::now();
     let result = run(&cli, cmd);
@@ -541,6 +549,42 @@ pub fn main(cli: Cli) -> u8 {
         println!("{out}");
     }
     code
+}
+
+/// `crate update [--check]`. See docs/reference/command-line.md#update.
+fn update(check: bool) -> Result<serde_json::Value> {
+    use crate::update as up;
+    let release = up::latest()?;
+    let newer = release.is_newer();
+    let mut out = serde_json::json!({
+        "installed": up::version_str(),
+        "latest": release.display(),
+        "available": newer == Some(true),
+        "updated": false,
+    });
+    match newer {
+        None if check => say!("  Crate {} is a development build; the latest release is {}", up::version_str(), release.display()),
+        None => bail!("Crate {} doesn't update itself (built from source); the latest release is {}", up::version_str(), release.display()),
+        Some(false) => say!("  Crate {} is up to date", up::version_str()),
+        Some(true) if check => say!("  Crate {} is available (installed: {})", release.display(), up::version_str()),
+        Some(true) => {
+            let last = std::cell::Cell::new(-1i64);
+            up::install(&release, &|p| match p {
+                up::Progress::Downloading { done, total } if total > 0 => {
+                    let pct = (done * 100 / total) as i64 / 10 * 10;
+                    if pct != last.get() {
+                        last.set(pct);
+                        say!("  downloading {}: {pct}%", release.asset.as_ref().map(|a| a.name.as_str()).unwrap_or(""));
+                    }
+                }
+                up::Progress::Installing => say!("  installing"),
+                _ => {}
+            })?;
+            say!("  installed Crate {}; it runs the next time Crate starts", release.display());
+            out["updated"] = serde_json::json!(true);
+        }
+    }
+    Ok(out)
 }
 
 fn merge(into: &mut serde_json::Value, from: serde_json::Value) {

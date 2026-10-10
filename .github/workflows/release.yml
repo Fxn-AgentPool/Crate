@@ -17,6 +17,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Compiled into the program (src/update.rs): it identifies the release for updates.
+  CRATE_BUILD: ${{ github.run_number }}
+  CRATE_COMMIT: ${{ github.sha }}
 
 jobs:
   build:
@@ -60,6 +63,7 @@ jobs:
           mkdir "$dir"
           cp "target/release/${{ matrix.exe }}" README.md "$dir/"
           cp -r docs "$dir/docs"
+          cp -r assets "$dir/assets"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$dir.zip" "$dir" > /dev/null
             echo "ARCHIVE=$dir.zip" >> "$GITHUB_ENV"

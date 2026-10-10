@@ -28,7 +28,9 @@ mod ui_graph;
 mod ui_layer_list;
 mod ui_layers;
 mod ui_paint;
+mod ui_update;
 mod ui_windows;
+mod update;
 mod viewport;
 
 use std::process::ExitCode;
@@ -41,6 +43,8 @@ fn init_logging(default: &str) {
 }
 
 fn main() -> ExitCode {
+    // Removes the program the last update replaced (docs/reference/updates.md).
+    update::cleanup_previous();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Older form used by the test scripts: crate --headless run|render ...
     if args.first().map(String::as_str) == Some("--headless") {

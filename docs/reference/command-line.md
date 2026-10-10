@@ -144,12 +144,29 @@ there are unsaved changes.
 crate info <PROJECT>
 ```
 
+### `update`
+
+Checks GitHub for a newer release of Crate and installs it. Doesn't need a GPU. See
+[Updates](updates.md) for what is downloaded, verified and replaced.
+
+```
+crate update [--check]
+```
+
+| Option | Description |
+|---|---|
+| `--check` | Only report whether a newer release exists. Nothing is downloaded. |
+
+Without `--check`, a newer release is downloaded and installed; the new version is used the next
+time Crate starts. Close running Crate windows first. An installed build that is already the
+latest succeeds without changes. Development builds fail unless `--check` is given.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | `0` | Success. |
-| `1` | The command failed: a missing or invalid file, a failing script line, or at least one failed project in `batch`. |
+| `1` | The command failed: a missing or invalid file, a failing script line, at least one failed project in `batch`, or an update that couldn't be checked or installed. |
 | `2` | Invalid command-line usage. |
 | `3` | The GPU does not support Crate. |
 
@@ -160,7 +177,7 @@ With `--json`, every command except `watch` prints one JSON object on stdout:
 | Field | Type | Description |
 |---|---|---|
 | `ok` | boolean | Whether the command succeeded. |
-| `command` | string | `new`, `reimport`, `export`, `run`, `batch` or `info`. |
+| `command` | string | `new`, `reimport`, `export`, `run`, `batch`, `info` or `update`. |
 | `error` | string | Present when `ok` is false. |
 | `files` | array of string | Files written: exported textures and renders. |
 | `saved` | array of string | Projects saved. |
@@ -169,6 +186,10 @@ With `--json`, every command except `watch` prints one JSON object on stdout:
 | `project` | object | `new`, `reimport`, `run`, `info`: the project summary (as `info` prints it). |
 | `projects` | array of object | `batch`: per project, `project` (path), `ok`, `error`, `seconds`. |
 | `failed` | number | `batch`: number of failed projects. |
+| `installed` | string | `update`: the running version, e.g. `0.1.0 (build 5)`. |
+| `latest` | string | `update`: the latest release, e.g. `0.1.0 (build 7)`. |
+| `available` | boolean | `update`: whether the latest release is newer than the running version. |
+| `updated` | boolean | `update`: whether it was installed. |
 
 Example:
 

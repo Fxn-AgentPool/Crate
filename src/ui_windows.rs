@@ -42,8 +42,11 @@ impl Windows {
         if self.preferences {
             let mut open = true;
             egui::Window::new("Preferences").open(&mut open).show(ctx, |ui| {
-                ui.heading("Performance");
                 let before = prefs.clone();
+                ui.heading("General");
+                ui.checkbox(&mut prefs.check_updates_at_startup, "Check for updates at startup");
+                ui.separator();
+                ui.heading("Performance");
                 egui::Grid::new("prefs").num_columns(2).show(ui, |ui| {
                     ui.label("GPU cache budget");
                     ui.add(egui::DragValue::new(&mut prefs.gpu_cache_budget_gb).range(0.5..=128.0).speed(0.1).suffix(" GB"));
