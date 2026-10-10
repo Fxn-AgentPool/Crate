@@ -50,8 +50,8 @@ painting projects onto. **Normal** and **Height** need a high-poly mesh; without
 | Match by name | on | Restricts each low-poly part to the high-poly part with the same name (see below). |
 | Apply Normal map | on | Combines the baked Normal map with the material's normal (see below). |
 
-The project stores the high-poly file's path, not the file. It's read only while baking; the
-baked maps are saved in the project.
+The project stores the high-poly file's path, not the file. It's read while baking and while
+the [bake preview](#bake-preview) shows it; the baked maps are saved in the project.
 
 ### How texels are baked
 
@@ -126,6 +126,32 @@ With **Apply Normal map** on, the viewport and exports use the baked Normal map 
 the material's Normal channel: the channel's value is applied on top of it as detail, with
 reoriented normal mapping (RNM), so layers that paint or fill normals add their detail to the
 baked surface. A Missing Normal map is flat and changes nothing.
+
+### Bake preview
+
+**Mesh Maps → High poly → Preview** shows the meshes a high-poly bake uses in the viewport, so
+you can check the cage before baking:
+
+| Toggle | Default | Shows |
+|---|---|---|
+| Low poly | on | The low-poly mesh, as the viewport shows it otherwise (material, channel or mesh map). |
+| High poly | off | The high-poly mesh in light gray, lit from the camera. |
+| Cage | off | The outer cage: every low-poly vertex moved outward along its normal by **Frontal distance**, or with **Auto cage** on, by the auto cage's frontal distance. Drawn as a translucent blue surface with its edges. |
+
+- **High poly** and **Cage** need a high-poly mesh and are disabled without one.
+- Turning on **High poly** or **Cage** reads the high-poly file in the background; meanwhile the
+  window shows **Loading preview…**. With **Auto cage** on, the cage is measured as for a bake.
+  The file is read again when it changes, or when **Auto cage** or (with Auto cage on) **Match
+  by name** changes. Changes to **Frontal distance** show immediately.
+- High-poly detail that shows through the cage lies outside it. The rays start on the cage, so
+  they miss that detail (see [Misses](#misses)).
+- At hard edges, where a low-poly vertex has several normals, the cage has gaps, just as the
+  rays do.
+- The rear side (**Rear distance**) is not shown.
+- Painting still paints the low poly, even while it's hidden.
+- If the high poly can't be read, or needs larger GPU buffers than the GPU allows, the window
+  shows the error, and **High poly** and **Cage** show nothing.
+- The toggles are not saved. Opening a project or reimporting its mesh resets them.
 
 ## Bake status
 

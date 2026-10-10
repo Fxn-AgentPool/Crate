@@ -15,7 +15,7 @@ the viewport.
 | Paint Buffer | left | Bake mode, buffer and projection settings. See [Paint buffer](paint-buffer.md). |
 | Stencils | left | Loaded stencils, the active stencil and its properties. |
 | Library | left, bottom | Project resources and the user library, by category. See [Library](#library). |
-| Mesh Maps | Window menu | Mesh map status and bake settings. See [Mesh maps](mesh-maps.md). |
+| Mesh Maps | Window menu | Mesh map status, bake settings and the [bake preview](mesh-maps.md#bake-preview). See [Mesh maps](mesh-maps.md). |
 | Import Log | Window menu | Diagnostics from the last mesh import. |
 | Performance | Window menu | Frame time, shader length, GPU memory use and per-node cache cost. |
 | Channels | Project menu | Enabled channels, default values and height scale. See [Channels](channels.md). |

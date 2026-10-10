@@ -31,6 +31,16 @@ crate new lowpoly.glb -o Asset.crate --high-poly highpoly.glb --bake all
 
 Add `--auto-cage` to bake with [Auto cage](../reference/mesh-maps.md#auto-cage).
 
+## Check the cage
+
+1. Under **High poly → Preview**, turn on **High poly** and **Cage**.
+2. Orbit around the asset. Where high-poly detail shows through the blue cage, raise **Frontal
+   distance** or turn on **Auto cage** until the cage covers it.
+3. Turn off **Low poly** to see the parts of the high poly that lie inside the low poly.
+4. Turn off **High poly** and **Cage** to go back to the normal view.
+
+See [Bake preview](../reference/mesh-maps.md#bake-preview).
+
 ## Fix missed texels
 
 Press `Shift+C` until the viewport shows **Normal**. Red areas missed the high poly.

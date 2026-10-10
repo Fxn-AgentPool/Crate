@@ -138,6 +138,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `view-transform <name>` | `standard`, `agx`, `aces-1.3`, `aces-2.0`, `pbr-neutral` or `reinhard`. See [Color management](color-management.md). Default `agx`. |
 | `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
 | `preview off` | Render the material again. |
+| `bake-preview <parts>` | Show the [bake preview](mesh-maps.md#bake-preview) in renders: a comma-separated list of `low`, `high` and `cage`, e.g. `bake-preview high,cage`. `bake-preview off` shows the low poly only (the default). Waits until the high poly is loaded, and fails if it can't be. |
 | `render <file.png>` | Render the viewport to an image. |
 
 ## Checks

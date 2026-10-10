@@ -22,6 +22,13 @@ Too small a cage misses parts of the high poly that stick out further; too large
 neighboring geometry and picks up the wrong surface. That trade-off is why misses are shown in
 red and why the distances are settings rather than fixed values.
 
+Red texels show a problem only after a bake. The [bake preview](../reference/mesh-maps.md#bake-preview)
+shows its cause beforehand: the cage itself, drawn around the high poly. It draws only the outer
+side, because that's where the rays start and where most problems show: detail poking through.
+The rear side lies inside the low poly, where it would be hidden anyway. The cage is translucent
+so the high poly stays visible through it, and the preview reads the high poly in the background,
+because a sculpt of millions of triangles takes seconds to load.
+
 ## Auto cage
 
 A single pair of distances is a compromise for the whole asset: a deep groove in one place and a
