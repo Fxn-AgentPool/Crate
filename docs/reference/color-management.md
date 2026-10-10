@@ -13,7 +13,9 @@ baked maps are not affected.
 
 ## View transform
 
-**Viewport → View transform**, a dropdown. Saved with the project. New projects, and projects
+**Viewport → View transform**, a submenu with one item per transform; the current one is
+marked. The Viewport menu stays open while you change its settings, so transforms can be compared
+directly; click outside it to close it. Saved with the project. New projects, and projects
 saved before view transforms existed, use **AgX**.
 
 | View transform | Script name | Description |
