@@ -39,9 +39,6 @@ pub struct CrateApp {
     show_import_log: bool,
     show_mesh_maps: bool,
     bake_pane: crate::ui_bake_preview::BakePane,
-    /// Where the Mesh Maps window was last shown, and whether with the preview pane: it keeps
-    /// its place when the pane opens or closes.
-    mesh_maps_rect: Option<(egui::Rect, bool)>,
     /// Diagnostics of an import that failed, shown in the Import Log.
     failed_import_log: Option<Vec<Diagnostic>>,
     /// Maps checked in the Mesh Maps window.
@@ -103,7 +100,6 @@ impl CrateApp {
             doc: None,
             camera: Camera::default(),
             bake_pane: crate::ui_bake_preview::BakePane::new(),
-            mesh_maps_rect: None,
             view: ViewSettings::default(),
             new_project: None,
             show_import_log: false,
@@ -251,10 +247,12 @@ impl eframe::App for CrateApp {
             if doc.tick(&self.gpu, std::time::Duration::from_millis(12)) {
                 ui.ctx().request_repaint();
             }
-            // The preview pane is part of the Mesh Maps window.
-            if !self.show_mesh_maps {
-                doc.maps.preview.open = false;
+            // The bake preview is part of the Mesh Maps window; its camera starts at the
+            // viewport's view whenever the window opens.
+            if self.show_mesh_maps && !doc.maps.preview.open {
+                self.bake_pane.camera = self.camera;
             }
+            doc.maps.preview.open = self.show_mesh_maps;
             doc.update_preview(&self.gpu);
             match doc.maps.report.take() {
                 Some(Ok(msg)) => self.message = Some((msg, ui.input(|i| i.time))),
@@ -1199,48 +1197,33 @@ impl CrateApp {
 
         if self.show_mesh_maps {
             let mut open = true;
-            // With the preview pane, the window is a separate, resizable one: settings in a
-            // scrolling column on the left, the view filling the rest. Without, it fits the
-            // settings.
-            let wide = self.doc.as_ref().is_some_and(|d| d.maps.preview.open);
-            let mut window = egui::Window::new("Mesh Maps").open(&mut open);
-            if wide {
-                window = window
-                    .id(egui::Id::new("mesh maps with preview"))
-                    .resizable(true)
-                    .default_size([980.0, 620.0])
-                    .min_size([640.0, 380.0]);
-            }
-            if let Some((rect, was_wide)) = self.mesh_maps_rect {
-                if was_wide != wide {
-                    window = window.current_pos(rect.min);
-                }
-            }
-            let shown = window.show(ctx, |ui| {
-                if !wide {
-                    self.mesh_maps_ui(ui);
-                    return;
-                }
-                const SETTINGS_WIDTH: f32 = 340.0;
-                let height = ui.available_height();
-                ui.horizontal_top(|ui| {
-                    ui.allocate_ui(egui::vec2(SETTINGS_WIDTH, height), |ui| {
-                        egui::ScrollArea::vertical().id_salt("mesh maps settings").max_height(height).show(ui, |ui| {
-                            ui.set_width(SETTINGS_WIDTH - 16.0);
-                            self.mesh_maps_ui(ui);
+            // Settings in a scrolling column on the left, the bake preview filling the rest.
+            egui::Window::new("Mesh Maps")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([980.0, 620.0])
+                .min_size([640.0, 380.0])
+                .show(ctx, |ui| {
+                    if self.doc.is_none() {
+                        ui.label("No project.");
+                        return;
+                    }
+                    let (width, height) = (ui.available_width() * 0.35, ui.available_height());
+                    ui.horizontal_top(|ui| {
+                        ui.allocate_ui(egui::vec2(width, height), |ui| {
+                            egui::ScrollArea::vertical().id_salt("mesh maps settings").max_height(height).show(ui, |ui| {
+                                ui.set_width(width - 16.0);
+                                self.mesh_maps_ui(ui);
+                            });
+                        });
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            if let Some(doc) = self.doc.as_mut() {
+                                self.bake_pane.ui(ui, &self.gpu, &self.renderer, doc);
+                            }
                         });
                     });
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        if let Some(doc) = self.doc.as_mut() {
-                            self.bake_pane.ui(ui, &self.gpu, &self.renderer, doc);
-                        }
-                    });
                 });
-            });
-            if let Some(r) = shown {
-                self.mesh_maps_rect = Some((r.response.rect, wide));
-            }
             self.show_mesh_maps = open;
         }
     }
@@ -1397,13 +1380,6 @@ impl CrateApp {
                 ui.checkbox(&mut s.apply_normal, "");
                 ui.end_row();
             });
-            let preview = &mut doc.maps.preview;
-            if ui.toggle_value(&mut preview.open, "Show preview").on_hover_text("Low poly, high poly and cage in their own view").changed()
-                && preview.open
-            {
-                // The pane starts at the viewport's view.
-                self.bake_pane.camera = self.camera;
-            }
             if (doc.maps.settings, doc.maps.high_poly.clone()) != before {
                 if doc.maps.high_poly != before.1 {
                     doc.maps.last_misses = None;
