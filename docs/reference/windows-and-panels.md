@@ -69,12 +69,31 @@ The Library is shown only while a project is open.
 
 | Menu | Items |
 |---|---|
-| File | New Project, Open Project, Save, Save As, Reimport Mesh, Export Textures |
+| File | New Project, Open Project, Open Recent, Save, Save As, Reimport Mesh, Export Textures |
 | Edit | Preferences, Undo, Redo |
 | Viewport | Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting |
 | Project | Channels |
 | Window | Performance, Node Editor, Mesh Maps, Import Log |
 | Help | Check for Updates… (**Update Available…** when a newer release exists) |
+
+### Open Recent
+
+**File → Open Recent** lists the projects most recently opened or saved in the application
+window, newest first.
+
+| Property | Value |
+|---|---|
+| Entries | Up to 10. Opening or saving a project moves it to the top; the oldest entry is dropped. |
+| Recorded by | **Open Project**, **Open Recent**, a project given on the command line (`crate [PATH]`), **Save** and **Save As**. Scripts, including `crate --script`, and headless commands (`crate run`, `crate batch`, `crate new`, …) don't record projects. |
+| Label | The project's folder name without `.crate`. When two entries have the same name, the name of the folder containing each is added in parentheses. Hover shows the full path. |
+| Missing projects | Shown greyed out, with **Not found** on hover, and can't be chosen. They stay in the list until they drop off the end or the list is cleared. |
+| Clear Recent | Last item. Empties the list. |
+| Empty list | The submenu shows **No recent projects**. |
+| Stored in | `recent.json` in the user directory (see [Limits and requirements](limits.md)). |
+
+Choosing an entry opens the project. If the open project has unsaved changes, Crate first asks
+whether to save them, as **Open Project** does. If the project can't be opened, the error is
+shown in the status bar and the entry stays in the list.
 
 ## Status bar
 
