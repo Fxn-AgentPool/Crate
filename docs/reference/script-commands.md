@@ -135,6 +135,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. `normal` and `height` are channels; the mesh maps are `normal-map` and `height-map`. |
 | `tiles on\|off` | Tint by UDIM tile. |
 | `environment <library item or file.hdr\|exr>`, `exposure <ev>` | Lighting. Library folder `environments`. |
+| `view-transform <name>` | `standard`, `agx`, `aces-1.3`, `aces-2.0`, `pbr-neutral` or `reinhard`. See [Color management](color-management.md). Default `agx`. |
 | `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
 | `preview off` | Render the material again. |
 | `render <file.png>` | Render the viewport to an image. |

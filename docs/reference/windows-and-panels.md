@@ -56,8 +56,9 @@ category folder are not scanned. A file that can't be read shows **unreadable** 
 thumbnail; using it reports the error in the status bar.
 
 Thumbnails and previews keep the image's aspect ratio: images fit a square tile, environments
-a tile twice as wide as it is high. HDR and EXR files are tone-mapped as the viewport shows a
-material (filmic, exposure 0); other images are shown as they are. Thumbnails of the project's
+a tile twice as wide as it is high. HDR and EXR files are tone-mapped with a fixed filmic curve
+(exposure 0), whatever the [view transform](color-management.md#view-transform); other images
+are shown as they are. Thumbnails of the project's
 images are made from their source files, in the background, when **Images** is first shown and
 when an image is added.
 
@@ -77,7 +78,7 @@ The Library is shown only while a project is open.
 |---|---|
 | File | New Project, Open Project, Open Recent, Save, Save As, Reimport Mesh, Export Textures |
 | Edit | Preferences, Undo, Redo |
-| Viewport | Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting |
+| Viewport | View transform, Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting. See [Color management](color-management.md). |
 | Project | Channels |
 | Window | Performance, Node Editor, Mesh Maps, Import Log |
 | Help | Check for Updates… (**Update Available…** when a newer release exists) |
