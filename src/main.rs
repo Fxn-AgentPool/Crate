@@ -18,6 +18,7 @@ mod paint;
 mod prefs;
 mod project;
 mod projectfile;
+mod recent;
 mod scene;
 mod shortcuts;
 mod smartmat;

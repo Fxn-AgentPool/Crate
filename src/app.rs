@@ -68,12 +68,15 @@ pub struct CrateApp {
     updater: crate::ui_update::Updater,
     /// Start the program again on exit (after an update).
     restart: bool,
+    /// File > Open Recent.
+    recent: crate::recent::Recent,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Pending {
     New,
     Open,
+    OpenRecent(PathBuf),
     Quit,
     /// Quit, then start the version an update installed.
     Restart,
@@ -121,6 +124,7 @@ impl CrateApp {
             thumbs: crate::thumbs::Thumbnails::new(&paint_gpu),
             updater: Default::default(),
             restart: false,
+            recent: crate::recent::Recent::load(),
         };
         if let Err(e) = crate::library::ensure_folders() {
             log::warn!("{e:#}");
@@ -418,6 +422,7 @@ impl CrateApp {
                     if ui.button("Open Project…\tCtrl+O").clicked() {
                         self.guarded(Pending::Open);
                     }
+                    ui.menu_button("Open Recent", |ui| self.recent_menu(ui));
                     if ui.add_enabled(self.doc.is_some(), egui::Button::new("Save\tCtrl+S")).clicked() {
                         self.save();
                     }
@@ -856,6 +861,7 @@ impl CrateApp {
         match crate::projectfile::save(&self.gpu, doc, &path, &vs, export.as_ref()) {
             Ok(_) => {
                 self.message = Some((format!("Saved {}", path.display()), 0.0));
+                self.recent = crate::recent::Recent::record(&path);
                 true
             }
             Err(e) => {
@@ -899,8 +905,38 @@ impl CrateApp {
                 self.library.project_changed();
                 self.viewport_material = u64::MAX;
                 self.error = None;
+                self.recent = crate::recent::Recent::record(dir);
             }
             Err(e) => self.error = Some(format!("Could not open {}: {e:#}", dir.display())),
+        }
+    }
+
+    fn recent_menu(&mut self, ui: &mut egui::Ui) {
+        if self.recent.projects.is_empty() {
+            ui.add_enabled(false, egui::Button::new("No recent projects"));
+        }
+        let mut chosen = None;
+        for (path, label) in self.recent.projects.iter().zip(self.recent.labels()) {
+            let found = path.is_dir();
+            let r = ui.add_enabled(found, egui::Button::new(label));
+            let r = if found {
+                r.on_hover_text(path.display().to_string())
+            } else {
+                r.on_disabled_hover_text(format!("Not found: {}", path.display()))
+            };
+            if r.clicked() {
+                chosen = Some(path.clone());
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.add_enabled(!self.recent.projects.is_empty(), egui::Button::new("Clear Recent")).clicked() {
+            self.recent.clear();
+            self.recent.save();
+            ui.close();
+        }
+        if let Some(path) = chosen {
+            self.guarded(Pending::OpenRecent(path));
         }
     }
 
@@ -917,6 +953,7 @@ impl CrateApp {
         match action {
             Pending::New => self.new_project = Some(NewProjectDialog::new()),
             Pending::Open => self.open_project_dialog(),
+            Pending::OpenRecent(path) => self.open_project(&path),
             Pending::Quit => self.allow_close = true,
             Pending::Restart => {
                 self.allow_close = true;
@@ -943,6 +980,7 @@ impl CrateApp {
                 }
             });
         });
+        let quitting = matches!(action, Pending::Quit | Pending::Restart);
         match choice {
             Some(0) => {
                 self.pending = None;
@@ -957,7 +995,7 @@ impl CrateApp {
             Some(_) => self.pending = None,
             None => {}
         }
-        if matches!(action, Pending::Quit | Pending::Restart) && self.allow_close {
+        if quitting && self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
