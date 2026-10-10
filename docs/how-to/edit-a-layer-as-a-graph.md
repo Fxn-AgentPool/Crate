@@ -15,8 +15,10 @@ To see the whole project graph instead, press `Ctrl+Space` with no layer selecte
 
 ## Add and connect nodes
 
-- To add a node, press `Tab` (or `Shift+A`, or right-click empty space) and type its name.
-  `Enter` adds the first match.
+- To add a node, press `Tab` (or right-click empty space) and type its name. `Enter` adds the
+  first match.
+- To change a node's settings, edit them on the node: drag a number sideways or click it to
+  type, pick colors and options from their fields.
 - To connect, drag from an output socket to an input socket, or onto a node to use its first
   fitting input. Sockets of incompatible types refuse the connection; while you drag, they are
   dimmed. See the conversion rules in [Nodes](../reference/nodes.md#socket-types).
@@ -34,6 +36,10 @@ To see the whole project graph instead, press `Ctrl+Space` with no layer selecte
 - Drag on empty space to box-select. `A` selects all, `Alt+A` none.
 - Drag a selected node to move the whole selection.
 - Pan with right-drag, `Alt` + left-drag or middle-drag; zoom with the wheel; `Home` frames all.
+- To line nodes up, select them and press `Shift+W`, `Shift+A`, `Shift+S` or `Shift+D` to align
+  their top, left, bottom or right edges.
+- To make room, collapse nodes you're not editing: click the arrow in a node's header, or select
+  several and press `H`. Their links stay connected.
 
 New nodes, including those added from the Layers panel, are placed next to the node that reads
 them.
@@ -48,12 +54,13 @@ The layer then appears as a **Graph layer** in the Layers panel.
 ## Expose parameters on the layer
 
 1. Select a node in the graph.
-2. In **Properties**, click the pin icon next to a parameter. It's marked **Exposed**.
+2. In the Node Editor's sidebar, click the pin next to a parameter. The pin turns yellow.
 3. Close the Node Editor. The exposed parameter appears on the layer in the Layers panel.
 
 ## Turn a generator into editable nodes
 
-Select a generator node and click **Ungroup** in Properties. Its internal nodes replace it.
+Select a generator node and click **Ungroup** in the Node Editor's sidebar. Its internal nodes
+replace it.
 
 ## Related
 

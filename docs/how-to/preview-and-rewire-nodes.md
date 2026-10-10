@@ -40,8 +40,12 @@ The result node is selected, ready to connect onward. See
 - **Swap**: select two nodes and press `Alt+S` to exchange everything they feed. With one node
   selected, `Alt+S` swaps its two inputs.
 - **Dissolve**: `Ctrl+X` deletes the selected nodes and reconnects what fed them to what they fed.
-- **Duplicate**: `Shift+D` copies the selection, keeping its input links.
-- **Align**: `Shift+=` lines up the selection in a row or column.
+- **Copy and paste**: `Ctrl+C` copies the selection, `Ctrl+V` pastes it at the pointer, also in
+  another layer, project or Crate window. Links between the copied nodes are kept.
+- **Duplicate**: right-click a node and choose **Duplicate** to copy the selection in place,
+  keeping its input links.
+- **Align**: `Shift+W`, `Shift+A`, `Shift+S` and `Shift+D` line up the top, left, bottom or right
+  edges of the selection; `Shift+=` lines it up in a row or column.
 - **Clean up**: `Alt+X` deletes every node that doesn't contribute to the material.
 
 ## Reuse settings

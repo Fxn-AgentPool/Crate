@@ -78,7 +78,7 @@ gestures and what each operation does, is in [Node Editor](node-editor.md).
 
 | Action | Input |
 |---|---|
-| Add node | `Tab`, `Shift+A`, or right-click empty space |
+| Add node | `Tab`, or right-click empty space |
 | Node menu | Right-click a node |
 | Box select / pan | Left-drag empty space / right-drag or `Alt` + left-drag |
 | Preview node output | `Ctrl+Shift` + click |
@@ -87,7 +87,10 @@ gestures and what each operation does, is in [Node Editor](node-editor.md).
 | Merge selected | `Ctrl+0` mix, `Ctrl++` add, `Ctrl+-` subtract, `Ctrl+8` multiply, `Ctrl+/` divide, `Ctrl+,` min, `Ctrl+.` max |
 | Swap | `Alt+S` |
 | Dissolve / delete / delete unused | `Ctrl+X` / `Delete` / `Alt+X` |
-| Duplicate / align | `Shift+D` / `Shift+=` |
+| Copy / paste nodes | `Ctrl+C` / `Ctrl+V` |
+| Align top / left / bottom / right edges | `Shift+W` / `Shift+A` / `Shift+S` / `Shift+D` |
+| Align in a row or column | `Shift+=` |
+| Collapse / expand selected | `H` |
 | Link active to selected | `K` |
 | Copy settings / reset | `Shift+C` / `Backspace` |
 | Select all / none | `A` / `Alt+A` |

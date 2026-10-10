@@ -49,7 +49,7 @@ UTF-8 JSON. Top-level keys:
 ```json
 {
   "nodes": [
-    { "id": "n7", "type": "noise", "params": { "scale": 4.0, "octaves": 5 }, "cached": false }
+    { "id": "n7", "type": "noise", "params": { "scale": 4.0, "octaves": 5 }, "cached": false, "collapsed": true }
   ],
   "connections": [
     { "from": "n7.out", "to": "n9.mask" }
@@ -57,7 +57,8 @@ UTF-8 JSON. Top-level keys:
 }
 ```
 
-Node ids are unique within the project and never reused. Stack nodes also carry their `slots`
+Node ids are unique within the project and never reused. `collapsed` is the node's state in the
+Node Editor; it's left out when `false`. Stack nodes also carry their `slots`
 (the layers: name, visibility, opacity, `content` and `mask` node ids, per-channel blend
 settings) and Mask Stack nodes their `mask_slots`.
 

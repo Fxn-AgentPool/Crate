@@ -24,6 +24,56 @@ with the socket they feed, below any node in the way.
 While the pointer is over the Node Editor, its keys take precedence over the application's
 shortcuts. `Ctrl+Space`, undo, redo, save, new, open and export still work.
 
+## Nodes
+
+From top to bottom, a node shows:
+
+| Part | Contents |
+|---|---|
+| Header | Collapse arrow (▾ expanded, ▸ collapsed), the node's title, and **cached** when the node is cached. |
+| Outputs | One row per output socket, on the right edge. |
+| Parameters | One row per parameter, edited in place (see below). |
+| Inputs | One row per input socket, on the left edge. |
+
+The **Layer** node has no parameters and can't be collapsed.
+
+### Parameters
+
+Every parameter takes one row:
+
+| Parameter kind | On the node |
+|---|---|
+| Number | A field showing the name and the value. Drag sideways to change it, or click to type a value. Values are clamped to the parameter's range. |
+| Color | The name and a swatch; click the swatch to pick a color. |
+| Vector | The name and three number fields. |
+| On/off | A checkbox with the name. |
+| Choice | A dropdown showing the current option. |
+| Image | A button with the image name, or **(none)**; click to choose a file. |
+| Ramp stops | A bar showing the gradient; click it to edit the stops (position, color, **×** to remove, **+ Stop** to add, up to 8). |
+| ID colors | A button showing how many IDs are selected; click it for the list of IDs, each with a checkbox. |
+
+Each change is one undo step; dragging a field is one step from press to release. Clicking a
+parameter selects its node and makes it the active node, but doesn't move the node or start a
+box selection.
+
+Parameters scale with the zoom. Below 50 % zoom they show their values only and can't be
+edited; zoom in to edit them.
+
+### Collapsing
+
+| Input | Result |
+|---|---|
+| Click the header arrow | Collapses or expands that node. |
+| `H` | Collapses the selected nodes, or expands them if all of them are collapsed. |
+
+A collapsed node shows only its header. Links to it attach to the middle of the header's left
+edge (inputs) and right edge (outputs); unconnected sockets aren't shown. To connect to a
+collapsed node, drop the link on it: it connects to its first fitting input. To drag a link out
+of a collapsed node, or pick one up from its input end, expand it first.
+
+Collapsing changes nothing but the node's size. It's saved with the project (see
+[Project format](project-format.md#graph)) and is one undo step.
+
 ## Mouse
 
 | Input | Result |
@@ -38,7 +88,7 @@ shortcuts. `Ctrl+Space`, undo, redo, save, new, open and export still work.
 | Right-drag, `Alt` + left-drag, middle-drag | Pan. |
 | Wheel | Zoom about the pointer. |
 | Right-click empty space | Add menu. |
-| Right-click node | Node menu: preview and every Node Wrangler operation below, with its shortcut. |
+| Right-click node | Node menu: preview, collapse or expand, and every operation below except paste, with its shortcut. |
 | `Ctrl+Shift` + left-click node | Preview (see below). On empty space: stop previewing. |
 | `Alt` + right-drag from node to node | Lazy connect: the best matching output and input. |
 | `Shift+Alt` + right-drag from node to node | Lazy connect with a menu of every compatible output → input pair. |
@@ -53,12 +103,18 @@ red when not.
 
 | Input | Operation |
 |---|---|
-| `Tab`, `Shift+A` | Add menu at the pointer. |
+| `Tab` | Add menu at the pointer. |
 | `Delete` | Delete the selected nodes. |
 | `Ctrl+X` | Dissolve the selected nodes. |
 | `Alt+X` | Delete unused nodes. |
-| `Shift+D` | Duplicate. |
-| `Shift+=` | Align. |
+| `Ctrl+C` | Copy the selected nodes. |
+| `Ctrl+V` | Paste nodes at the pointer. |
+| `Shift+W` | Align top edges. |
+| `Shift+A` | Align left edges. |
+| `Shift+S` | Align bottom edges. |
+| `Shift+D` | Align right edges. |
+| `Shift+=` | Align in a row or column. |
+| `H` | Collapse or expand the selected nodes. |
 | `Alt+S` | Swap. |
 | `K` | Link active to selected. |
 | `Shift+C` | Copy settings to selected. |
@@ -73,8 +129,9 @@ red when not.
 | `Ctrl+,` | Merge: Minimum. |
 | `Ctrl+.` | Merge: Maximum. |
 
-These keys are fixed. The Material Output and the root Stack can't be deleted, dissolved or
-duplicated. Every operation is one undo step.
+These keys are fixed. The Material Output and the root Stack can't be deleted, dissolved,
+duplicated or copied. Every operation is one undo step. **Duplicate** has no key; it's in the
+node menu.
 
 ## Add menu
 
@@ -131,11 +188,31 @@ the third, and so on. The new nodes are placed to the right of the selection.
 | Delete unused | Deletes every node that does not feed the Material Output. |
 | Duplicate | Copies the selected nodes with their parameters, label, cache setting and input links, offset down and right. Links between copied nodes point at the copies. |
 | Align | If the selection is wider than tall, lines it up in a row at its average height; otherwise in a column at its average position. Evenly spaced. |
+| Align top / left / bottom / right | Moves the selected nodes so their top, left, bottom or right edges line up with the outermost one: the highest top, leftmost left, lowest bottom or rightmost right edge. Only that coordinate changes. Uses each node's current height, collapsed or not. Needs two or more nodes; the Layer node isn't moved. |
 | Reset to defaults | Restores the parameters of the selected nodes. Links are kept. |
 | Copy settings to selected | Copies the active node's parameters to the other selected nodes of the same type. |
 | Link active to selected | Lazy-connects the active node (the last one clicked) into each other selected node. |
 
+### Copy and paste
+
+`Ctrl+C` copies the selected nodes to the system clipboard as text. `Ctrl+V` pastes them, so
+nodes can be copied between layers, projects and Crate windows. Pasted nodes:
+
+- keep their parameters, label, **Cached** setting and collapsed state;
+- keep the links between pasted nodes; links from nodes that weren't copied are dropped;
+- keep their Stack layers and Mask Stack effects, but a layer's content or mask, or an effect's
+  source, is kept only if that node was copied too;
+- are placed with the copied group's top-left corner at the pointer, selected, and stay visible
+  until connected.
+
+Paint and Paint Mask nodes are pasted without their paint. The Material Output, the root Stack
+and the Layer node aren't copied. Pasting is one undo step. If the clipboard doesn't hold
+copied nodes, `Ctrl+V` does nothing.
+
 ## Properties sidebar
 
-Shows the active node: label, **Cached**, **Ungroup** for generators, and its parameters. With
-several nodes selected, it shows the count and the active node.
+Shows the active node's settings: label, **Cached**, **Ungroup** for generators, and the list of
+its parameters with a pin each. Click a pin to expose the parameter on the layer (see
+[How to edit a layer as a node graph](../how-to/edit-a-layer-as-a-graph.md#expose-parameters-on-the-layer)).
+Parameter values are edited on the node. With several nodes selected, it shows the count and
+the active node.

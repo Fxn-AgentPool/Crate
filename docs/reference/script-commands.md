@@ -104,6 +104,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `link <var>.<output> <var>.<input>` | Connect two nodes. |
 | `node-set <var> key=value...` | Set node parameters. |
 | `cache <var> on\|off` | Turn caching on or off. |
+| `node-collapse <var> on\|off` | Collapse or expand the node in the Node Editor. |
 | `layer-content <var>` | Make a node the selected layer's content. |
 | `layer-mask <var>` | Use a Float node as the selected layer's mask. |
 | `ungroup` | Replace the selected generator with its component nodes. |
