@@ -6,9 +6,9 @@
 > docs were updated to match. When the software and these docs disagree, either the software
 > has a bug or the docs need a deliberate update — never silently both.
 >
-> Both tutorials are replayed automatically by the application repository's
-> `tests/scripts/tutorial1.txt` and `tutorial2.txt`; the sample files they use are in its
-> `assets/` folder.
+> Tutorials 1 and 2 are replayed automatically by the application repository's
+> `tests/scripts/tutorial1.txt` and `tutorial2.txt`, and the command line by its
+> `tests/cli.sh`; the sample files they use are in its `assets/` folder.
 >
 > "Painter" is a working title.
 
@@ -34,6 +34,7 @@ Lessons that take you through texturing an asset from start to finish. Start her
 
 1. [Texture your first asset](tutorials/01-texture-your-first-asset.md)
 2. [Project a decal with a stencil](tutorials/02-project-a-decal-with-a-stencil.md)
+3. [Automate Painter from the command line](tutorials/03-automate-with-the-command-line.md)
 
 ### How-to guides
 
@@ -48,6 +49,10 @@ Directions for specific tasks, assuming you already know your way around.
 - [How to create a smart material](how-to/create-a-smart-material.md)
 - [How to speed up a slow graph](how-to/speed-up-a-slow-graph.md)
 - [How to export textures for a game engine](how-to/export-textures.md)
+- [How to create projects from the command line](how-to/create-projects-from-the-command-line.md)
+- [How to reimport meshes from Blender](how-to/reimport-meshes-from-blender.md)
+- [How to edit many projects at once](how-to/edit-many-projects-at-once.md)
+- [How to call Painter from other tools](how-to/call-painter-from-other-tools.md)
 
 ### Reference
 
@@ -65,6 +70,8 @@ Technical descriptions of the machinery. Structured like the application.
 - [Export](reference/export.md)
 - [Windows and panels](reference/windows-and-panels.md)
 - [Keyboard shortcuts](reference/keyboard-shortcuts.md)
+- [Command line](reference/command-line.md)
+- [Script commands](reference/script-commands.md)
 - [Limits and requirements](reference/limits.md)
 
 ### Explanation
@@ -76,6 +83,7 @@ Background, design decisions and context. Read these away from the application.
 - [About realtime evaluation and caching](explanation/about-realtime-evaluation.md)
 - [About UDIM tiles and paint storage](explanation/about-tile-storage.md)
 - [About the MVP scope](explanation/about-mvp-scope.md)
+- [About automation](explanation/about-automation.md)
 
 ## Contributing to the docs
 

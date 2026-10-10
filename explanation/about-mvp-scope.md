@@ -24,7 +24,7 @@ design, is left out.
 | Per-tile resolution | Simplifies storage and export. Revisit with virtual texturing. |
 | Custom channels | The seven built-in channels cover standard PBR. |
 | USD and MaterialX | Valuable for pipelines, but glTF and OBJ are enough to test the workflow. |
-| Scripting API | The data model should stabilize before it's exposed. |
+| Scripting API (a programming interface) | The data model should stabilize before it's exposed. Painter does have a [command line](../reference/command-line.md) and [script commands](../reference/script-commands.md) that mirror user actions; see [About automation](about-automation.md). |
 | macOS | GPU backend and tablet input work needed. Not required to validate the design. |
 
 ## Choices made to keep the core extensible
