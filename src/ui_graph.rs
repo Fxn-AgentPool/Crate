@@ -570,7 +570,7 @@ impl NodeEditor {
         }
         let size = (hi - lo).max(Vec2::splat(1.0));
         self.zoom = ((rect.width() - 40.0) / size.x).min((rect.height() - 40.0) / size.y).clamp(0.3, 1.0);
-        let origin = rect.center() - Vec2::new(NODE_W, 60.0);
+        let origin = canvas_origin(rect);
         let center = (lo + hi) * 0.5;
         self.pan = (rect.center() - origin) / self.zoom - center;
     }
@@ -785,7 +785,7 @@ impl NodeEditor {
             self.frame_all(&p.graph, rect);
             self.frame_needed = false;
         }
-        let origin = rect.center() - Vec2::new(NODE_W, 60.0);
+        let origin = canvas_origin(rect);
         let layer = self.layer();
         let (secondary_pressed, secondary_down, ctrl) =
             ui.input(|i| (i.pointer.secondary_pressed(), i.pointer.secondary_down(), i.modifiers.command));
@@ -919,6 +919,8 @@ impl NodeEditor {
                         p.checkpoint("Disconnect");
                         disconnect(&mut p.graph, layer, &sock);
                         p.graph_changed(gpu);
+                        // Keep the source visible while it's unconnected.
+                        self.extra.insert(src);
                         let ty = p.graph.output_type(&graph::Link { node: src, output: out.clone() }).unwrap_or(SocketType::Float);
                         self.drag = Some(Drag::Link { from: SocketRef { node: src, name: out }, ty });
                     }
@@ -1282,6 +1284,8 @@ impl NodeEditor {
                 let hit = curve.windows(2).any(|c| stroke.windows(2).any(|s| segments_cross(c[0], c[1], s[0], s[1])));
                 if hit {
                     cut.push(SocketRef { node: n, name: input });
+                    // Keep the source visible while it's unconnected.
+                    self.extra.insert(src);
                 }
             }
         }
@@ -1547,7 +1551,7 @@ impl NodeEditor {
         for pd in &def.params {
             match pd.kind {
                 graph::ParamKind::Stops => self.stops_editor(ui, gpu, p, n),
-                graph::ParamKind::Colors => self.id_editor(ui, gpu, p, n),
+                graph::ParamKind::Colors => id_editor(ui, gpu, p, n),
                 _ => crate::ui_layers::param_widget(ui, gpu, p, n, pd, pd.name),
             }
         }
@@ -1581,28 +1585,42 @@ impl NodeEditor {
         }
     }
 
-    fn id_editor(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId) {
-        let Value::Colors(colors) = p.graph.node(n).param("colors") else { return };
-        ui.label("Selected IDs (mesh materials)");
-        let mut new = colors.clone();
-        for (i, name) in p.mesh.materials.clone().iter().enumerate() {
-            let c = id_color(i as u32);
-            let mut on = colors.iter().any(|x| (x[0] - c[0]).abs() + (x[1] - c[1]).abs() + (x[2] - c[2]).abs() < 1e-3);
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                ui.painter().rect_filled(r, 2.0, Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
-                if ui.checkbox(&mut on, name).changed() {
-                    new.retain(|x| (x[0] - c[0]).abs() + (x[1] - c[1]).abs() + (x[2] - c[2]).abs() >= 1e-3);
-                    if on {
-                        new.push(c);
-                    }
-                }
-            });
-        }
-        if new != colors {
-            p.edit(gpu, "Select IDs", |g| g.set(n, "colors", Value::Colors(new)));
-        }
+}
+
+/// ID Select's color list: a checkbox per ID in the ID map (the high poly's materials when
+/// the ID map was baked from it, otherwise the mesh's).
+pub fn id_editor(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId) {
+    let Value::Colors(colors) = p.graph.node(n).param("colors") else { return };
+    let names = if p.maps.id_names.is_empty() { p.mesh.materials.clone() } else { p.maps.id_names.clone() };
+    ui.label(if p.maps.id_names.is_empty() { "Selected IDs (mesh materials)" } else { "Selected IDs (high-poly materials)" });
+    if p.maps.status(crate::meshmaps::MeshMap::Id) == crate::meshmaps::MapStatus::Missing {
+        ui.label(egui::RichText::new("Bake the ID map (Window → Mesh Maps) for this to have an effect.").weak().small());
     }
+    let mut new = colors.clone();
+    let same = |x: &[f32; 3], c: &[f32; 3]| (x[0] - c[0]).abs() + (x[1] - c[1]).abs() + (x[2] - c[2]).abs() < 1e-3;
+    for (i, name) in names.iter().enumerate() {
+        let c = id_color(i as u32);
+        let mut on = colors.iter().any(|x| same(x, &c));
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            ui.painter().rect_filled(r, 2.0, Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
+            if ui.checkbox(&mut on, name).changed() {
+                new.retain(|x| !same(x, &c));
+                if on {
+                    new.push(c);
+                }
+            }
+        });
+    }
+    if new != colors {
+        p.edit(gpu, "Select IDs", |g| g.set(n, "colors", Value::Colors(new)));
+    }
+}
+
+/// Screen position of canvas (0, 0) before panning. Anchored at the top-left corner, so the
+/// canvas changing width (the properties sidebar resizing) doesn't move the nodes.
+fn canvas_origin(rect: Rect) -> Pos2 {
+    rect.left_top() + Vec2::new(NODE_W * 2.0, 160.0)
 }
 
 /// Points along a link's curve (the same curve `draw_link` draws).

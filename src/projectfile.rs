@@ -50,6 +50,9 @@ struct MeshMapsState {
     /// The high-poly mesh to bake from (absolute path; the file isn't copied).
     #[serde(rename = "highPoly", default, skip_serializing_if = "Option::is_none")]
     high_poly: Option<String>,
+    /// Names of the ID map's colors when it was baked from a high poly.
+    #[serde(rename = "idNames", default, skip_serializing_if = "Vec::is_empty")]
+    id_names: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,6 +298,7 @@ pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, ex
             settings: p.maps.settings,
             baked,
             high_poly: p.maps.high_poly.as_ref().map(|h| h.display().to_string()),
+            id_names: p.maps.id_names.clone(),
         },
         images,
         extra: p.file_extra.clone(),
@@ -520,6 +524,7 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
     p.graph = graph_from_file(file.graph, &file.root_stack)?;
     p.maps.settings = file.mesh_maps.settings;
     p.maps.high_poly = file.mesh_maps.high_poly.map(PathBuf::from);
+    p.maps.id_names = file.mesh_maps.id_names;
     p.file_extra = file.extra;
     for name in &file.images {
         let path = dir.join("images").join(name);

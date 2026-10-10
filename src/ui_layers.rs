@@ -520,7 +520,10 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
                 }
             }
         }
-        ParamKind::Stops | ParamKind::Colors => {
+        ParamKind::Colors => {
+            ui.vertical(|ui| crate::ui_graph::id_editor(ui, gpu, p, node));
+        }
+        ParamKind::Stops => {
             ui.label(RichText::new("Edit in the Node Editor").weak());
         }
     }

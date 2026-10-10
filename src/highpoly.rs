@@ -29,6 +29,8 @@ pub struct HighCpu {
     pub data: Vec<TriData>,
     /// Match id per low-poly part.
     pub low_match: Vec<u32>,
+    /// Material names; the ID map's colors follow this order.
+    pub materials: Vec<String>,
 }
 
 pub struct HighGpu {
@@ -36,6 +38,7 @@ pub struct HighGpu {
     pub tris: wgpu::Buffer,
     pub data: wgpu::Buffer,
     pub low_match: wgpu::Buffer,
+    pub materials: Vec<String>,
 }
 
 impl HighCpu {
@@ -65,6 +68,7 @@ impl HighCpu {
             tris: buf("high bvh tris", bytemuck::cast_slice(&self.tris)),
             data: buf("high tri data", bytemuck::cast_slice(&self.data)),
             low_match: buf("low match", bytemuck::cast_slice(&low_match)),
+            materials: self.materials,
         })
     }
 }
@@ -89,7 +93,7 @@ pub fn load(path: &Path, import: &ImportSettings, low_groups: &[String], match_b
             }
         })
         .collect();
-    Ok(HighCpu { nodes: bvh.nodes, tris: bvh.tris, data, low_match })
+    Ok(HighCpu { nodes: bvh.nodes, tris: bvh.tris, data, low_match, materials: mesh.materials })
 }
 
 /// Pairs `<name>_low` parts with `<name>_high` parts (ignoring case). Returns a match id per

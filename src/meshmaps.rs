@@ -339,6 +339,9 @@ pub struct MeshMaps {
     low_groups: Vec<String>,
     /// Percentage of texels the last high-poly bake missed.
     pub last_misses: Option<f32>,
+    /// Names of the IDs in the ID map when it was baked from a high poly (its materials);
+    /// empty when the ID map comes from the mesh's own materials.
+    pub id_names: Vec<String>,
     /// Message about the last finished bake, for the status bar (taken once).
     pub report: Option<Result<String, String>>,
     /// Incremented whenever any map's contents change.
@@ -450,6 +453,7 @@ impl MeshMaps {
             high_poly: None,
             low_groups: mesh.groups.clone(),
             last_misses: None,
+            id_names: Vec::new(),
             report: None,
             version: 0,
             bvh_nodes,
@@ -739,6 +743,12 @@ impl MeshMaps {
         for &m in &job.maps {
             self.status[m.index()] = MapStatus::UpToDate;
             self.baked_with[m.index()] = Some(job.settings);
+        }
+        if job.maps.contains(&MeshMap::Id) {
+            self.id_names = match &job.high {
+                Some(HighState::Ready(h)) => h.mesh.materials.clone(),
+                _ => Vec::new(),
+            };
         }
         if let Some(HighState::Ready(h)) = &job.high {
             let c = gpu.read_buffer(&h.counters);
