@@ -19,7 +19,8 @@ the viewport.
 | Import Log | Window menu | Diagnostics from the last mesh import. |
 | Performance | Window menu | Frame time, shader length, GPU memory use and per-node cache cost. |
 | Channels | Project menu | Enabled channels, default values and height scale. See [Channels](channels.md). |
-| Preferences | Edit menu | Memory budgets, undo steps and keyboard shortcuts. |
+| Preferences | Edit menu | Update checks, memory budgets, undo steps and keyboard shortcuts. |
+| Updates | Help menu | Installed and latest version, release notes, download and install. See [Updates](updates.md). |
 
 ## Library
 
@@ -48,6 +49,7 @@ project; **Library** categories show the user library, stored in the user direct
 | Viewport | Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting |
 | Project | Channels |
 | Window | Performance, Node Editor, Mesh Maps, Import Log |
+| Help | Check for Updates… (**Update Available…** when a newer release exists) |
 
 ## Status bar
 

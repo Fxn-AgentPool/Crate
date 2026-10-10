@@ -55,6 +55,7 @@ Directions for specific tasks, assuming you already know your way around.
 - [How to reimport meshes from Blender](how-to/reimport-meshes-from-blender.md)
 - [How to edit many projects at once](how-to/edit-many-projects-at-once.md)
 - [How to call Crate from other tools](how-to/call-crate-from-other-tools.md)
+- [How to update Crate](how-to/update-crate.md)
 
 ### Reference
 
@@ -75,6 +76,7 @@ Technical descriptions of the machinery. Structured like the application.
 - [Keyboard shortcuts](reference/keyboard-shortcuts.md)
 - [Command line](reference/command-line.md)
 - [Script commands](reference/script-commands.md)
+- [Updates](reference/updates.md)
 - [Limits and requirements](reference/limits.md)
 
 ### Explanation
@@ -87,6 +89,7 @@ Background, design decisions and context. Read these away from the application.
 - [About UDIM tiles and paint storage](explanation/about-tile-storage.md)
 - [About the MVP scope](explanation/about-mvp-scope.md)
 - [About automation](explanation/about-automation.md)
+- [About updates](explanation/about-updates.md)
 
 ## Contributing to the docs
 
