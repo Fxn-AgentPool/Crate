@@ -44,8 +44,10 @@ painter info Crate.painter
 Add `--json` for one machine-readable result on stdout. Exit codes: 0 success, 1 failure,
 2 usage error, 3 unsupported GPU.
 
-`integrations/blender/painter_bridge.py` is a Blender add-on (File > Export > Painter Project)
-that exports glTF and runs `painter reimport`.
+`integrations/blender/painter_bridge.py` is a **deprecated** Blender add-on (File > Export >
+Painter Project) that exports glTF and runs `painter reimport`. It is kept as a reference
+implementation for calling the command line from Blender; an official Blender integration is
+being built separately.
 
 ## Tests
 

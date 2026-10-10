@@ -1,5 +1,9 @@
 """Painter bridge for Blender.
 
+DEPRECATED: this add-on is kept as a reference implementation only and is no longer
+maintained; an official Blender integration is being built separately. It still works with
+the command line as documented in Painter-docs (reference/command-line.md).
+
 Adds File > Export > Painter Project (reimport): exports the scene (or the selection) as glTF
 and runs `painter reimport` on a Painter project, optionally exporting textures afterwards.
 
@@ -13,7 +17,8 @@ bl_info = {
     "version": (1, 0, 0),
     "blender": (4, 0, 0),
     "location": "File > Export > Painter Project (reimport)",
-    "description": "Export to glTF and reimport into a Painter project",
+    "description": "Export to glTF and reimport into a Painter project (deprecated reference implementation)",
+    "warning": "Deprecated: kept as a reference implementation",
     "category": "Import-Export",
 }
 
