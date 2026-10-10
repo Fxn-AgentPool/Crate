@@ -36,6 +36,19 @@ set base_color=${color}
 | Option | name, case-insensitive | `projection=triplanar` |
 | Screen point | viewport fractions `x,y`, optionally `,pressure` | `0.3,0.82,0.5` |
 
+### Library items
+
+Commands that take a file also take an item of the [user library](windows-and-panels.md#library).
+An argument without a file extension names a library item:
+
+| Form | Looks in | Example |
+|---|---|---|
+| `<name>` | The command's category folder. | `stencil-add rust_streaks` |
+| `<folder>/<name>` | Another folder of the library. | `stencil-add grunge/scratches` |
+
+The name is the file name without its extension. If several files share a name, the first by
+full file name is used. An argument with an extension is a file path, relative to the script.
+
 ## Projects and files
 
 | Command | Description |
@@ -68,7 +81,7 @@ set base_color=${color}
 | `add-generator <type>` | Add a generator effect: `edge-wear`, `dirt`, `curvature-mask`, `position-gradient`. |
 | `add-mask-paint`, `add-mask-fill`, `add-mask-levels` | Add a paint, fill or levels effect to the mask. |
 | `save-smart [name]` | Save the selected layer as a smart material. |
-| `add-smart <name or file.smat>` | Add a smart material from the library or a file. |
+| `add-smart <name or file.smat>` | Add a smart material from the library (`smart-materials`) or a file. |
 | `delete-smart <name>` | Delete a smart material from the library. |
 
 ### `set`
@@ -103,12 +116,12 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `tool paint\|erase\|paint-through` | Select the tool. |
 | `mode live\|manual` | Bake mode. |
 | `on-camera-move bake\|clear\|lock` | Manual mode camera policy. |
-| `brush key=value...` | `size`, `hardness`, `flow`, `opacity`, `spacing`, `angle`, `space=screen\|world`, `jitter_size`, `jitter_angle`, `jitter_position`, `jitter_flow`. |
+| `brush key=value...` | `size`, `hardness`, `flow`, `opacity`, `spacing`, `angle`, `space=screen\|world`, `jitter_size`, `jitter_angle`, `jitter_position`, `jitter_flow`, `alpha=<library item or image>` (library folder `alphas`; `alpha=round` for the round tip). |
 | `brush-values channel=value\|off...` | Values the brush paints, e.g. `base_color=#3B2F22 metallic=off`; `mask=0.0` for masks. |
 | `stroke <point> <point>...` | Paint a stroke through screen points. |
 | `bake-buffer`, `clear-buffer` | Manual mode: bake or clear the buffer. |
 | `buffer-transform <dx> <dy> <degrees> <scale>` | Transform the buffer (screen pixels). |
-| `stencil-add <image>` | Load a stencil and make it active. |
+| `stencil-add <library item or image>` | Load a stencil (library folder `stencils`) and make it active. |
 | `stencil key=value...` | `opacity`, `visible`, `use_alpha`, `tile`, `flip`, `targets=base_color,roughness`. |
 | `stencil-transform <dx> <dy> <degrees> <scale>` | Place the stencil (offset in viewport fractions). |
 
@@ -120,7 +133,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `camera <yaw> <pitch> [zoom]` | Degrees around and above the mesh; `zoom` > 1 moves closer. |
 | `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. `normal` and `height` are channels; the mesh maps are `normal-map` and `height-map`. |
 | `tiles on\|off` | Tint by UDIM tile. |
-| `environment <file.hdr\|exr>`, `exposure <ev>` | Lighting. |
+| `environment <library item or file.hdr\|exr>`, `exposure <ev>` | Lighting. Library folder `environments`. |
 | `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
 | `preview off` | Render the material again. |
 | `render <file.png>` | Render the viewport to an image. |
@@ -137,3 +150,4 @@ For tests; each fails the script when its condition does not hold.
 | `expect-different <a.png> <b.png> [minimum]` | The images differ by at least `minimum` somewhere (default 20). |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
 | `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |
+| `expect-library <folder> <name>...` | The Library lists exactly these items, in this order, for that library folder (e.g. `environments`). |

@@ -14,8 +14,11 @@ macOS is not supported in the MVP. On Linux, Crate runs under X11 or Wayland; na
 dialogs need an XDG desktop portal. If the GPU lacks a required feature, Crate shows which one
 at startup instead of opening a project.
 
-User files (preferences, export presets, the smart material library) live in `%APPDATA%\Crate`
-on Windows and `$XDG_CONFIG_HOME/crate` (usually `~/.config/crate`) on Linux.
+User files (preferences, export presets, the user library) live in `%APPDATA%\Crate` on
+Windows and `$XDG_CONFIG_HOME/crate` (usually `~/.config/crate`) on Linux. The user library is
+the `library` folder there, with one folder per Library category (see
+[Windows and panels](windows-and-panels.md#library)). It has no size limit; large folders take
+longer to scan and thumbnail.
 
 Settings saved before the rename to Crate, in a `Painter` (Linux: `painter`) folder, are moved
 to the new folder the first time Crate starts.
@@ -52,6 +55,6 @@ resident.
 
 | Use | Formats |
 |---|---|
-| Import (images, stencils, alphas) | PNG, JPEG, TGA, TIFF, EXR |
+| Import (images, stencils, alphas, library images) | PNG, JPEG, TGA, TIFF, EXR |
 | Export | PNG (8/16-bit), TGA (8-bit), EXR (16f/32f) |
 | Environment maps | HDR (Radiance), EXR, equirectangular |

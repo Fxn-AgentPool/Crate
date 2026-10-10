@@ -25,20 +25,46 @@ the viewport.
 ## Library
 
 The Library has two rows of categories. **Project** categories show resources of the open
-project; **Library** categories show the user library, stored in the user directory (see
-[Limits and requirements](limits.md)).
+project; **Library** categories show the user library.
 
-| Category | Row | Contents |
-|---|---|---|
-| Mesh Maps | Project | The six [mesh maps](mesh-maps.md), with a thumbnail of the first UDIM tile. Unbaked maps show **not baked**; out-of-date maps have an orange name. |
-| Images | Project | Imported images, with their size. Hover shows the source file. |
-| Smart Materials | Library | Saved smart materials, with thumbnails. **Refresh** rescans the folder; **Show in file browser** opens it. |
-| Materials, Smart Masks, Brushes, Alphas, Stencils, Environments | Library | Reserved; empty. |
+The user library is the `library` folder in the user directory (see
+[Limits and requirements](limits.md)). Each Library category is a subfolder of it. Crate creates
+the built-in folders when its window opens, if they are missing; files can be added to them by
+hand. Any other subfolder of `library` appears as an extra category after the built-in ones,
+named after the folder, in alphabetical order. Folders and files whose names start with `.` are
+ignored, and so are files of other types than the category lists.
+
+Every Library category has **Refresh** (rescans the folder) and **Show in file browser** (opens
+it). Folders are scanned when a category is first shown and on **Refresh**; new extra folders
+appear after **Refresh**. Thumbnails are made in the background and appear as they are ready.
+
+| Category | Row | Folder | Files listed |
+|---|---|---|---|
+| Mesh Maps | Project | — | The six [mesh maps](mesh-maps.md), with a thumbnail of the first UDIM tile. Unbaked maps show **not baked**; out-of-date maps have an orange name. |
+| Images | Project | — | Imported images, with their size. Hover shows the source file. |
+| Smart Materials | Library | `smart-materials` | `.smat` files, with thumbnails. Created with **Save as smart material**. |
+| Materials | Library | `materials` | Reserved: every file, by name, with no actions yet. |
+| Smart Masks | Library | `smart-masks` | Reserved: every file, by name, with no actions yet. |
+| Brushes | Library | `brushes` | Reserved: every file, by name, with no actions yet. |
+| Alphas | Library | `alphas` | Images, with thumbnails. Color images are used by their luminance. |
+| Stencils | Library | `stencils` | Images, with thumbnails. |
+| Environments | Library | `environments` | `.hdr` and `.exr` files, by name. |
+| *other folder* | Library | its name | Images, with thumbnails. |
+
+Images are PNG, JPEG, TGA, TIFF and EXR files. Items are sorted by name. Subfolders inside a
+category folder are not scanned. A file that can't be read shows **unreadable** instead of a
+thumbnail; using it reports the error in the status bar.
 
 | Item | Double-click | Drag | Right-click |
 |---|---|---|---|
 | Mesh map | Adds it as a mask effect (a Mesh Map node) on the selected layer. | Onto the Node Editor: adds a Mesh Map node. | **Add to mask of selected layer**, **Show in viewport**. |
 | Smart material | Adds it above the selected layer. | Onto the Layers panel: adds it there. | **Add to layers**. |
+| Alpha | Sets it as the brush alpha. | — | **Use as brush alpha**. |
+| Stencil, or image in another folder | Loads it as a stencil. | — | **Load as stencil**. |
+| Environment | Loads it as the viewport environment. | — | **Load environment**. |
+
+Without an open project, Library items can't be used: double-click does nothing and the
+context menu items are disabled.
 
 ## Menus
 

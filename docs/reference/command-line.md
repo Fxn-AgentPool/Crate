@@ -210,8 +210,8 @@ Example:
 
 ## Files
 
-User files (preferences, export presets, the smart material library) are read from the user
-configuration directory: `%APPDATA%\Crate` on Windows, `$XDG_CONFIG_HOME/crate` (usually
+User files (preferences, export presets, the [user library](windows-and-panels.md#library))
+are read from the user configuration directory: `%APPDATA%\Crate` on Windows, `$XDG_CONFIG_HOME/crate` (usually
 `~/.config/crate`) on Linux. Relative paths in commands and scripts are relative to the
 current directory.
 

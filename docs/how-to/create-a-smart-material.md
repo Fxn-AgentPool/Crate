@@ -33,4 +33,5 @@ inserted as one layer above the selected layer, with its exposed parameters list
 
 Smart materials are stored as `.smat` files in the user library directory, under
 `library/smart-materials` in the user configuration directory
-(**Library → Show in file browser**). Copy the file to another machine's library directory.
+(**Library → Smart Materials → Show in file browser**). Copy the file to the same folder on
+another machine and click **Refresh**.

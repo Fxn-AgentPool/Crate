@@ -24,7 +24,7 @@ If neither is selected, painting is disabled and the cursor shows ⊘.
 | Flow | 0–1 | 1.0 | Coverage added per dab. |
 | Opacity | 0–1 | 1.0 | Maximum coverage per stroke. |
 | Spacing | 1–200 % | 10 % | Distance between dabs, as a percentage of size. |
-| Alpha | grayscale image | none | Brush tip shape. |
+| Alpha | image | none | Brush tip shape: luminance times alpha. Set from a file or from **Library → Alphas**. |
 | Angle | 0–360° | 0° | Rotation of the tip. |
 | Follow stroke | on/off | off | Rotates the tip along the stroke direction. |
 | Jitter: size / angle / position / flow | 0–1 | 0 | Random variation per dab. |
@@ -56,7 +56,7 @@ A stencil is an image displayed over the viewport in screen space.
 
 | Property | Range | Default | Description |
 |---|---|---|---|
-| Image | file | — | PNG, JPEG, TGA, TIFF or EXR. Copied into the project's `stencils/` directory. |
+| Image | file | — | PNG, JPEG, TGA, TIFF or EXR, from a file or from the Library (**Stencils** or another image folder). Copied into the project's `stencils/` directory. |
 | Opacity (display) | 0–1 | 0.5 | Viewport display opacity only. Does not affect painting. |
 | Visible | on/off | on | Toggle with `S`. |
 | Paint Through target | per channel | Base Color | Channels the Paint Through tool writes. Scalar channels receive luminance. |

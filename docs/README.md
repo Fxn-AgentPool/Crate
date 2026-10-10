@@ -50,6 +50,7 @@ Directions for specific tasks, assuming you already know your way around.
 - [How to edit a layer as a node graph](how-to/edit-a-layer-as-a-graph.md)
 - [How to preview and rewire nodes quickly](how-to/preview-and-rewire-nodes.md)
 - [How to create a smart material](how-to/create-a-smart-material.md)
+- [How to add your own files to the library](how-to/add-files-to-the-library.md)
 - [How to speed up a slow graph](how-to/speed-up-a-slow-graph.md)
 - [How to export textures for a game engine](how-to/export-textures.md)
 - [How to create projects from the command line](how-to/create-projects-from-the-command-line.md)
@@ -92,6 +93,7 @@ Background, design decisions and context. Read these away from the application.
 - [About the MVP scope](explanation/about-mvp-scope.md)
 - [About automation](explanation/about-automation.md)
 - [About updates](explanation/about-updates.md)
+- [About the user library](explanation/about-the-user-library.md)
 
 ## Contributing to the docs
 
