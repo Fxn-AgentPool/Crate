@@ -30,6 +30,9 @@ pub struct ViewportState {
     pub camera: Option<Camera>,
     #[serde(default)]
     pub exposure: f32,
+    /// View transform key (`ViewTransform::key`); missing in older projects (then AgX).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_transform: Option<String>,
     #[serde(default)]
     pub env_rotation: f32,
     #[serde(default)]

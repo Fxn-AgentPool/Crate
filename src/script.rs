@@ -636,7 +636,12 @@ impl Session {
                         .and_then(|p| p.path.clone())
                         .context("the project has never been saved; use save <dir.crate>")?,
                 };
-                let vs = crate::projectfile::ViewportState { camera: Some(self.camera), ..Default::default() };
+                let vs = crate::projectfile::ViewportState {
+                    camera: Some(self.camera),
+                    exposure: self.view.exposure,
+                    view_transform: Some(self.view.view_transform.key().into()),
+                    ..Default::default()
+                };
                 let p = self.project.as_mut().context("no project")?;
                 let t = std::time::Instant::now();
                 let pages = crate::projectfile::save(&gpu, p, &dir, &vs, None)?;
@@ -671,6 +676,9 @@ impl Session {
                 if let Some(c) = loaded.viewport.camera {
                     self.camera = c;
                 }
+                self.view.exposure = loaded.viewport.exposure;
+                self.view.view_transform =
+                    loaded.viewport.view_transform.as_deref().and_then(crate::viewport::ViewTransform::from_key).unwrap_or_default();
                 let mut vp = Viewport::new(&gpu, &loaded.project.scene.layout);
                 vp.set_mesh(&gpu, &loaded.project.gpu_mesh);
                 self.viewport = Some(vp);
@@ -830,6 +838,18 @@ impl Session {
                 let got: Vec<String> = crate::library::scan(folder).into_iter().map(|it| it.name).collect();
                 anyhow::ensure!(got == rest[1..], "library folder {folder} lists {got:?}");
             }
+            "expect-color" => {
+                // expect-color <file.png> <r,g,b> [tolerance]: the center pixel, 8-bit sRGB values.
+                let usage = "expect-color <file.png> <r,g,b> [tolerance]";
+                let img = image::open(self.path(rest.first().context(usage)?))?.to_rgb8();
+                let want: Vec<u8> = rest.get(1).context(usage)?.split(',').map(|v| v.trim().parse()).collect::<Result<_, _>>()?;
+                anyhow::ensure!(want.len() == 3, "{usage}");
+                let tol: u8 = rest.get(2).map(|t| t.parse()).transpose()?.unwrap_or(2);
+                let got = img.get_pixel(img.width() / 2, img.height() / 2).0;
+                let diff = (0..3).map(|k| got[k].abs_diff(want[k])).max().unwrap_or(0);
+                anyhow::ensure!(diff <= tol, "center pixel is {got:?}, expected {want:?} (tolerance {tol})");
+                say!("  center pixel {got:?}");
+            }
             "expect-unbaked" => {
                 let want: bool = rest.first().context("expect-unbaked true|false")?.parse()?;
                 anyhow::ensure!(self.paint.unbaked == want, "unbaked is {}", self.paint.unbaked);
@@ -841,6 +861,12 @@ impl Session {
                 self.view.hdri = true;
             }
             "exposure" => self.view.exposure = rest.first().context("exposure <ev>")?.parse()?,
+            "view-transform" => {
+                let key = rest.first().context("view-transform <name>")?;
+                let names: Vec<&str> = crate::viewport::ViewTransform::ALL.iter().map(|t| t.key()).collect();
+                self.view.view_transform = crate::viewport::ViewTransform::from_key(key)
+                    .with_context(|| format!("unknown view transform {key}; one of {}", names.join(", ")))?;
+            }
             "size" => {
                 let (w, h) = rest.first().context("size WxH")?.split_once('x').context("size WxH")?;
                 self.size = (w.parse()?, h.parse()?);

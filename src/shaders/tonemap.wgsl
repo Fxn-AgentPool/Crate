@@ -1,7 +1,9 @@
 // Resolves the HDR viewport into the 8-bit, gamma-encoded image egui displays.
+// Prepended: agx_fit.wgsl, view_transform.wgsl.
 
 struct Params {
-    // x: 1 = apply filmic tone mapping (material view), 0 = clamp (raw channel views)
+    // x: 1 = apply the view transform (material view), 0 = clamp (raw channel views)
+    // y: view transform (VT_* in view_transform.wgsl)
     flags: vec4u,
     background_top: vec4f,
     background_bottom: vec4f,
@@ -25,21 +27,6 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
     return o;
 }
 
-fn aces(x: vec3f) -> vec3f {
-    // Narkowicz 2015 fit.
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));
-}
-
-fn srgb_encode(c: vec3f) -> vec3f {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3f(0.0031308));
-}
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4f {
@@ -55,11 +42,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
         return vec4f(background, 1.0);
     }
     // The resolved HDR color averages mesh samples with black clear samples; undo that.
-    var c = textureLoad(hdr, p, 0).rgb / covered;
+    let c = textureLoad(hdr, p, 0).rgb / covered;
+    var display: vec3f;
     if params.flags.x == 1u {
-        c = aces(c * 0.8);
+        display = view_transform(c, params.flags.y);
     } else {
-        c = clamp(c, vec3f(0.0), vec3f(1.0));
+        display = srgb_encode(c);
     }
-    return vec4f(mix(background, srgb_encode(c), covered), 1.0);
+    return vec4f(mix(background, display, covered), 1.0);
 }

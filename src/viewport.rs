@@ -1,4 +1,5 @@
-//! Viewport renderer: mesh shaded with the compiled material, tone mapped to 8-bit.
+//! Viewport renderer: mesh shaded with the compiled material, then converted for the screen
+//! by the view transform. See docs/reference/color-management.md.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -15,6 +16,60 @@ pub const MSAA: u32 = 4;
 
 const VIEWPORT_WGSL: &str = include_str!("shaders/viewport.wgsl");
 const TONEMAP_WGSL: &str = include_str!("shaders/tonemap.wgsl");
+const AGX_FIT_WGSL: &str = include_str!("shaders/agx_fit.wgsl");
+const VIEW_TRANSFORM_WGSL: &str = include_str!("shaders/view_transform.wgsl");
+/// Baked ACES output transforms (tools/view_transforms.py bake-aces).
+const LUT_ACES13: &[u8] = include_bytes!("luts/aces13.lut.zst");
+const LUT_ACES20: &[u8] = include_bytes!("luts/aces20.lut.zst");
+
+/// How scene-linear values become display values. See docs/reference/color-management.md.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewTransform {
+    Standard,
+    #[default]
+    AgX,
+    Aces13,
+    Aces20,
+    PbrNeutral,
+    Reinhard,
+}
+
+impl ViewTransform {
+    pub const ALL: [ViewTransform; 6] =
+        [Self::Standard, Self::AgX, Self::Aces13, Self::Aces20, Self::PbrNeutral, Self::Reinhard];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::AgX => "AgX",
+            Self::Aces13 => "ACES 1.3",
+            Self::Aces20 => "ACES 2.0",
+            Self::PbrNeutral => "Khronos PBR Neutral",
+            Self::Reinhard => "Reinhard",
+        }
+    }
+
+    /// Name in scripts and project files.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::AgX => "agx",
+            Self::Aces13 => "aces-1.3",
+            Self::Aces20 => "aces-2.0",
+            Self::PbrNeutral => "pbr-neutral",
+            Self::Reinhard => "reinhard",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.key().eq_ignore_ascii_case(key))
+    }
+
+    /// VT_* in view_transform.wgsl.
+    fn shader_id(self) -> u32 {
+        self as u32
+    }
+}
 pub const SURFACE_WGSL: &str = include_str!("shaders/surface.wgsl");
 
 /// What the viewport shows. See docs/reference/channels.md "Viewport channel display".
@@ -33,6 +88,7 @@ pub struct ViewSettings {
     pub show_tiles: bool,
     pub wireframe: bool,
     pub exposure: f32,
+    pub view_transform: ViewTransform,
     pub env_rotation: f32,
     pub height_scale: f32,
     /// An HDRI environment is loaded and used for lighting.
@@ -46,6 +102,7 @@ impl Default for ViewSettings {
             show_tiles: false,
             wireframe: false,
             exposure: 0.0,
+            view_transform: ViewTransform::AgX,
             env_rotation: 0.0,
             height_scale: 0.01,
             hdri: false,
@@ -158,6 +215,8 @@ pub struct Viewport {
     env_view: wgpu::TextureView,
     env_sampler: wgpu::Sampler,
     tile_map: Option<wgpu::Buffer>,
+    lut_aces13: wgpu::TextureView,
+    lut_aces20: wgpu::TextureView,
 }
 
 pub const DEFAULT_MATERIAL_WGSL: &str = r#"
@@ -203,9 +262,14 @@ impl Viewport {
                     count: None,
                 },
                 gpu::uniform_entry(2, frag),
+                gpu::texture_entry(3, frag, wgpu::TextureViewDimension::D3, false),
+                gpu::texture_entry(4, frag, wgpu::TextureViewDimension::D3, false),
             ],
         });
-        let module = gpu::shader(d, "tonemap", TONEMAP_WGSL);
+        let source = format!("{AGX_FIT_WGSL}
+{VIEW_TRANSFORM_WGSL}
+{TONEMAP_WGSL}");
+        let module = gpu::shader(d, "tonemap", &source);
         let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tonemap"),
             bind_group_layouts: &[Some(&tonemap_layout)],
@@ -255,6 +319,8 @@ impl Viewport {
             material_code: String::new(),
             scene_layout: scene_layout.clone(),
             env_view: env_texture(gpu, 1, 1, &[vec![0u16; 4]]).create_view(&Default::default()),
+            lut_aces13: lut_texture(gpu, "ACES 1.3", LUT_ACES13).create_view(&Default::default()),
+            lut_aces20: lut_texture(gpu, "ACES 2.0", LUT_ACES20).create_view(&Default::default()),
             env_sampler: d.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("environment"),
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -449,6 +515,8 @@ impl Viewport {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&hdr) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&depth) },
                 wgpu::BindGroupEntry { binding: 2, resource: self.tonemap_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.lut_aces13) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.lut_aces20) },
             ],
         });
         self.targets = Some(Targets { width, height, hdr_msaa, hdr, depth, output, output_view, tonemap_bind });
@@ -494,7 +562,7 @@ impl Viewport {
         };
         gpu.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
         let tonemap = TonemapUniform {
-            flags: [(view.display == DisplayMode::Material) as u32, 0, 0, 0],
+            flags: [(view.display == DisplayMode::Material) as u32, view.view_transform.shader_id(), 0, 0],
             background_top: [0.30, 0.31, 0.33, 1.0],
             background_bottom: [0.16, 0.165, 0.175, 1.0],
         };
@@ -562,6 +630,76 @@ impl Viewport {
             pass.draw(0..3, 0..1);
         }
         gpu.queue.submit([enc.finish()]);
+    }
+}
+
+/// Unpacks a baked view transform LUT: (size N, N³ RGBA halves, red fastest). The format is
+/// described in tools/view_transforms.py.
+fn unpack_lut(compressed: &[u8]) -> anyhow::Result<(u32, Vec<u16>)> {
+    use std::io::Read;
+    let mut src = compressed;
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut src).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut data = Vec::new();
+    dec.read_to_end(&mut data)?;
+    anyhow::ensure!(data.len() >= 8 && &data[0..4] == b"CLUT", "not a view transform LUT");
+    let n = u32::from_le_bytes(data[4..8].try_into()?);
+    let texels = (n as usize).pow(3);
+    anyhow::ensure!(data.len() == 8 + texels * 6, "LUT size doesn't match its header");
+    let one = half::f16::from_f32(1.0).to_bits();
+    let rgba = data[8..]
+        .chunks_exact(6)
+        .flat_map(|c| [u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]), u16::from_le_bytes([c[4], c[5]]), one])
+        .collect();
+    Ok((n, rgba))
+}
+
+/// A 3D texture from a baked LUT embedded in the binary.
+fn lut_texture(gpu: &Gpu, label: &str, compressed: &[u8]) -> wgpu::Texture {
+    let (n, rgba) = unpack_lut(compressed).unwrap_or_else(|e| panic!("embedded {label} LUT: {e}"));
+    let size = wgpu::Extent3d { width: n, height: n, depth_or_array_layers: n };
+    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        bytemuck::cast_slice(&rgba),
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 8), rows_per_image: Some(n) },
+        size,
+    );
+    tex
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_luts_unpack() {
+        for lut in [LUT_ACES13, LUT_ACES20] {
+            let (n, rgba) = unpack_lut(lut).unwrap();
+            assert_eq!(n, 65);
+            assert_eq!(rgba.len(), 65usize.pow(3) * 4);
+            // Black maps to black, and the brightest corner to (nearly) white.
+            let px = |i: usize| [0, 1, 2].map(|k| half::f16::from_bits(rgba[i * 4 + k]).to_f32());
+            assert!(px(0).iter().all(|v| *v < 0.01), "{:?}", px(0));
+            assert!(px(65usize.pow(3) - 1).iter().all(|v| *v > 0.9), "{:?}", px(65usize.pow(3) - 1));
+        }
+    }
+
+    #[test]
+    fn view_transform_keys_round_trip() {
+        for t in ViewTransform::ALL {
+            assert_eq!(ViewTransform::from_key(t.key()), Some(t));
+        }
+        assert_eq!(ViewTransform::default(), ViewTransform::AgX);
+        assert_eq!(ViewTransform::from_key("filmic"), None);
     }
 }
 

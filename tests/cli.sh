@@ -30,6 +30,11 @@ check "run added the layer" grep -q '"name":"Base coat"' "$OUT/run.json"
 check "collapsed node saved" bash -c "'$P' run --project $OUT/Crate.crate -c 'add-fill; node nz noise; layer-mask nz; node-collapse nz on; save $OUT/Collapsed.crate' > /dev/null && grep -q '\"collapsed\": *true' $OUT/Collapsed.crate/project.json"
 check "collapsed node reloaded" bash -c "'$P' run -c 'open $OUT/Collapsed.crate; save $OUT/Collapsed2.crate' > /dev/null && grep -q '\"collapsed\": *true' $OUT/Collapsed2.crate/project.json"
 
+# the view transform is saved and reopened
+check "view transform saved" bash -c "'$P' run --project $OUT/Crate.crate -c 'view-transform aces-2.0; save $OUT/Aces.crate' > /dev/null && grep -q '\"view_transform\": *\"aces-2.0\"' $OUT/Aces.crate/project.json"
+check "view transform reopened" bash -c "'$P' run -c 'open $OUT/Aces.crate; save $OUT/Aces2.crate' > /dev/null && grep -q '\"view_transform\": *\"aces-2.0\"' $OUT/Aces2.crate/project.json"
+check "unknown view transform fails" bash -c "! '$P' run --project $OUT/Crate.crate -c 'view-transform filmic' > /dev/null 2>&1"
+
 # run from stdin
 check "run from stdin" bash -c "printf 'open $OUT/Crate.crate\ninfo\n' | '$P' run - --json | grep -q '\"ok\":true'"
 

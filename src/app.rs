@@ -466,6 +466,14 @@ impl CrateApp {
                     }
                 });
                 ui.menu_button("Viewport", |ui| {
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("view transform").selected_text(self.view.view_transform.name()).show_ui(ui, |ui| {
+                            for t in crate::viewport::ViewTransform::ALL {
+                                ui.selectable_value(&mut self.view.view_transform, t, t.name());
+                            }
+                        });
+                        ui.label("View transform");
+                    });
                     ui.add(egui::Slider::new(&mut self.view.exposure, -5.0..=5.0).text("Exposure (EV)"));
                     ui.add(egui::Slider::new(&mut self.view.env_rotation, -3.15..=3.15).text("Environment rotation"));
                     if ui.button("Load environment (HDR/EXR)…").clicked() {
@@ -834,6 +842,7 @@ impl CrateApp {
         crate::projectfile::ViewportState {
             camera: Some(self.camera),
             exposure: self.view.exposure,
+            view_transform: Some(self.view.view_transform.key().into()),
             env_rotation: self.view.env_rotation,
             environment: self.environment.as_ref().map(|p| p.display().to_string()),
         }
@@ -885,6 +894,8 @@ impl CrateApp {
                 self.viewport.set_mesh(&self.gpu, &project.gpu_mesh);
                 self.view = ViewSettings { height_scale: project.channels.height_scale, ..Default::default() };
                 self.view.exposure = loaded.viewport.exposure;
+                self.view.view_transform =
+                    loaded.viewport.view_transform.as_deref().and_then(crate::viewport::ViewTransform::from_key).unwrap_or_default();
                 self.view.env_rotation = loaded.viewport.env_rotation;
                 self.camera = loaded.viewport.camera.unwrap_or_else(|| {
                     let mut c = Camera::default();
