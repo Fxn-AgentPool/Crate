@@ -37,7 +37,11 @@ watching with `Ctrl+C`.
 Close the project in the Painter application while it's being watched: the application does not
 reload a project that changed on disk.
 
-## From inside Blender: the Painter Bridge add-on
+## From inside Blender: the Painter Bridge add-on (deprecated)
+
+> **Deprecated.** The Painter Bridge add-on is kept as a reference implementation and is no
+> longer maintained; an official Blender integration is being built separately. Prefer
+> `painter reimport` or `painter watch` above. The steps below still work.
 
 The Painter repository includes a Blender add-on, `integrations/blender/painter_bridge.py`, that
 exports and reimports in one step (Blender 4.0 or later).

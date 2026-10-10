@@ -51,6 +51,10 @@ node with no user session at all. The price is that the window doesn't update li
 project should not be open in the application at the same time. A live link may come later; it
 needs the application to accept commands while running, which it currently doesn't.
 
+The repository's Painter Bridge add-on for Blender is deprecated and kept only as a reference
+implementation of calling the command line from Blender; an official integration is being built
+separately.
+
 Watching uses polling: Painter checks the file's size and modification time at an interval, and
 waits until they stop changing, so it never reads a half-written export.
 

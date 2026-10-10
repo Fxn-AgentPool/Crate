@@ -133,7 +133,7 @@ project with its two layers, `Metal` and `Paint`.
 We created a project, applied a material written as a reusable script, exported textures, and
 then built a second variant of the asset in one command, with a result another program can read.
 
-To connect Painter to Blender, continue with
+To update a project whenever you export from Blender, continue with
 [How to reimport meshes from Blender](../how-to/reimport-meshes-from-blender.md). For every
 command and option, see [Command line](../reference/command-line.md) and
 [Script commands](../reference/script-commands.md).
