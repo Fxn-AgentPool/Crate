@@ -96,6 +96,7 @@ Background, design decisions and context. Read these away from the application.
 - [About updates](explanation/about-updates.md)
 - [About the user library](explanation/about-the-user-library.md)
 - [About view transforms](explanation/about-view-transforms.md)
+- [About the interface](explanation/about-the-interface.md)
 
 ## Contributing to the docs
 

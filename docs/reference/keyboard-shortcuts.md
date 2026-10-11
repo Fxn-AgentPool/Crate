@@ -15,6 +15,16 @@ inside the Node Editor are fixed.
 | Frame cursor | `Shift+F` |
 | Rotate environment | `Shift` + right-drag |
 
+## Fields
+
+| Action | Input |
+|---|---|
+| Change a value | Drag in the field |
+| Fine steps | `Ctrl` + drag |
+| Type a value | Double-click, then `Enter` (`Esc` cancels) |
+
+See [Controls](windows-and-panels.md#fields).
+
 ## Display
 
 | Action | Input |

@@ -22,6 +22,34 @@ the viewport.
 | Preferences | Edit menu | Update checks, memory budgets, undo steps and keyboard shortcuts. |
 | Updates | Help menu | Installed and latest version, release notes, download and install. See [Updates](updates.md). |
 
+## Controls
+
+The interface follows the rules in [About the interface](../explanation/about-the-interface.md).
+
+| Control | Looks like | Use |
+|---|---|---|
+| Field | A box with the label on the left and the value on the right, in Geist Mono. A blue fill shows where the value lies in its range; fields without a fixed range, like **Size**, have no fill. | Drag anywhere in it to change the value, double-click to type one. See below. |
+| Toggle | A small switch, blue when on. | Settings that take effect at once, such as **Show buffer**. Click to switch. |
+| Checkbox | A small square, blue with a check when on. | Choosing items of a set, such as the channels a brush paints. |
+| Segmented control | A row of options in one box; the chosen one is lighter. | One choice of a few, such as **Bake mode** or **Resolution scale**. |
+| Section header | Small capitals with a ▸ or ▾, above a thin line. | Click to fold or unfold the section. Some show a summary or an action on the right. |
+| Keycap | A shortcut in Geist Mono on a dark chip, like `Ctrl B`. | Shows a keyboard shortcut. |
+| Tag | A small colored label in Geist Mono: green **cached**, amber **dirty**. | Shows a state. |
+
+A disabled control is drawn at 45% opacity as a whole.
+
+### Fields
+
+| Input | Effect |
+|---|---|
+| Drag left or right | Changes the value. For a field with a fixed range, dragging across the field's full width covers the whole range; other fields change by a fixed step per point. |
+| `Ctrl` + drag | Changes the value 10 times more slowly. |
+| Double-click | Types a value. `Enter` or clicking elsewhere applies it, `Esc` cancels. Values outside the range are clamped to it; text that isn't a number leaves the value unchanged. |
+| Hover | Shows the field's tooltip, if it has one. |
+
+Clicking without dragging doesn't change the value. A field's value is clamped to its range
+while dragging.
+
 ## Library
 
 The Library has two rows of categories. **Project** categories show resources of the open
