@@ -201,7 +201,7 @@ impl ExportDialog {
                             ui.selectable_value(&mut m.bits, b, b.to_string());
                         }
                     });
-                    if ui.small_button("×").clicked() {
+                    if ui.add(crate::ui_widgets::ghost_icon(crate::icons::Icon::Close)).clicked() {
                         remove = Some(i);
                     }
                     ui.end_row();

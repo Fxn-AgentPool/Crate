@@ -38,7 +38,7 @@ UTF-8 JSON. Top-level keys:
 | `channels` | array of object | Enabled channels and their formats. See [Channels](channels.md). |
 | `graph` | object | Nodes and connections. See [Nodes](nodes.md). |
 | `rootStack` | string | Id of the Stack node shown in the Layers panel. |
-| `viewport` | object | Camera, `exposure`, `view_transform` (script name, e.g. `"agx"`; see [Color management](color-management.md)), environment rotation and environment file. |
+| `viewport` | object | Camera, `exposure`, `view_transform` (script name, e.g. `"agx"`; see [Color management](color-management.md)), environment rotation, environment file and `ambient_occlusion` (boolean, default `true`; see [Viewport lighting](viewport-lighting.md#ambient-occlusion)). |
 | `export` | object | Last-used export settings. See [Export](export.md). |
 | `stencils` | object | Loaded stencils (image name, transform, display and Paint Through settings) and the active one. |
 | `meshMaps` | object | Bake settings, the list of baked maps, and `highPoly`: the high-poly mesh's path (absolute), if one is set. The high-poly file is not copied into the project. |

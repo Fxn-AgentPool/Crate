@@ -74,6 +74,7 @@ Technical descriptions of the machinery. Structured like the application.
 - [Brushes, tools and stencils](reference/brushes-tools-stencils.md)
 - [Mesh maps](reference/mesh-maps.md)
 - [Color management](reference/color-management.md)
+- [Viewport lighting](reference/viewport-lighting.md)
 - [Export](reference/export.md)
 - [Windows and panels](reference/windows-and-panels.md)
 - [Keyboard shortcuts](reference/keyboard-shortcuts.md)
@@ -96,6 +97,7 @@ Background, design decisions and context. Read these away from the application.
 - [About updates](explanation/about-updates.md)
 - [About the user library](explanation/about-the-user-library.md)
 - [About view transforms](explanation/about-view-transforms.md)
+- [About viewport lighting](explanation/about-viewport-lighting.md)
 - [About the interface](explanation/about-the-interface.md)
 
 ## Contributing to the docs

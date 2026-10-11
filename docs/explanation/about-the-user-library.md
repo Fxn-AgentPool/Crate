@@ -23,7 +23,7 @@ The categories differ in how much Crate needs to understand a file:
 - **Smart materials** (and, later, materials and smart masks) are layer stacks with exposed
   parameters and a thumbnail. Crate writes them; copying them between machines works, but
   making one by hand doesn't.
-- **Environments, alphas and stencils** are ordinary image files. Any file of the right type
+- **Textures, environments, alphas and stencils** are ordinary image files. Any file of the right type
   works as is, so these are the folders meant for filling by hand.
 
 Folders you add yourself are treated as plain image collections. They're shown as categories so
@@ -39,6 +39,6 @@ and extra top-level folders cover most of the need for structure.
 ## What stays outside projects
 
 Library files are referenced only while you use them. A stencil or brush alpha taken from the
-library is copied into the project, so the project still opens if the library changes or on a
+library (or a texture imported from it) is copied into the project, so the project still opens if the library changes or on a
 machine without it. An environment is the exception: like **Load environment**, the project
 stores its path, and falls back to studio lighting if the file is gone.

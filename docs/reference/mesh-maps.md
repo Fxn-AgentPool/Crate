@@ -12,7 +12,7 @@ separate [high-poly mesh](#high-poly-mesh) when one is set.
 |---|---|---|---|---|
 | Position | RGB | Object space, normalized to the bounding box: `[0, 1]³` | no | Paint buffer bake, Position Gradient, triplanar projection |
 | World Normal | RGB | Object-space normal, encoded `n * 0.5 + 0.5` | no | Paint buffer bake, triplanar projection |
-| Ambient Occlusion | 1 | `[0, 1]`, 1 = unoccluded | yes | Dirt |
+| Ambient Occlusion | 1 | `[0, 1]`, 1 = unoccluded | yes | Dirt, [viewport lighting](viewport-lighting.md#ambient-occlusion) |
 | Curvature | 1 | `[0, 1]`, 0.5 = flat, > 0.5 convex | yes | Edge Wear, Curvature Mask |
 | Thickness | 1 | `[0, 1]`, 1 = thick | yes | Mesh Map node |
 | ID | RGB | One color per material (glTF) or `usemtl` group (OBJ) | yes | ID Select |

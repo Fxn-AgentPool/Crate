@@ -8,7 +8,7 @@ use crate::graph::{self, BlendMode, Graph, MaskSource, NodeId, ParamDef, ParamKi
 use crate::ops::{self, LayerKind, LayerRef, Selection};
 use crate::project::Project;
 use crate::ui_theme as t;
-use crate::ui_widgets::{Check, Chip, Field, Section, Toggle};
+use crate::ui_widgets::{Chip, Field, Section, Toggle};
 
 /// Requests from the panels that the app handles (they need more than the project).
 #[derive(Default)]
@@ -225,65 +225,49 @@ pub fn track(p: &mut Project, gpu: &Gpu, resp: &egui::Response, label: &str, app
 fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) {
     let Some(slot) = ops::slot(&p.graph, l).cloned() else { return };
     let kind = ops::layer_kind(&p.graph, &slot);
-    let mut opacity = slot.opacity * 100.0;
-    let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
-    track(p, gpu, &r, "Layer opacity", |g| {
-        if let Some(s) = ops::slot_mut(g, l) {
-            s.opacity = opacity / 100.0;
-        }
-    });
-
     let channels: Vec<Channel> = Channel::ALL.into_iter().filter(|c| p.channels.is_enabled(*c)).collect();
-    Section::new("Affects channels").id_salt("layer affects channels").show(ui, |ui| {
-        let gap = ui.spacing().item_spacing.x * 0.5;
-        let width = ((ui.available_width() - 2.0 * gap) / 3.0).floor();
-        for row in channels.chunks(3) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                for c in row {
-                    let mut enabled = slot.channels[c.index()].enabled;
-                    let r = ui.add(Chip::new(&mut enabled, c.name(), width));
-                    track(p, gpu, &r, "Layer channel", |g| {
-                        if let Some(s) = ops::slot_mut(g, l) {
-                            s.channels[c.index()].enabled = enabled;
-                        }
-                    });
-                }
-            });
-        }
-    });
 
-    Section::new("Blend per channel").id_salt("layer blend per channel").show(ui, |ui| {
-        for c in channels.iter().copied().filter(|c| slot.channels[c.index()].enabled) {
+    Section::new("Channels").id_salt("layer channels").show(ui, |ui| {
+        let gap = ui.spacing().item_spacing.x * 0.5;
+        let avail = ui.available_width() - 2.0 * gap;
+        let name_w = (avail * 0.28).floor();
+        let combo_w = (avail * 0.32).floor();
+        let field_w = avail - name_w - combo_w;
+        for c in channels.iter().copied() {
             let cb = slot.channels[c.index()];
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, t::H_CONTROL), egui::Sense::hover());
-                ui.painter().circle_filled(r.left_center() + egui::vec2(3.0, 0.0), 3.0, t::TEXT_2);
-                ui.painter().text(r.left_center() + egui::vec2(12.0, 0.0), egui::Align2::LEFT_CENTER, c.name(), t::body(), t::TEXT);
-                let mut mode = cb.mode;
-                let mut changed = false;
-                let field_w = 56.0;
-                let combo_w = (ui.available_width() - field_w - ui.spacing().item_spacing.x).max(60.0);
-                // Amber when the mode isn't Normal, so non-default blends stand out.
-                let text = if mode == BlendMode::Normal { RichText::new(mode.name()) } else { RichText::new(mode.name()).color(t::ATTENTION) };
-                egui::ComboBox::from_id_salt(("mode", c.index())).width(combo_w).selected_text(text).show_ui(ui, |ui| {
-                    for m in BlendMode::for_channel(c) {
-                        changed |= ui.selectable_value(&mut mode, *m, m.name()).changed();
+                ui.spacing_mut().item_spacing.x = gap;
+                let mut enabled = cb.enabled;
+                let r = ui.add(Chip::new(&mut enabled, c.name(), name_w));
+                track(p, gpu, &r, "Layer channel", |g| ops::set_channel_enabled(g, l, c, enabled));
+                ui.add_enabled_ui(cb.enabled, |ui| {
+                    let mut mode = cb.mode;
+                    let mut changed = false;
+                    // Amber when the mode isn't Normal, so non-default blends stand out.
+                    let text = if mode == BlendMode::Normal { RichText::new(mode.name()) } else { RichText::new(mode.name()).color(t::ATTENTION) };
+                    // A fixed column: long mode names are cut rather than pushing the field over.
+                    ui.allocate_ui(egui::vec2(combo_w, t::H_CONTROL), |ui| {
+                        egui::ComboBox::from_id_salt(("mode", c.index())).width(combo_w).truncate().selected_text(text).show_ui(ui, |ui| {
+                            for m in BlendMode::for_channel(c) {
+                                changed |= ui.selectable_value(&mut mode, *m, m.name()).changed();
+                            }
+                        });
+                    });
+                    if changed {
+                        p.edit(gpu, "Blend mode", |g| {
+                            if let Some(s) = ops::slot_mut(g, l) {
+                                s.channels[c.index()].mode = mode;
+                            }
+                        });
                     }
-                });
-                if changed {
-                    p.edit(gpu, "Blend mode", |g| {
+                    let mut op = cb.opacity * 100.0;
+                    let field_w = ui.available_width().min(field_w);
+                    let r = ui.add(Field::new(&mut op, 0.0..=100.0).decimals(0).width(field_w)).on_hover_text("Channel opacity (%)");
+                    track(p, gpu, &r, "Channel opacity", |g| {
                         if let Some(s) = ops::slot_mut(g, l) {
-                            s.channels[c.index()].mode = mode;
+                            s.channels[c.index()].opacity = op / 100.0;
                         }
                     });
-                }
-                let mut op = cb.opacity * 100.0;
-                let r = ui.add(Field::new(&mut op, 0.0..=100.0).decimals(0).width(field_w)).on_hover_text("Channel opacity (%)");
-                track(p, gpu, &r, "Channel opacity", |g| {
-                    if let Some(s) = ops::slot_mut(g, l) {
-                        s.channels[c.index()].opacity = op / 100.0;
-                    }
                 });
             });
         }
@@ -292,12 +276,11 @@ fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) 
     let Some(content) = slot.content else { return };
     match kind {
         LayerKind::Fill => {
-            ui.separator();
-            fill_properties(ui, gpu, p, content);
+            let on: Vec<Channel> = channels.into_iter().filter(|c| slot.channels[c.index()].enabled).collect();
+            fill_properties(ui, gpu, p, content, &on);
         }
         LayerKind::Paint => {
-            ui.separator();
-            ui.label(RichText::new("Paint with the Paint tool (B).").weak());
+            crate::ui_widgets::hint(ui, "Paint with the Paint tool (B).");
         }
         LayerKind::Graph | LayerKind::SmartMaterial | LayerKind::Group => {
             exposed_parameters(ui, gpu, p, content);
@@ -316,47 +299,80 @@ fn exposed_parameters(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, content: No
     if nodes.is_empty() {
         return;
     }
-    ui.separator();
-    ui.label(RichText::new("Exposed parameters").strong());
-    for n in nodes {
-        let node = p.graph.node(n).clone();
-        for def in &node.def().params {
-            if node.exposed.contains(def.name) {
-                param_widget(ui, gpu, p, n, def, &format!("{}: {}", node.title(), def.name));
+    Section::new("Exposed parameters").id_salt("layer exposed parameters").show(ui, |ui| {
+        for n in nodes {
+            let node = p.graph.node(n).clone();
+            for def in &node.def().params {
+                if node.exposed.contains(def.name) {
+                    param_widget(ui, gpu, p, n, def, &format!("{}: {}", node.title(), def.name));
+                }
             }
         }
-    }
+    });
 }
 
-fn fill_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId) {
+/// Narrowest X, Y or Z field of a Fill value before the three move to a line of their own.
+const VEC3_FIELD_MIN: f32 = 48.0;
+
+/// The Projection and Values sections of a Fill layer; `channels` are the ones the layer affects.
+fn fill_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, channels: &[Channel]) {
     let n = p.graph.node(node).clone();
     let defs = &n.def().params;
-    for def in defs.iter().take(5) {
-        if def.name == "triplanar_blend" && n.param("projection").as_str() != "Triplanar" {
-            continue;
-        }
-        param_widget(ui, gpu, p, node, def, def.name);
-    }
-    ui.separator();
-    egui::Grid::new("fill channels").num_columns(3).show(ui, |ui| {
-        for c in Channel::ALL {
-            if !p.channels.is_enabled(c) {
+    let find = |name: &str| defs.iter().find(|d| d.name == name).unwrap();
+    let triplanar = n.param("projection").as_str() == "Triplanar";
+
+    Section::new("Projection").id_salt("fill projection").show(ui, |ui| {
+        let rows = [("projection", "Type"), ("scale", "Scale"), ("offset", "Offset"), ("rotation", "Rotation"), ("triplanar_blend", "Triplanar blend")];
+        for (name, label) in rows {
+            if name == "triplanar_blend" && !triplanar {
                 continue;
             }
+            let def = find(name);
+            ui.horizontal(|ui| {
+                expose_pin(ui, gpu, p, node, def.name);
+                crate::ui_widgets::setting(ui, label, |ui| param_value(ui, gpu, p, node, def, def.name));
+            });
+        }
+    });
+
+    Section::new("Values").id_salt("fill values").show(ui, |ui| {
+        if channels.is_empty() {
+            crate::ui_widgets::hint(ui, "Turn on a channel in Channels.");
+        }
+        let source_w = ((ui.available_width() - crate::ui_widgets::LABEL_WIDTH) * 0.42).floor();
+        for c in channels.iter().copied() {
             let (on, val, src, img) = graph::fill_param_names(c);
-            let find = |name: &str| defs.iter().find(|d| d.name == name).unwrap();
-            let mut enabled = n.param(on).as_bool();
-            let r = ui.add(Check::new(&mut enabled, c.name()));
-            track(p, gpu, &r, "Fill channel", |g| g.set(node, on, Value::Bool(enabled)));
-            ui.add_enabled_ui(enabled, |ui| {
-                if n.param(src).as_str() == "Image" {
-                    param_value(ui, gpu, p, node, find(img), img);
-                } else {
-                    param_value(ui, gpu, p, node, find(val), val);
+            // Greyed out when the Fill node's own output was turned off elsewhere, e.g. in the Node Editor.
+            let value = if n.param(src).as_str() == "Image" { img } else { val };
+            ui.add_enabled_ui(n.param(on).as_bool(), |ui| {
+                // X, Y, Z that don't fit before the source go on a line of their own below it.
+                let below = std::cell::Cell::new(false);
+                crate::ui_widgets::setting(ui, c.name(), |ui| {
+                    // The source sits at the right end; the value fills the space before it.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui(egui::vec2(source_w, t::H_CONTROL), |ui| {
+                            ui.spacing_mut().combo_width = source_w;
+                            param_value(ui, gpu, p, node, find(src), src);
+                        });
+                        let value_w = ui.available_width().max(40.0);
+                        if matches!(find(value).kind, ParamKind::Vec3) && value_w < 3.0 * VEC3_FIELD_MIN + 2.0 * ui.spacing().item_spacing.x {
+                            below.set(true);
+                            return;
+                        }
+                        ui.allocate_ui_with_layout(egui::vec2(value_w, t::H_CONTROL), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            // The color swatch takes the interact size: give it the whole column.
+                            ui.spacing_mut().interact_size = egui::vec2(value_w, t::H_CONTROL);
+                            param_value(ui, gpu, p, node, find(value), value);
+                        });
+                    });
+                });
+                if below.get() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(crate::ui_widgets::LABEL_WIDTH);
+                        param_value(ui, gpu, p, node, find(value), value);
+                    });
                 }
             });
-            ui.add_enabled_ui(enabled, |ui| param_value(ui, gpu, p, node, find(src), src));
-            ui.end_row();
         }
     });
 }
@@ -503,7 +519,7 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
         }
         ParamKind::Color => {
             let mut c = v.as_vec3();
-            let r = ui.color_edit_button_rgb(&mut c);
+            let r = crate::ui_widgets::color_edit(ui, &mut c);
             track(p, gpu, &r, "Edit color", |g| g.set(node, name, Value::Vec3(c)));
         }
         ParamKind::Vec3 => {

@@ -7,11 +7,12 @@ use std::ops::RangeInclusive;
 use egui::emath::Numeric;
 use egui::{Align2, Color32, CornerRadius, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, Widget};
 
+use crate::icons::{self, Icon};
 use crate::ui_theme as t;
 
 // ---------------------------------------------------------------- field
 
-/// A number with its label inside: drag to change it, double-click to type it.
+/// A number with its label inside: drag to change it, click to type it.
 pub struct Field<'a, T: Numeric> {
     value: &'a mut T,
     range: RangeInclusive<T>,
@@ -87,22 +88,32 @@ impl<T: Numeric> Widget for Field<'_, T> {
         let current = self.value.to_f64();
 
         let mut typing: Option<Typing> = ui.data(|d| d.get_temp(id));
-        if typing.is_none() && response.double_clicked() && ui.is_enabled() {
+        // A click that isn't a drag starts typing.
+        if typing.is_none() && response.clicked() && ui.is_enabled() {
             let d = self.decimals.unwrap_or(if T::INTEGRAL { 0 } else { 3 });
             typing = Some(Typing { text: format!("{current:.d$}"), started: false });
         }
 
         if let Some(mut ty) = typing {
+            // The label stays where it was; the text sits where the value was drawn.
+            let r = CornerRadius::same(t::R_CONTROL);
+            let p = ui.painter();
+            p.rect_filled(rect, r, t::BG_INPUT);
+            let mut edit_rect = rect;
+            if !self.label.is_empty() {
+                let label = p.text(egui::pos2(rect.min.x + 9.0, rect.center().y), Align2::LEFT_CENTER, &self.label, t::body(), t::TEXT);
+                edit_rect.min.x = (label.max.x + 8.0).min(rect.max.x - 40.0);
+            }
             let edit_id = id.with("typing");
+            // A custom frame replaces TextEdit's margin, so the padding goes on the frame.
             let edit = egui::TextEdit::singleline(&mut ty.text)
                 .id(edit_id)
                 .font(t::value())
                 .horizontal_align(egui::Align::RIGHT)
-                .margin(egui::Margin::symmetric(9, 4))
-                .background_color(t::BG_INPUT)
-                .frame(egui::Frame::NONE);
-            let out = ui.put(rect, edit);
-            ui.painter().rect_stroke(rect, CornerRadius::same(t::R_CONTROL), Stroke::new(1.0, t::accent(0.6)), StrokeKind::Inside);
+                .vertical_align(egui::Align::Center)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 9, top: 0, bottom: 0 }));
+            let out = ui.put(edit_rect, edit);
+            ui.painter().rect_stroke(rect, r, Stroke::new(1.0, t::accent(0.6)), StrokeKind::Inside);
             if !ty.started {
                 out.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -180,6 +191,243 @@ impl<T: Numeric> Widget for Field<'_, T> {
         }
         response
     }
+}
+
+// ---------------------------------------------------------------- color
+
+/// sRGB-encoded display value (0–1) to scene-linear.
+pub fn srgb_to_linear(x: f32) -> f32 {
+    if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+}
+
+/// Scene-linear to the sRGB-encoded display value, clamped to 0–1.
+pub fn linear_to_srgb(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    if x <= 0.0031308 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// `#RRGGBB` (uppercase) for an sRGB color.
+pub fn to_hex(srgb: [f32; 3]) -> String {
+    let b = srgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    format!("#{:02X}{:02X}{:02X}", b[0], b[1], b[2])
+}
+
+/// Six hex digits, with or without `#`, either case, surrounding spaces ignored.
+pub fn parse_hex(text: &str) -> Option<[f32; 3]> {
+    let hex = text.trim();
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let c = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok().map(|b| b as f32 / 255.0);
+    Some([c(0)?, c(2)?, c(4)?])
+}
+
+fn hsv_to_rgb([h, s, v]: [f32; 3]) -> [f32; 3] {
+    let f = |n: f32| {
+        let k = (n + h * 6.0) % 6.0;
+        v - v * s * k.min(4.0 - k).clamp(0.0, 1.0)
+    };
+    [f(5.0), f(3.0), f(1.0)]
+}
+
+fn rgb_to_hsv([r, g, b]: [f32; 3]) -> [f32; 3] {
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    let h = if d <= 0.0 {
+        0.0
+    } else if max == r {
+        ((g - b) / d).rem_euclid(6.0) / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    [h, if max > 0.0 { d / max } else { 0.0 }, max]
+}
+
+fn srgb32(srgb: [f32; 3]) -> Color32 {
+    let b = srgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    Color32::from_rgb(b[0], b[1], b[2])
+}
+
+/// The picker's state while it's open: the color in sRGB HSV, and the linear color it last
+/// produced, so a gray keeps its hue and a color changed elsewhere is picked up.
+#[derive(Clone, Copy)]
+struct Picking {
+    hsv: [f32; 3],
+    linear: [f32; 3],
+}
+
+const PICKER_WIDTH: f32 = 232.0;
+
+/// A swatch that opens a color picker. `linear` is scene-linear; the picker shows and edits
+/// sRGB display values. See docs/reference/windows-and-panels.md#color-picker.
+pub fn color_edit(ui: &mut Ui, linear: &mut [f32; 3]) -> Response {
+    let srgb = linear.map(linear_to_srgb);
+    let (rect, swatch) = ui.allocate_exact_size(ui.spacing().interact_size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        let r = CornerRadius::same(t::R_CONTROL);
+        let p = ui.painter();
+        p.rect_filled(rect, r, srgb32(srgb));
+        let stroke = if swatch.hovered() { t::TEXT_3 } else { t::BORDER_STRONG };
+        p.rect_stroke(rect, r, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    }
+    let popup_id = swatch.id.with("picker");
+    let mut out = swatch.clone();
+    egui::Popup::menu(&swatch)
+        .id(popup_id)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(PICKER_WIDTH);
+            let mut st = ui
+                .data(|d| d.get_temp::<Picking>(popup_id))
+                .filter(|s| s.linear == *linear)
+                .unwrap_or(Picking { hsv: rgb_to_hsv(srgb), linear: *linear });
+            let before = st.hsv;
+            let mut typed = None;
+
+            out |= sv_square(ui, &mut st.hsv);
+            out |= hue_strip(ui, &mut st.hsv);
+            let mut rgb = hsv_to_rgb(st.hsv);
+            // Untouched values show the color itself, not its HSV round trip.
+            if st.hsv == before {
+                rgb = srgb;
+            }
+            let fw = ((PICKER_WIDTH - 2.0 * ui.spacing().item_spacing.x) / 3.0).floor();
+            ui.horizontal(|ui| {
+                for (k, name) in ["R", "G", "B"].into_iter().enumerate() {
+                    let r = ui.add(Field::new(&mut rgb[k], 0.0..=1.0).label(name).decimals(3).width(fw));
+                    if r.changed() {
+                        typed = Some(rgb);
+                    }
+                    out |= r;
+                }
+            });
+            let hex = hex_field(ui, &mut rgb);
+            if hex.changed() {
+                typed = Some(rgb);
+            }
+            out |= hex;
+
+            if let Some(rgb) = typed {
+                // A gray, or black, keeps the hue (and saturation) it had.
+                let [h, s, v] = rgb_to_hsv(rgb);
+                st.hsv = [if s > 0.0 && v > 0.0 { h } else { st.hsv[0] }, if v > 0.0 { s } else { st.hsv[1] }, v];
+            }
+            if st.hsv != before || typed.is_some() {
+                *linear = typed.unwrap_or_else(|| hsv_to_rgb(st.hsv)).map(srgb_to_linear);
+                st.linear = *linear;
+                out.mark_changed();
+            }
+            ui.data_mut(|d| d.insert_temp(popup_id, st));
+        });
+    out
+}
+
+/// Saturation (left to right) and value (bottom to top) at the current hue.
+fn sv_square(ui: &mut Ui, hsv: &mut [f32; 3]) -> Response {
+    let (rect, r) = ui.allocate_exact_size(Vec2::splat(PICKER_WIDTH), Sense::click_and_drag());
+    if let Some(p) = r.interact_pointer_pos().filter(|_| r.clicked() || r.dragged()) {
+        hsv[1] = ((p.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
+        hsv[2] = 1.0 - ((p.y - rect.min.y) / rect.height()).clamp(0.0, 1.0);
+    }
+    if ui.is_rect_visible(rect) {
+        const N: u32 = 24;
+        let mut mesh = egui::Mesh::default();
+        for j in 0..=N {
+            for i in 0..=N {
+                let (s, v) = (i as f32 / N as f32, 1.0 - j as f32 / N as f32);
+                let pos = rect.min + Vec2::new(s * rect.width(), (1.0 - v) * rect.height());
+                mesh.colored_vertex(pos, srgb32(hsv_to_rgb([hsv[0], s, v])));
+                if i < N && j < N {
+                    let k = j * (N + 1) + i;
+                    mesh.add_triangle(k, k + 1, k + N + 1);
+                    mesh.add_triangle(k + 1, k + N + 2, k + N + 1);
+                }
+            }
+        }
+        let p = ui.painter();
+        p.add(mesh);
+        p.rect_stroke(rect, 0.0, Stroke::new(1.0, t::BORDER_STRONG), StrokeKind::Inside);
+        let at = rect.min + Vec2::new(hsv[1] * rect.width(), (1.0 - hsv[2]) * rect.height());
+        let ring = if hsv[2] > 0.6 && hsv[1] < 0.4 { Color32::BLACK } else { Color32::WHITE };
+        p.circle_stroke(at, 5.0, Stroke::new(1.5, ring));
+    }
+    r
+}
+
+/// The hues, left to right, with a line at the current one.
+fn hue_strip(ui: &mut Ui, hsv: &mut [f32; 3]) -> Response {
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(PICKER_WIDTH, 14.0), Sense::click_and_drag());
+    if let Some(p) = r.interact_pointer_pos().filter(|_| r.clicked() || r.dragged()) {
+        hsv[0] = ((p.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
+    }
+    if ui.is_rect_visible(rect) {
+        const N: u32 = 36;
+        let mut mesh = egui::Mesh::default();
+        for i in 0..=N {
+            let h = i as f32 / N as f32;
+            let c = srgb32(hsv_to_rgb([h, 1.0, 1.0]));
+            let x = rect.min.x + h * rect.width();
+            mesh.colored_vertex(egui::pos2(x, rect.min.y), c);
+            mesh.colored_vertex(egui::pos2(x, rect.max.y), c);
+            if i < N {
+                let k = 2 * i;
+                mesh.add_triangle(k, k + 1, k + 2);
+                mesh.add_triangle(k + 1, k + 3, k + 2);
+            }
+        }
+        let p = ui.painter();
+        p.add(mesh);
+        let x = rect.min.x + hsv[0] * rect.width();
+        p.rect_filled(Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::new(3.0, rect.height() + 4.0)), 1.0, Color32::WHITE);
+    }
+    r
+}
+
+/// `#RRGGBB` of an sRGB color: click to type or paste one, select it to copy it. The response
+/// is changed only when a color is applied.
+pub fn hex_field(ui: &mut Ui, srgb: &mut [f32; 3]) -> Response {
+    let width = ui.available_width().max(80.0);
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(width, t::H_CONTROL), Sense::hover());
+    let id = resp.id;
+    let edit_id = id.with("edit");
+    // What's being typed lives in memory while the field has focus.
+    let focused = ui.memory(|m| m.has_focus(edit_id));
+    let mut text = ui.data(|d| d.get_temp::<String>(id)).filter(|_| focused).unwrap_or_else(|| to_hex(*srgb));
+    let r = CornerRadius::same(t::R_CONTROL);
+    ui.painter().rect_filled(rect, r, t::BG_INPUT);
+    let label = ui.painter().text(egui::pos2(rect.min.x + 9.0, rect.center().y), Align2::LEFT_CENTER, "Hex", t::body(), t::TEXT);
+    let edit_rect = Rect::from_min_max(egui::pos2(label.max.x + 8.0, rect.min.y), rect.max);
+    let edit = egui::TextEdit::singleline(&mut text)
+        .id(edit_id)
+        .font(t::value())
+        .horizontal_align(egui::Align::RIGHT)
+        .vertical_align(egui::Align::Center)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 9, top: 0, bottom: 0 }));
+    let out = ui.put(edit_rect, edit);
+    if out.gained_focus() {
+        // Select it all, so a paste replaces it and Ctrl+C copies it.
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), edit_id);
+        }
+    }
+    if out.has_focus() {
+        ui.painter().rect_stroke(rect, r, Stroke::new(1.0, t::accent(0.6)), StrokeKind::Inside);
+        ui.data_mut(|d| d.insert_temp(id, text));
+    } else {
+        if out.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if let Some(c) = parse_hex(&text).filter(|c| to_hex(*c) != to_hex(*srgb)) {
+                *srgb = c;
+                resp.mark_changed();
+            }
+        }
+        ui.data_mut(|d| d.remove::<String>(id));
+    }
+    resp
 }
 
 // ---------------------------------------------------------------- segmented control
@@ -430,6 +678,20 @@ pub fn ghost(text: impl Into<String>) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.into()).color(t::TEXT_2)).frame(false).min_size(Vec2::new(0.0, t::H_CONTROL))
 }
 
+/// A quiet action shown as an icon, like Clear: no fill until hovered.
+pub fn ghost_icon(icon: Icon) -> impl Widget {
+    move |ui: &mut Ui| {
+        let enabled = ui.is_enabled();
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(t::H_CONTROL), if enabled { Sense::click() } else { Sense::hover() });
+        if resp.hovered() && enabled {
+            ui.painter().rect_filled(rect, t::R_CONTROL, t::BG_INPUT);
+        }
+        let color = if resp.hovered() && enabled { t::TEXT } else { t::TEXT_2 };
+        icons::paint(ui.painter(), icon, rect.shrink(4.0), color);
+        resp
+    }
+}
+
 /// A keyboard shortcut on a dark chip.
 pub fn keycap(ui: &mut Ui, keys: &str) -> Response {
     chip(ui, keys, t::FS_VALUE - 0.5, t::BG_INPUT, t::TEXT_2)
@@ -475,6 +737,13 @@ pub fn setting<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R
     .inner
 }
 
+/// The drag-and-drop payload released over `resp` this frame, if it is a `T`. Unlike
+/// `Response::dnd_release_payload`, a payload of another type is left for the next check:
+/// egui's drops it whatever its type.
+pub fn dnd_release<T: std::any::Any + Send + Sync>(resp: &Response) -> Option<std::sync::Arc<T>> {
+    if egui::DragAndDrop::has_payload_of_type::<T>(&resp.ctx) { resp.dnd_release_payload::<T>() } else { None }
+}
+
 /// A label in the hint color.
 pub fn hint(ui: &mut Ui, text: impl Into<String>) -> Response {
     ui.label(RichText::new(text.into()).color(t::TEXT_3).font(t::caption()))
@@ -496,9 +765,11 @@ mod tests {
             ..Default::default()
         };
         let mut resp = None;
-        let _ = ctx.run_ui(input, |ui| {
+        let mut out = ctx.run_ui(input, |ui| {
             resp = Some(ui.add(Field::new(value, 0.0..=1.0).label("Roughness").width(200.0)));
         });
+        // No renderer here: drop the font atlas uploads deliberately (epaint panics otherwise).
+        out.textures_delta.clear();
         resp.unwrap()
     }
 
@@ -517,6 +788,34 @@ mod tests {
         }
         frame(ctx, v, vec![press(Pos2::new(to, y), false, m)], m);
         frame(ctx, v, vec![], m);
+    }
+
+    /// A drop zone checking for another payload type first still gets its own payload.
+    #[test]
+    fn dnd_release_leaves_other_payload_types() {
+        let ctx = egui::Context::default();
+        let at = Pos2::new(50.0, 50.0);
+        let mut got = (None, None);
+        for (k, events) in [vec![Event::PointerMoved(at)], vec![press(at, true, Modifiers::NONE)], vec![press(at, false, Modifiers::NONE)]].into_iter().enumerate() {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                time: Some(k as f64 * 0.05),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                if k == 1 {
+                    egui::DragAndDrop::set_payload(ui.ctx(), String::from("texture"));
+                }
+                let r = ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0)), Sense::hover());
+                if k == 2 {
+                    got = (dnd_release::<u32>(&r), dnd_release::<String>(&r));
+                }
+            });
+            out.textures_delta.clear();
+        }
+        assert!(got.0.is_none());
+        assert_eq!(got.1.as_deref().map(String::as_str), Some("texture"));
     }
 
     #[test]
@@ -547,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn double_click_types_a_value() {
+    fn click_types_a_value() {
         let ctx = egui::Context::default();
         let m = Modifiers::NONE;
         let at = Pos2::new(50.0, 12.0);
@@ -556,10 +855,8 @@ mod tests {
                 frame(ctx, v, vec![], m);
             }
             frame(ctx, v, vec![Event::PointerMoved(at)], m);
-            for _ in 0..2 {
-                frame(ctx, v, vec![press(at, true, m)], m);
-                frame(ctx, v, vec![press(at, false, m)], m);
-            }
+            frame(ctx, v, vec![press(at, true, m)], m);
+            frame(ctx, v, vec![press(at, false, m)], m);
             frame(ctx, v, vec![], m);
             // The current text is selected, so typing replaces it.
             frame(ctx, v, vec![Event::Text(text.into())], m);
@@ -576,5 +873,104 @@ mod tests {
         assert_eq!(v, 1.0);
         type_value(&ctx, &mut v, "0.1", egui::Key::Escape);
         assert_eq!(v, 1.0);
+    }
+
+    #[test]
+    fn srgb_round_trips_and_mid_gray() {
+        // sRGB 0.5 (#808080 is 128/255) is about 0.214 linear.
+        assert!((srgb_to_linear(0.5) - 0.214).abs() < 0.001);
+        assert!((srgb_to_linear(128.0 / 255.0) - 0.2158).abs() < 0.0005);
+        for i in 0..=255 {
+            let x = i as f32 / 255.0;
+            assert!((linear_to_srgb(srgb_to_linear(x)) - x).abs() < 1e-5, "{x}");
+        }
+        // Above 1 clamps.
+        assert!((linear_to_srgb(4.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hex_parses_and_formats() {
+        assert_eq!(to_hex([0.5, 0.5, 0.5]), "#808080");
+        assert_eq!(to_hex([1.0, 0.0, 42.0 / 255.0]), "#FF002A");
+        let c = [0x2a as f32 / 255.0, 0x4c as f32 / 255.0, 0x7d as f32 / 255.0];
+        for text in ["#2A4C7D", "2a4c7d", "  #2a4C7D ", "2A4C7D"] {
+            assert_eq!(parse_hex(text), Some(c), "{text}");
+        }
+        for text in ["", "#", "#2A4C7", "#2A4C7D0", "#GG0000", "red", "# 2A4C7D", "#2A4C7D;"] {
+            assert_eq!(parse_hex(text), None, "{text}");
+        }
+        // Agrees with scripts' hex colors.
+        let lin = crate::script::parse_color("#2A4C7D").unwrap();
+        assert_eq!(c.map(srgb_to_linear), lin);
+    }
+
+    #[test]
+    fn hsv_round_trips() {
+        for rgb in [[0.2, 0.4, 0.6], [1.0, 0.0, 0.0], [0.0, 1.0, 0.5], [0.9, 0.1, 0.7], [0.5, 0.5, 0.5], [0.0; 3]] {
+            let back = hsv_to_rgb(rgb_to_hsv(rgb));
+            for k in 0..3 {
+                assert!((back[k] - rgb[k]).abs() < 1e-5, "{rgb:?} -> {back:?}");
+            }
+        }
+        assert_eq!(rgb_to_hsv([0.5, 0.5, 0.5]), [0.0, 0.0, 0.5]);
+    }
+
+    /// Runs one frame of a hex field at the top left.
+    fn hex_frame(ctx: &egui::Context, srgb: &mut [f32; 3], events: Vec<Event>) -> Response {
+        let time = ctx.input(|i| i.time) + 0.05;
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut resp = None;
+        let mut out = ctx.run_ui(input, |ui| {
+            ui.set_width(200.0);
+            resp = Some(hex_field(ui, srgb));
+        });
+        out.textures_delta.clear();
+        resp.unwrap()
+    }
+
+    #[test]
+    fn hex_field_types_and_pastes() {
+        let ctx = egui::Context::default();
+        let at = Pos2::new(150.0, 12.0);
+        let m = Modifiers::NONE;
+        // Clicks the field, sends `input` (typing or a paste) and a key; returns whether it reported a change.
+        let enter = |ctx: &egui::Context, c: &mut [f32; 3], input: Event, key: egui::Key| {
+            for _ in 0..4 {
+                hex_frame(ctx, c, vec![]);
+            }
+            hex_frame(ctx, c, vec![Event::PointerMoved(at)]);
+            hex_frame(ctx, c, vec![press(at, true, m)]);
+            hex_frame(ctx, c, vec![press(at, false, m)]);
+            hex_frame(ctx, c, vec![]);
+            let mut changed = hex_frame(ctx, c, vec![input]).changed();
+            changed |= hex_frame(ctx, c, vec![Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: m }]).changed();
+            changed |= hex_frame(ctx, c, vec![]).changed();
+            changed
+        };
+        let mut c = [0.5f32; 3];
+        assert!(enter(&ctx, &mut c, Event::Text("ff8000".into()), egui::Key::Enter));
+        assert_eq!(to_hex(c), "#FF8000");
+        // The whole text is selected, so a paste replaces it.
+        assert!(enter(&ctx, &mut c, Event::Paste(" #2a4c7d ".into()), egui::Key::Enter));
+        assert_eq!(to_hex(c), "#2A4C7D");
+        // Not a color, or Escape: unchanged, and no change reported.
+        assert!(!enter(&ctx, &mut c, Event::Text("nope".into()), egui::Key::Enter));
+        assert!(!enter(&ctx, &mut c, Event::Text("000000".into()), egui::Key::Escape));
+        assert_eq!(to_hex(c), "#2A4C7D");
+    }
+
+    #[test]
+    fn drag_does_not_start_typing() {
+        let ctx = egui::Context::default();
+        let mut v = 0.0f32;
+        drag(&ctx, &mut v, 20.0, 120.0, Modifiers::NONE);
+        // Had the drag started typing, the text box would take this drag instead.
+        drag(&ctx, &mut v, 120.0, 20.0, Modifiers::NONE);
+        assert!(v.abs() < 0.02, "{v}");
     }
 }

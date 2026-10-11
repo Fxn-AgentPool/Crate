@@ -425,6 +425,13 @@ impl Session {
                 self.view.display = parse_display(&what)?;
             }
             "tiles" => self.view.show_tiles = rest.first().map(|s| s == "on").unwrap_or(true),
+            "ambient-occlusion" => {
+                self.view.ambient_occlusion = match rest.first().map(String::as_str) {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => bail!("ambient-occlusion on|off"),
+                }
+            }
             "camera" => {
                 let p = self.project.as_mut().context("no project")?;
                 if !self.paint.camera_moving(&gpu, p) {
@@ -657,6 +664,7 @@ impl Session {
                     camera: Some(self.camera),
                     exposure: self.view.exposure,
                     view_transform: Some(self.view.view_transform.key().into()),
+                    ambient_occlusion: self.view.ambient_occlusion,
                     ..Default::default()
                 };
                 let p = self.project.as_mut().context("no project")?;
@@ -696,6 +704,7 @@ impl Session {
                 self.view.exposure = loaded.viewport.exposure;
                 self.view.view_transform =
                     loaded.viewport.view_transform.as_deref().and_then(crate::viewport::ViewTransform::from_key).unwrap_or_default();
+                self.view.ambient_occlusion = loaded.viewport.ambient_occlusion;
                 let mut vp = Viewport::new(&gpu, &loaded.project.scene.layout);
                 vp.set_mesh(&gpu, &loaded.project.gpu_mesh);
                 self.viewport = Some(vp);
@@ -1097,7 +1106,7 @@ fn set_value(p: &mut Project, gpu: &Gpu, key: &str, v: &str) -> Result<()> {
             match prop {
                 "enabled" => {
                     let b: bool = v.parse()?;
-                    p.edit(gpu, "set", |g| ops::slot_mut(g, l).unwrap().channels[c.index()].enabled = b);
+                    p.edit(gpu, "set", |g| ops::set_channel_enabled(g, l, c, b));
                 }
                 "opacity" => {
                     let x: f32 = v.parse()?;
@@ -1155,7 +1164,15 @@ fn set_value(p: &mut Project, gpu: &Gpu, key: &str, v: &str) -> Result<()> {
         ParamKind::Stops | ParamKind::Colors => bail!("{key} cannot be set from a script"),
     };
     let name = def.name;
-    p.edit(gpu, "set", |g| g.set(node, name, value));
+    // A Fill layer's channel outputs and the channels the layer affects stay in step.
+    let layer_channel = match sel {
+        Selection::Layer(l) if n.ty == "fill" => Channel::ALL.into_iter().find(|c| crate::graph::fill_param_names(*c).0 == name).map(|c| (l, c)),
+        _ => None,
+    };
+    p.edit(gpu, "set", |g| match (layer_channel, &value) {
+        (Some((l, c)), Value::Bool(on)) => ops::set_channel_enabled(g, l, c, *on),
+        _ => g.set(node, name, value),
+    });
     Ok(())
 }
 

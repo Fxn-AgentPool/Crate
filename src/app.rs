@@ -54,6 +54,9 @@ pub struct CrateApp {
     stencil_overlay: crate::stencil::StencilOverlay,
     /// Whether S / V was used for a drag since it was pressed (tap S toggles visibility).
     s_dragged: bool,
+    /// A Ctrl + drag on the brush in progress; the cursor stays where it started.
+    brush_gesture: Option<BrushGesture>,
+    tip_preview: crate::ui_paint::TipPreview,
     export_dialog: crate::ui_export::ExportDialog,
     evaluator: crate::export::UvEvaluator,
     /// Action waiting for the user to decide about unsaved changes.
@@ -114,6 +117,8 @@ impl CrateApp {
             evaluator: crate::export::UvEvaluator::new(&paint_gpu),
             paint,
             s_dragged: false,
+            brush_gesture: None,
+            tip_preview: Default::default(),
             export_dialog: Default::default(),
             pending: None,
             allow_close: false,
@@ -384,6 +389,7 @@ impl CrateApp {
                     A::Duplicate => ui_layers::duplicate_selected(gpu, doc),
                     A::Delete => ui_layers::delete_selected(gpu, doc),
                     A::NextStencil => doc.stencils.next(),
+                    A::SearchLibrary => self.library.focus_search(),
                     A::EditAsGraph => {
                         if let Some(sel) = doc.selection {
                             self.node_editor.open_for(sel.layer());
@@ -526,6 +532,8 @@ impl CrateApp {
                         self.environment = None;
                         ui.close();
                     }
+                    ui.checkbox(&mut self.view.ambient_occlusion, "Ambient occlusion")
+                        .on_hover_text("Darken environment lighting with the baked Ambient Occlusion map");
                 });
                 ui.menu_button("Project", |ui| {
                     ui.add_enabled_ui(self.doc.is_some(), |ui| {
@@ -679,6 +687,7 @@ impl CrateApp {
         let to_px = |p: egui::Pos2| Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
         let active = response.dragged() || response.is_pointer_button_down_on();
 
+        let mut gesture_live = false;
         if self.paint.stroking() {
             // Strokes continue until the button is released.
             if let Some(hp) = hover {
@@ -709,11 +718,36 @@ impl CrateApp {
             } else {
                 t.offset += d * ppp;
             }
+        } else if active && mods.command && mods.shift && buttons[0] {
+            // Ctrl + Shift + left drag rotates the brush around where the drag started.
+            gesture_live = true;
+            let (anchor, mut last) = match self.brush_gesture {
+                Some(BrushGesture::Rotate { anchor, last }) => (anchor, last),
+                _ => (hover.unwrap_or(rect.center()), None),
+            };
+            if let Some(hp) = hover {
+                let v = hp - anchor;
+                // Too close to the center for a steady angle.
+                if v.length() > 8.0 {
+                    let a = v.y.atan2(v.x);
+                    if let Some(l) = last {
+                        let b = &mut self.paint.brush;
+                        b.angle = (b.angle + (a - l).to_degrees()).rem_euclid(360.0);
+                    }
+                    last = Some(a);
+                }
+            }
+            self.brush_gesture = Some(BrushGesture::Rotate { anchor, last });
         } else if active && mods.shift && !mods.command && !mods.alt && buttons[2] {
             // Shift + right drag rotates the environment.
             self.view.env_rotation += d.x * 0.01;
         } else if active && mods.command && buttons[2] {
-            // Ctrl + right drag: horizontal changes size, vertical changes flow.
+            // Ctrl + right drag: horizontal changes size, vertical changes flow, around where the
+            // drag started.
+            gesture_live = true;
+            if !matches!(self.brush_gesture, Some(BrushGesture::Resize { .. })) {
+                self.brush_gesture = Some(BrushGesture::Resize { anchor: hover.unwrap_or(rect.center()) });
+            }
             let b = &mut self.paint.brush;
             b.size = (b.size + d.x * ppp).clamp(1.0, 2000.0);
             b.flow = (b.flow - d.y * 0.005).clamp(0.0, 1.0);
@@ -747,6 +781,9 @@ impl CrateApp {
                     self.message = Some((e, time));
                 }
             }
+        }
+        if !gesture_live {
+            self.brush_gesture = None;
         }
         let frame_cursor = self.bindings.get(crate::shortcuts::Action::FrameCursor);
         if response.hovered() && ui.input(|i| i.key_pressed(frame_cursor.logical_key) && i.modifiers.matches_exact(frame_cursor.modifiers)) {
@@ -828,12 +865,32 @@ impl CrateApp {
             let orange = crate::ui_theme::ATTENTION;
             ui.painter().rect_stroke(rect.shrink(1.5), 0.0, egui::Stroke::new(3.0, orange), egui::StrokeKind::Inside);
         }
-        if let Some(hp) = hover.filter(|p| rect.contains(*p)) {
-            if !mods.alt {
-                let r = self.paint.brush.size * 0.5 / ppp;
-                ui.painter().circle_stroke(hp, r, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(200)));
-                ui.painter().circle_stroke(hp, r + 1.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)));
+        let doc = self.doc.as_ref().unwrap();
+        let r = self.paint.brush.size * 0.5 / ppp;
+        let b = &self.paint.brush;
+        match (self.brush_gesture, hover) {
+            (Some(g), hp) => {
+                let (BrushGesture::Resize { anchor } | BrushGesture::Rotate { anchor, .. }) = g;
+                crate::ui_paint::brush_cursor(ui, &self.gpu, doc, b, &mut self.tip_preview, anchor, r);
+                let readout = match g {
+                    BrushGesture::Resize { .. } => format!("{:.0} px  ·  Flow {:.0}%", b.size, b.flow * 100.0),
+                    BrushGesture::Rotate { .. } => {
+                        if let Some(hp) = hp {
+                            ui.painter().line_segment([anchor, hp], egui::Stroke::new(1.0, egui::Color32::from_white_alpha(120)));
+                        }
+                        format!("{:.0}°", b.angle)
+                    }
+                };
+                // The value under the cursor, with a shadow to read on any surface.
+                let at = anchor + egui::vec2(0.0, r + 14.0);
+                let font = crate::ui_theme::value();
+                ui.painter().text(at + egui::vec2(1.0, 1.0), egui::Align2::CENTER_CENTER, &readout, font.clone(), egui::Color32::from_black_alpha(160));
+                ui.painter().text(at, egui::Align2::CENTER_CENTER, readout, font, egui::Color32::WHITE);
             }
+            (None, Some(hp)) if rect.contains(hp) && !mods.alt => {
+                crate::ui_paint::brush_cursor(ui, &self.gpu, doc, b, &mut self.tip_preview, hp, r);
+            }
+            _ => {}
         }
         display_switcher(ui, rect, &mut self.view.display, &self.doc.as_ref().unwrap().channels);
         if response.dragged() || response.hovered() {
@@ -891,6 +948,7 @@ impl CrateApp {
             view_transform: Some(self.view.view_transform.key().into()),
             env_rotation: self.view.env_rotation,
             environment: self.environment.as_ref().map(|p| p.display().to_string()),
+            ambient_occlusion: self.view.ambient_occlusion,
         }
     }
 
@@ -943,6 +1001,7 @@ impl CrateApp {
                 self.view.view_transform =
                     loaded.viewport.view_transform.as_deref().and_then(crate::viewport::ViewTransform::from_key).unwrap_or_default();
                 self.view.env_rotation = loaded.viewport.env_rotation;
+                self.view.ambient_occlusion = loaded.viewport.ambient_occlusion;
                 self.camera = loaded.viewport.camera.unwrap_or_else(|| {
                     let mut c = Camera::default();
                     c.frame(project.mesh.center(), project.mesh.radius());
@@ -1061,12 +1120,13 @@ impl CrateApp {
         let Some(doc) = &mut self.doc else { return };
         let mut library_action = None;
         crate::ui_paint::tool_rail(ui, &mut self.paint, &self.bindings);
+        let search_key = self.bindings.get(crate::shortcuts::Action::SearchLibrary);
         let panel_frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::same(crate::ui_theme::PANEL_PAD as i8));
         egui::Panel::left("left").resizable(true).default_size(280.0).frame(panel_frame).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 paint_panels(ui, &self.gpu, doc, &mut self.paint);
                 crate::ui_widgets::Section::new("Library").show(ui, |ui| {
-                    library_action = self.library.ui(ui, &self.gpu, doc);
+                    library_action = self.library.ui(ui, &self.gpu, doc, &search_key);
                 });
             });
         });
@@ -1089,6 +1149,10 @@ impl CrateApp {
             Some(LibraryAction::UseAlpha(path)) => match doc.import_image(&self.gpu, &path) {
                 Ok(name) => self.paint.brush.alpha = name,
                 Err(e) => self.error = Some(format!("Could not use alpha: {e:#}")),
+            },
+            Some(LibraryAction::ImportTexture(path)) => match doc.import_image(&self.gpu, &path) {
+                Ok(name) => self.message = Some((format!("Imported {name}"), ui.input(|i| i.time))),
+                Err(e) => self.error = Some(format!("Could not import texture: {e:#}")),
             },
             Some(LibraryAction::LoadStencil(path)) => {
                 if let Err(e) = doc.add_stencil(&self.gpu, &path) {
@@ -1447,7 +1511,7 @@ impl CrateApp {
                         doc.maps.high_poly = Some(p);
                     }
                 }
-                if ui.add_enabled(!baking && doc.maps.high_poly.is_some(), w::ghost("×")).on_hover_text("Clear").clicked() {
+                if ui.add_enabled(!baking && doc.maps.high_poly.is_some(), w::ghost_icon(crate::icons::Icon::Close)).on_hover_text("Clear").clicked() {
                     doc.maps.high_poly = None;
                 }
             });
@@ -1577,6 +1641,15 @@ fn paint_target_label(doc: &Project) -> String {
 }
 
 /// 12317 → "12,317".
+/// A Ctrl + drag on the brush, centered where it started.
+#[derive(Clone, Copy)]
+enum BrushGesture {
+    /// Ctrl + right drag: size and flow.
+    Resize { anchor: egui::Pos2 },
+    /// Ctrl + Shift + left drag: angle. `last` is the pointer's angle around the anchor.
+    Rotate { anchor: egui::Pos2, last: Option<f32> },
+}
+
 fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();

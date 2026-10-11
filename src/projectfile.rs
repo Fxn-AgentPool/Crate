@@ -25,7 +25,7 @@ const LEGACY_FORMAT: &str = "painter-project";
 pub const VERSION: u32 = 1;
 
 /// State saved with the project that lives outside `Project`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ViewportState {
     pub camera: Option<Camera>,
     #[serde(default)]
@@ -37,6 +37,19 @@ pub struct ViewportState {
     pub env_rotation: f32,
     #[serde(default)]
     pub environment: Option<String>,
+    /// Viewport → Ambient occlusion (docs/reference/viewport-lighting.md).
+    #[serde(default = "yes")]
+    pub ambient_occlusion: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for ViewportState {
+    fn default() -> Self {
+        Self { camera: None, exposure: 0.0, view_transform: None, env_rotation: 0.0, environment: None, ambient_occlusion: true }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

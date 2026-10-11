@@ -15,6 +15,7 @@ pub enum Kind {
     SmartMaterials,
     /// Created but not used yet: every file is listed.
     Reserved,
+    Textures,
     Alphas,
     Stencils,
     Environments,
@@ -28,16 +29,17 @@ impl Kind {
         match self {
             Kind::SmartMaterials => ext == crate::smartmat::EXT || ext == crate::smartmat::LEGACY_EXT,
             Kind::Reserved => true,
-            Kind::Alphas | Kind::Stencils | Kind::Images => IMAGE_EXTS.contains(&ext.as_str()),
+            Kind::Textures | Kind::Alphas | Kind::Stencils | Kind::Images => IMAGE_EXTS.contains(&ext.as_str()),
             Kind::Environments => ENVIRONMENT_EXTS.contains(&ext.as_str()),
         }
     }
 }
 
 /// Built-in folders: (folder, category name, kind), in Library row order.
-pub const BUILT_IN: [(&str, &str, Kind); 7] = [
+pub const BUILT_IN: [(&str, &str, Kind); 8] = [
     ("smart-materials", "Smart Materials", Kind::SmartMaterials),
     ("materials", "Materials", Kind::Reserved),
+    ("textures", "Textures", Kind::Textures),
     ("smart-masks", "Smart Masks", Kind::Reserved),
     ("brushes", "Brushes", Kind::Reserved),
     ("alphas", "Alphas", Kind::Alphas),

@@ -41,6 +41,14 @@ Accuracy against Blender 5.2's views of the same scene values, in 8-bit display 
 | ACES 2.0 | 0.05 | 0.3 | 2.2 |
 | Khronos PBR Neutral | 0.3 | 3.5 | 6.9 (Blender approximates it with a lookup table) |
 
+## Picked colors
+
+Color pickers, hex codes in scripts (`#2A4C7D`) and the **Hex** field show colors in the
+display's sRGB encoding, like other painting software. Crate converts them to scene-linear with
+the standard sRGB transfer function when they are picked, and stores the linear values: picking
+`0.5` (`#808080`) stores about `0.214`. Linear `r,g,b` triples in scripts are stored as given.
+See [Color picker](windows-and-panels.md#color-picker).
+
 ## Exposure
 
 **Viewport → Exposure (EV)**: −5 to +5, default 0. Saved with the project.

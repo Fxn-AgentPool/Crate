@@ -101,7 +101,23 @@ pub fn add_fill_layer(g: &mut Graph, above: Option<LayerRef>) -> LayerRef {
     let at = insert_point(g, above);
     let node = g.add("fill");
     let name = unique_name(g, at.stack, "Fill");
-    insert(g, at, Slot::new(name, node))
+    let mut slot = Slot::new(name, node);
+    // The layer affects the channels the fill outputs; the Properties panel keeps them in step.
+    for c in crate::channels::Channel::ALL {
+        slot.channels[c.index()].enabled = g.node(node).param(crate::graph::fill_param_names(c).0).as_bool();
+    }
+    insert(g, at, slot)
+}
+
+/// Turns a channel of a layer on or off. On a Fill layer it also turns the Fill node's output for
+/// the channel on or off, so the two stay in step (docs/reference/layers.md#properties-panel).
+pub fn set_channel_enabled(g: &mut Graph, l: LayerRef, c: crate::channels::Channel, on: bool) {
+    let Some(s) = slot_mut(g, l) else { return };
+    s.channels[c.index()].enabled = on;
+    let content = s.content;
+    if let Some(n) = content.filter(|n| g.get(*n).is_some_and(|n| n.ty == "fill")) {
+        g.set(n, crate::graph::fill_param_names(c).0, Value::Bool(on));
+    }
 }
 
 /// Adds an empty folder (a Group with no layers).
@@ -358,4 +374,25 @@ pub fn find_layer(g: &Graph, name: &str) -> Option<LayerRef> {
         None
     }
     walk(g, g.root, name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::Channel;
+
+    #[test]
+    fn fill_layer_channels_follow_fill_outputs() {
+        let mut g = Graph::new();
+        let l = add_fill_layer(&mut g, None);
+        let fill = slot(&g, l).unwrap().content.unwrap();
+        let on = |g: &Graph, c: Channel| (slot(g, l).unwrap().channels[c.index()].enabled, g.node(fill).param(crate::graph::fill_param_names(c).0).as_bool());
+        // A new fill affects the channels it outputs: Base Color, Roughness and Metallic.
+        assert_eq!(on(&g, Channel::Roughness), (true, true));
+        assert_eq!(on(&g, Channel::Height), (false, false));
+        set_channel_enabled(&mut g, l, Channel::Height, true);
+        assert_eq!(on(&g, Channel::Height), (true, true));
+        set_channel_enabled(&mut g, l, Channel::Roughness, false);
+        assert_eq!(on(&g, Channel::Roughness), (false, false));
+    }
 }

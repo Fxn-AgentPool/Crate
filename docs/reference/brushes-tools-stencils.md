@@ -44,7 +44,13 @@ The brush carries one value per channel. In the **Brush Values** panel each chan
 
 **Load material** fills the brush values from a Fill layer or smart material, sampled as constants.
 
-## Size and hardness shortcuts
+## Brush cursor
+
+The cursor is a circle of the brush size with the tip inside it, faint: the round falloff of the
+current hardness, or the alpha, turned to the brush angle. It shows while hovering and while
+painting. The tip only shows Angle, not Follow stroke or jitter.
+
+## Size, hardness and angle shortcuts
 
 | Action | Input |
 |---|---|
@@ -52,6 +58,11 @@ The brush carries one value per channel. In the **Brush Values** panel each chan
 | Softer / harder | `Shift+[` / `Shift+]` |
 | Interactive size | `Ctrl`+right-drag horizontally |
 | Interactive flow | `Ctrl`+right-drag vertically |
+| Interactive angle | `Ctrl+Shift`+left-drag around the cursor |
+
+During the interactive drags the cursor stays where the drag started, so the brush scales and
+turns around its center, and the new value shows below it. The angle follows the pointer's
+direction from the center: a full circle around it turns the brush once.
 
 ## Stencils
 

@@ -14,7 +14,7 @@ use crate::graph::{
     self, BlendMode, Graph, Link, MaskSource, Node, NodeId, ParamKind, SocketType, Value,
 };
 
-pub const LIB_WGSL: &str = include_str!("shaders/material_lib.wgsl");
+pub const LIB_WGSL: &str = concat!(include_str!("shaders/noise.wgsl"), include_str!("shaders/material_lib.wgsl"));
 
 pub struct Compiled {
     /// Generated functions, including `eval_material`. Prepend `LIB_WGSL`.

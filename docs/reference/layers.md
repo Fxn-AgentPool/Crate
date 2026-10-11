@@ -8,15 +8,16 @@ stack is shown by default. Layers are composited bottom to top.
 | Type | Icon | Content |
 |---|---|---|
 | Paint layer | brush | A multi-channel Paint node. Receives baked paint from the paint buffer. |
-| Fill layer | bucket | Per-channel constant values or images, projected by UV or triplanar mapping. |
+| Fill layer | paint bucket | Per-channel constant values or images, projected by UV or triplanar mapping. |
 | Group | folder | A nested Stack node. Has its own layers, mask, opacity and blend modes. |
 | Graph layer | nodes | Any node graph that outputs a Material. Shown when the content is not a Paint, Fill or Stack node. |
-| Smart material | star | A Group or Graph layer instanced from the smart material library, showing its exposed parameters. |
+| Smart material | material sphere | A Group or Graph layer instanced from the smart material library, showing its exposed parameters. |
 
 Each row shows, from the left: visibility, the expand arrow of folders and layers with
 effects, the content and mask thumbnails, an icon for the layer type (hover for the type), the
-name, and the blend mode and opacity of the channel chosen at the top of the panel. The blend
-mode is amber when it isn't Normal, so non-default layers stand out. Hidden layers are faded.
+name, and the blend mode and opacity of the channel chosen at the top of the panel. The eye
+is closed on hidden layers. The blend
+mode is amber when it isn't Normal, so non-default layers stand out. Hidden layers are also faded.
 
 ## Layer properties
 
@@ -24,14 +25,26 @@ mode is amber when it isn't Normal, so non-default layers stand out. Hidden laye
 |---|---|---|---|
 | Name | text | type name | Display name. |
 | Visible | on/off | on | Hidden layers are not evaluated. |
-| Opacity | 0–100 % | 100 % | Multiplies every channel's contribution. |
+| Opacity | 0–100 % | 100 % | Multiplies every channel's contribution. Set by the `set` script command; the Properties panel edits channel opacity instead. |
 | Channels | per channel | all enabled | Which channels the layer affects. |
 | Channel blend mode | see [Blend modes](blend-modes.md) | Normal | Set per channel. |
 | Channel opacity | 0–100 % | 100 % | Set per channel. Multiplies with layer opacity. |
 
-In the Properties panel, **Affects channels** shows the channels as chips, lit when the layer
-affects them. **Blend per channel** lists the affected channels with their blend mode, amber when
-it isn't Normal, and their opacity.
+## Properties panel
+
+The Properties panel shows the selected layer in sections:
+
+| Section | Layers | Rows |
+|---|---|---|
+| Channels | all | One row per project channel: a toggle with the channel name, the blend mode and the channel opacity. The toggle is lit when the layer affects the channel; the blend mode and opacity of a channel that is off are greyed out. The blend mode is amber when it isn't Normal. |
+| Projection | Fill | Type (UV or Triplanar), Scale, Offset (X, Y, Z) and Rotation. Triplanar blend is shown when Type is Triplanar. |
+| Values | Fill | One row per channel that is on in Channels: the channel name, its value (a color swatch, a number, or X, Y, Z for Normal, on a line of their own when the panel is too narrow; the image when the source is Image) and its source (Constant or Image). A row is greyed out when the Fill node's own output for the channel is off, e.g. after editing it in the Node Editor. |
+| Exposed parameters | Group, Graph, Smart material | The parameters marked Expose in the layer's node graph. |
+
+A Paint layer shows a hint to paint with the Paint tool (B) below Channels.
+
+On a Fill layer, the channel toggle also turns the Fill node's output for that channel on or off,
+so the two stay in step. A new Fill layer affects Base Color, Roughness and Metallic.
 
 ## Fill layer properties
 

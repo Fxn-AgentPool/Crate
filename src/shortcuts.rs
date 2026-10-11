@@ -38,6 +38,7 @@ pub enum Action {
     TileGrid,
     Wireframe,
     NextStencil,
+    SearchLibrary,
     /// Held while dragging to transform the stencil (tap toggles visibility).
     StencilKey,
     /// Held while dragging to transform the paint buffer.
@@ -45,7 +46,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 33] = [
+    pub const ALL: [Action; 34] = [
         Action::NewProject,
         Action::OpenProject,
         Action::Save,
@@ -77,6 +78,7 @@ impl Action {
         Action::TileGrid,
         Action::Wireframe,
         Action::NextStencil,
+        Action::SearchLibrary,
         Action::StencilKey,
         Action::BufferKey,
     ];
@@ -114,6 +116,7 @@ impl Action {
             Action::TileGrid => "Toggle UDIM tile grid",
             Action::Wireframe => "Toggle wireframe",
             Action::NextStencil => "Next stencil",
+            Action::SearchLibrary => "Search the library",
             Action::StencilKey => "Stencil transform (hold)",
             Action::BufferKey => "Buffer transform (hold)",
         }
@@ -156,6 +159,7 @@ impl Action {
             Action::TileGrid => (n, Key::U),
             Action::Wireframe => (n, Key::W),
             Action::NextStencil => (Modifiers::ALT, Key::S),
+            Action::SearchLibrary => (c, Key::F),
             Action::StencilKey => (n, Key::S),
             Action::BufferKey => (n, Key::V),
         };

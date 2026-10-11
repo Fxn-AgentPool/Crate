@@ -2,20 +2,21 @@
 //! opacity columns for a chosen channel, nested effects (mask layers), folders and
 //! drag-to-reorder. See docs/reference/layers.md and docs/explanation/about-the-interface.md.
 
-use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 
 use crate::channels::Channel;
 use crate::gpu::Gpu;
 use crate::graph::{BlendMode, MaskSource, NodeId};
+use crate::icons::{self, Icon};
 use crate::ops::{self, LayerKind, LayerRef, Selection};
 use crate::project::Project;
 use crate::thumbs::Thumbnails;
 use crate::ui_layers::{self, PanelActions};
 use crate::ui_theme as t;
 
-const ROW_H: f32 = 32.0;
+const ROW_H: f32 = 48.0;
 const EFFECT_H: f32 = 26.0;
-const THUMB: f32 = 22.0;
+const THUMB: f32 = 32.0;
 const INDENT: f32 = 14.0;
 /// Width of the visibility column.
 const EYE_W: f32 = 32.0;
@@ -148,7 +149,7 @@ pub fn layers_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, actions: &mut
         let rest = ui.available_rect_before_wrap();
         if rest.height() > 0.0 {
             let r = ui.allocate_rect(rest, Sense::hover());
-            if let Some(path) = r.dnd_release_payload::<std::path::PathBuf>() {
+            if let Some(path) = crate::ui_widgets::dnd_release::<std::path::PathBuf>(&r) {
                 actions.insert_smart_material = Some((*path).clone());
             }
         }
@@ -156,117 +157,6 @@ pub fn layers_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, actions: &mut
 }
 
 // ------------------------------------------------------------------ toolbar
-
-#[derive(Clone, Copy)]
-enum Icon {
-    Brush,
-    Bucket,
-    Folder,
-    Mask,
-    Effect,
-    Duplicate,
-    Trash,
-    Nodes,
-    Eye,
-    Levels,
-    Star,
-    Gradient,
-}
-
-fn draw_icon(p: &egui::Painter, icon: Icon, r: Rect, color: Color32) {
-    let c = r.center();
-    let s = r.width().min(r.height()) * 0.5;
-    let st = Stroke::new(1.4, color);
-    match icon {
-        Icon::Brush => {
-            // Handle and tip.
-            p.line_segment([c + vec2(s * 0.7, -s * 0.7), c + vec2(-s * 0.1, s * 0.1)], Stroke::new(2.0, color));
-            p.circle_filled(c + vec2(-s * 0.35, s * 0.35), s * 0.32, color);
-        }
-        Icon::Bucket => {
-            let pts = vec![c + vec2(-s * 0.6, -s * 0.2), c + vec2(0.0, -s * 0.7), c + vec2(s * 0.6, -s * 0.1), c + vec2(0.0, s * 0.6)];
-            p.add(egui::Shape::convex_polygon(pts, Color32::TRANSPARENT, st));
-            p.circle_filled(c + vec2(s * 0.75, s * 0.45), s * 0.18, color);
-        }
-        Icon::Folder => {
-            let body = Rect::from_min_max(c + vec2(-s * 0.75, -s * 0.35), c + vec2(s * 0.75, s * 0.6));
-            p.rect_stroke(body, 2.0, st, StrokeKind::Inside);
-            p.line_segment([c + vec2(-s * 0.75, -s * 0.35), c + vec2(-s * 0.35, -s * 0.65)], st);
-            p.line_segment([c + vec2(-s * 0.35, -s * 0.65), c + vec2(0.0, -s * 0.65)], st);
-        }
-        Icon::Mask => {
-            let rr = Rect::from_center_size(c, vec2(s * 1.5, s * 1.5));
-            p.rect_stroke(rr, 2.0, st, StrokeKind::Inside);
-            p.circle_filled(c, s * 0.42, color);
-        }
-        Icon::Effect => {
-            // Four-point sparkle.
-            for (a, b) in [(vec2(0.0, -s * 0.8), vec2(0.0, s * 0.8)), (vec2(-s * 0.8, 0.0), vec2(s * 0.8, 0.0))] {
-                p.line_segment([c + a, c + b], st);
-            }
-            p.circle_filled(c, s * 0.22, color);
-        }
-        Icon::Duplicate => {
-            p.rect_stroke(Rect::from_min_size(c + vec2(-s * 0.7, -s * 0.7), vec2(s * 1.0, s * 1.0)), 1.5, st, StrokeKind::Inside);
-            p.rect_stroke(Rect::from_min_size(c + vec2(-s * 0.3, -s * 0.3), vec2(s * 1.0, s * 1.0)), 1.5, st, StrokeKind::Inside);
-        }
-        Icon::Trash => {
-            p.rect_stroke(Rect::from_min_max(c + vec2(-s * 0.5, -s * 0.35), c + vec2(s * 0.5, s * 0.75)), 1.5, st, StrokeKind::Inside);
-            p.line_segment([c + vec2(-s * 0.75, -s * 0.5), c + vec2(s * 0.75, -s * 0.5)], st);
-            p.line_segment([c + vec2(-s * 0.2, -s * 0.75), c + vec2(s * 0.2, -s * 0.75)], st);
-        }
-        Icon::Nodes => {
-            let a = c + vec2(-s * 0.55, -s * 0.4);
-            let b = c + vec2(s * 0.55, 0.0);
-            let d = c + vec2(-s * 0.55, s * 0.45);
-            p.line_segment([a, b], st);
-            p.line_segment([d, b], st);
-            for q in [a, b, d] {
-                p.circle_filled(q, s * 0.22, color);
-            }
-        }
-        Icon::Eye => {
-            let w = s * 0.9;
-            let h = s * 0.55;
-            let pts: Vec<Pos2> = (0..=16)
-                .map(|i| {
-                    let t = i as f32 / 16.0 * std::f32::consts::TAU;
-                    c + vec2(t.cos() * w, t.sin() * h * (1.0 - 0.35 * t.cos().abs()))
-                })
-                .collect();
-            p.add(egui::Shape::closed_line(pts, st));
-            p.circle_filled(c, s * 0.28, color);
-        }
-        Icon::Levels => {
-            for (i, h) in [0.4f32, 0.9, 0.6, 0.3].iter().enumerate() {
-                let x = c.x - s * 0.6 + i as f32 * s * 0.4;
-                p.line_segment([pos2(x, c.y + s * 0.6), pos2(x, c.y + s * 0.6 - h * s * 1.2)], Stroke::new(2.0, color));
-            }
-        }
-        Icon::Gradient => {
-            let rr = Rect::from_center_size(c, vec2(s * 1.6, s * 1.2));
-            let n = 8;
-            for i in 0..n {
-                let t = i as f32 / (n - 1) as f32;
-                let x0 = rr.left() + rr.width() * i as f32 / n as f32;
-                let strip = Rect::from_min_max(pos2(x0, rr.top()), pos2(x0 + rr.width() / n as f32 + 0.5, rr.bottom()));
-                let g = (40.0 + t * 200.0) as u8;
-                p.rect_filled(strip, 0.0, Color32::from_gray(g));
-            }
-            p.rect_stroke(rr, 1.0, Stroke::new(1.0, color), StrokeKind::Outside);
-        }
-        Icon::Star => {
-            let pts: Vec<Pos2> = (0..10)
-                .map(|i| {
-                    let a = i as f32 / 10.0 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
-                    let rad = if i % 2 == 0 { s * 0.8 } else { s * 0.35 };
-                    c + vec2(a.cos() * rad, a.sin() * rad)
-                })
-                .collect();
-            p.add(egui::Shape::closed_line(pts, st));
-        }
-    }
-}
 
 fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 24.0), if enabled { Sense::click() } else { Sense::hover() });
@@ -280,7 +170,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> egui:
     if resp.hovered() && enabled {
         ui.painter().rect_filled(rect, t::R_CONTROL, t::BG_INPUT);
     }
-    draw_icon(ui.painter(), icon, rect.shrink(4.0), color);
+    icons::paint(ui.painter(), icon, rect.shrink(4.0), color);
     resp.on_hover_text(tip)
 }
 
@@ -292,7 +182,7 @@ fn toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         if icon_button(ui, Icon::Brush, "Add paint layer (Ctrl+Shift+N)", true).clicked() {
             ui_layers::add_paint(gpu, p);
         }
-        if icon_button(ui, Icon::Bucket, "Add fill layer (Ctrl+Shift+F)", true).clicked() {
+        if icon_button(ui, Icon::Fill, "Add fill layer (Ctrl+Shift+F)", true).clicked() {
             ui_layers::add_fill(gpu, p);
         }
         if icon_button(ui, Icon::Folder, "Add folder (Ctrl+G groups the selection)", true).clicked() {
@@ -312,7 +202,7 @@ fn toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
                 }
             }
         });
-        let fx_resp = icon_button(ui, Icon::Gradient, "Add effect to the mask (generator, paint, fill, levels)", sel.is_some());
+        let fx_resp = icon_button(ui, Icon::Effect, "Add effect to the mask (generator, paint, fill, levels)", sel.is_some());
         egui::Popup::menu(&fx_resp).show(|ui| {
             if let Some(l) = sel {
                 ui_layers::mask_add_menu(ui, gpu, p, l);
@@ -375,7 +265,7 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
                     );
                 }
             } else {
-                draw_icon(painter, Icon::Bucket, r.shrink(5.0), t::TEXT_2);
+                icons::paint(painter, Icon::Fill, r.shrink(5.0), t::TEXT_2);
             }
         }
         LayerKind::Paint => {
@@ -389,16 +279,16 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
                     }
                 }
             }
-            draw_icon(painter, Icon::Brush, r.shrink(5.0), t::TEXT);
+            icons::paint(painter, Icon::Brush, r.shrink(5.0), t::TEXT);
         }
-        LayerKind::Group => draw_icon(painter, Icon::Folder, r.shrink(5.0), t::TEXT_2),
+        LayerKind::Group => icons::paint(painter, Icon::Folder, r.shrink(5.0), t::TEXT_2),
         LayerKind::Graph => {
             // A node graph: a material socket and a color socket.
             let c = r.center();
             painter.circle_filled(c - vec2(3.0, 0.0), 2.0, t::SOCK_MATERIAL);
             painter.circle_filled(c + vec2(3.0, 0.0), 2.0, t::SOCK_COLOR);
         }
-        LayerKind::SmartMaterial => draw_icon(painter, Icon::Star, r.shrink(5.0), t::BRAND),
+        LayerKind::SmartMaterial => icons::paint(painter, Icon::Material, r.shrink(5.0), t::BRAND),
     }
 }
 
@@ -419,12 +309,12 @@ fn mask_thumb(painter: &egui::Painter, p: &Project, mask: NodeId, r: Rect) {
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
                 Some("paint_mask") => Some(Icon::Brush),
                 Some("constant") => None,
-                Some(_) => Some(Icon::Gradient),
+                Some(_) => Some(Icon::Generator),
                 None => None,
             },
         };
         if let Some(icon) = icon {
-            draw_icon(painter, icon, r.shrink(9.0), mark);
+            icons::paint(painter, icon, r.shrink(9.0), mark);
         }
     }
 }
@@ -454,7 +344,8 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     // Visibility.
     let eye_rect = Rect::from_center_size(pos2(rect.left() + EYE_W / 2.0, rect.center().y), vec2(18.0, 18.0));
     let eye = ui.interact(eye_rect, ui.id().with(("eye", l.stack, l.index)), Sense::click());
-    draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if slot.visible { t::TEXT_2 } else { Color32::from_rgb(0x4a, 0x4d, 0x55) });
+    let (eye_icon, eye_color) = if slot.visible { (Icon::Visible, t::TEXT_2) } else { (Icon::Hidden, Color32::from_rgb(0x4a, 0x4d, 0x55)) };
+    icons::paint(&painter, eye_icon, eye_rect.shrink(2.0), eye_color);
     if !slot.visible {
         painter.set_opacity(HIDDEN_OPACITY);
     }
@@ -536,13 +427,13 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     // Type icon: the kind is an icon, not a subtitle.
     let icon = match kind {
         LayerKind::Paint => Icon::Brush,
-        LayerKind::Fill => Icon::Bucket,
+        LayerKind::Fill => Icon::Fill,
         LayerKind::Group => Icon::Folder,
         LayerKind::Graph => Icon::Nodes,
-        LayerKind::SmartMaterial => Icon::Star,
+        LayerKind::SmartMaterial => Icon::Material,
     };
     let icon_rect = Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(13.0, 13.0));
-    draw_icon(&painter, icon, icon_rect, TEXT_DIM);
+    icons::paint(&painter, icon, icon_rect, TEXT_DIM);
     let kind_tip = ui.interact(icon_rect, ui.id().with(("kind", l.stack, l.index)), Sense::hover());
     kind_tip.on_hover_text(match kind {
         LayerKind::Group => format!("Folder · {} layers", p.graph.get(slot.content.unwrap_or(0)).map(|n| n.slots.len()).unwrap_or(0)),
@@ -606,7 +497,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
             ui.painter().line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(2.0, DROP));
         }
     }
-    if let Some(dragged) = resp.dnd_release_payload::<LayerRef>() {
+    if let Some(dragged) = crate::ui_widgets::dnd_release::<LayerRef>(&resp) {
         let dragged = *dragged;
         if dragged != l {
             let above = ui.input(|i| i.pointer.interact_pos()).is_some_and(|pt| pt.y < rect.center().y);
@@ -614,7 +505,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
             p.selection = Some(Selection::Layer(moved));
         }
     }
-    if let Some(path) = resp.dnd_release_payload::<std::path::PathBuf>() {
+    if let Some(path) = crate::ui_widgets::dnd_release::<std::path::PathBuf>(&resp) {
         actions.insert_smart_material = Some((*path).clone());
     }
     ui_layers::rename_popup(ui, gpu, p, l);
@@ -637,7 +528,8 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
 
         let eye_rect = Rect::from_center_size(pos2(rect.left() + EYE_W / 2.0, rect.center().y), vec2(16.0, 16.0));
         let eye = ui.interact(eye_rect, ui.id().with(("fx eye", l.stack, l.index, i)), Sense::click());
-        draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if m.visible { t::TEXT_2 } else { Color32::from_rgb(0x4a, 0x4d, 0x55) });
+        let (eye_icon, eye_color) = if m.visible { (Icon::Visible, t::TEXT_2) } else { (Icon::Hidden, Color32::from_rgb(0x4a, 0x4d, 0x55)) };
+        icons::paint(&painter, eye_icon, eye_rect.shrink(2.0), eye_color);
         if !m.visible {
             painter.set_opacity(HIDDEN_OPACITY);
         }
@@ -656,12 +548,12 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
             MaskSource::Levels { .. } => Icon::Levels,
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
                 Some("paint_mask") => Icon::Brush,
-                Some("constant") | Some("image") => Icon::Bucket,
-                _ => Icon::Gradient,
+                Some("constant") | Some("image") => Icon::Fill,
+                _ => Icon::Generator,
             },
         };
         let icon_rect = Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(16.0, 16.0));
-        draw_icon(&painter, icon, icon_rect, t::TEXT_2);
+        icons::paint(&painter, icon, icon_rect, t::TEXT_2);
         // Fill effects show their value as a swatch.
         if let MaskSource::Node(n) = &m.source {
             if let Some(node) = p.graph.get(*n).filter(|n| n.ty == "constant") {

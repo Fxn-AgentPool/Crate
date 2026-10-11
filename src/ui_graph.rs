@@ -1274,7 +1274,7 @@ impl NodeEditor {
                 self.primary = None;
             }
         }
-        if let Some(m) = resp.dnd_release_payload::<crate::meshmaps::MeshMap>() {
+        if let Some(m) = crate::ui_widgets::dnd_release::<crate::meshmaps::MeshMap>(&resp) {
             let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
             let id = p.edit(gpu, "Add mesh map", |g| {
                 let id = g.add("mesh_map");
@@ -1285,6 +1285,36 @@ impl NodeEditor {
             self.extra.insert(id);
             self.selected = BTreeSet::from([id]);
             self.primary = Some(id);
+        }
+        if let Some(tex) = crate::ui_widgets::dnd_release::<crate::ui_library::TextureDrop>(&resp) {
+            let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
+            // A file adds an Image node using it, a preset its Procedural node.
+            let node: Option<(&str, Vec<(&str, String)>)> = match &*tex {
+                crate::ui_library::TextureDrop::File(path) => match p.import_image(gpu, path) {
+                    Ok(img) => Some(("image", vec![("image", img)])),
+                    Err(e) => {
+                        log::error!("{e:#}");
+                        None
+                    }
+                },
+                crate::ui_library::TextureDrop::Preset(k) => {
+                    let preset = &crate::procedural::PRESETS[*k];
+                    Some((preset.ty, preset.params.iter().map(|(key, v)| (*key, v.to_string())).collect()))
+                }
+            };
+            if let Some((ty, params)) = node {
+                let id = p.edit(gpu, "Add texture", |g| {
+                    let id = g.add(ty);
+                    for (key, v) in params {
+                        g.set(id, key, Value::Text(v));
+                    }
+                    g.node_mut(id).pos = [at.x, at.y - HEADER];
+                    id
+                });
+                self.extra.insert(id);
+                self.selected = BTreeSet::from([id]);
+                self.primary = Some(id);
+            }
         }
         if resp.secondary_clicked() && !menus_open && !ctrl && !alt {
             let ptr = pointer.unwrap_or(rect.center());
@@ -1911,8 +1941,8 @@ impl NodeEditor {
         for (i, (pos, c)) in stops.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 changed |= ui.add(egui::DragValue::new(pos).range(0.0..=1.0).speed(0.005)).changed();
-                changed |= ui.color_edit_button_rgb(c).changed();
-                if ui.small_button("×").clicked() {
+                changed |= crate::ui_widgets::color_edit(ui, c).changed();
+                if ui.add(crate::ui_widgets::ghost_icon(crate::icons::Icon::Close)).clicked() {
                     remove = Some(i);
                 }
             });

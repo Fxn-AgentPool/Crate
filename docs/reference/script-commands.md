@@ -91,7 +91,7 @@ On a layer:
 | Key | Description |
 |---|---|
 | `opacity` | Layer opacity, 0–1. |
-| `<channel>.enabled`, `<channel>.mode`, `<channel>.opacity` | Per-channel settings, e.g. `roughness.mode=Multiply`. Channel names without spaces: `basecolor`, `roughness`, … |
+| `<channel>.enabled`, `<channel>.mode`, `<channel>.opacity` | Per-channel settings, e.g. `roughness.mode=Multiply`. Channel names without spaces: `basecolor`, `roughness`, … On a Fill layer, `<channel>.enabled` and the Fill node's `<channel>_on` parameter set each other, as the channel toggle in the [Properties panel](layers.md#properties-panel) does. |
 | any other key | A parameter of the layer's content node, e.g. a Fill layer's `base_color`, `roughness`, `projection`. See [Nodes](nodes.md). |
 
 On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator's `amount`).
@@ -134,7 +134,8 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `camera <yaw> <pitch> [zoom]` | Degrees around and above the mesh; `zoom` > 1 moves closer. |
 | `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. `normal` and `height` are channels; the mesh maps are `normal-map` and `height-map`. |
 | `tiles on\|off` | Tint by UDIM tile. |
-| `environment <library item or file.hdr\|exr>`, `exposure <ev>` | Lighting. Library folder `environments`. |
+| `environment <library item or file.hdr\|exr>`, `exposure <ev>` | Lighting. Library folder `environments`. See [Viewport lighting](viewport-lighting.md). |
+| `ambient-occlusion on\|off` | Darken environment lighting with the baked Ambient Occlusion map. Default `on`. See [Ambient occlusion](viewport-lighting.md#ambient-occlusion). |
 | `view-transform <name>` | `standard`, `agx`, `aces-1.3`, `aces-2.0`, `pbr-neutral` or `reinhard`. See [Color management](color-management.md). Default `agx`. |
 | `preview <var>[.<output>]` | Render a node's output instead of the material, as the Node Editor's [preview](node-editor.md#preview) does. Without `.<output>`, its first output. |
 | `preview off` | Render the material again. |

@@ -45,6 +45,7 @@ See [Controls](windows-and-panels.md#fields).
 | Smaller / larger brush | `[` / `]` |
 | Softer / harder brush | `Shift+[` / `Shift+]` |
 | Interactive size / flow | `Ctrl` + right-drag |
+| Interactive angle | `Ctrl+Shift` + left-drag |
 | Pick color | `Alt+Shift` + click |
 
 ## Paint buffer
@@ -114,5 +115,7 @@ gestures and what each operation does, is in [Node Editor](node-editor.md).
 | Open project | `Ctrl+O` |
 | Save | `Ctrl+S` |
 | Export textures | `Ctrl+E` |
+| Search the library | `Ctrl+F` |
+| Library preview size | `Ctrl` + mouse wheel over the Library |
 | Undo | `Ctrl+Z` |
 | Redo | `Ctrl+Shift+Z` |

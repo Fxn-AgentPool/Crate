@@ -48,7 +48,7 @@ Every parameter takes one row:
 | Parameter kind | On the node |
 |---|---|
 | Number | A field showing the name and the value. Drag sideways to change it, or click to type a value. Values are clamped to the parameter's range. |
-| Color | The name and a swatch; click the swatch to pick a color. |
+| Color | The name and a swatch; click the swatch to pick a color (see [Color picker](windows-and-panels.md#color-picker)). |
 | Vector | The name and three number fields. |
 | On/off | A checkbox with the name. |
 | Choice | A dropdown showing the current option. |

@@ -175,7 +175,7 @@ impl Windows {
                         ui.add_enabled_ui(ch.enabled[i], |ui| match c {
                             Channel::BaseColor | Channel::Emissive => {
                                 ui.spacing_mut().interact_size = egui::vec2(ui.available_width(), crate::ui_theme::H_CONTROL - 4.0);
-                                ui.color_edit_button_rgb(&mut ch.defaults[i]);
+                                crate::ui_widgets::color_edit(ui, &mut ch.defaults[i]);
                             }
                             Channel::Normal => {
                                 let fw = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);

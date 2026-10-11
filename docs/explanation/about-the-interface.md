@@ -21,13 +21,20 @@ in the interface therefore always means something.
 
 Earlier versions showed most numbers twice: a slider and a number box beside it, each with its
 own label. A **field** now does both: its label and value sit inside it, its fill shows where the
-value lies in its range, dragging anywhere in it changes the value, and double-clicking types
+value lies in its range, dragging anywhere in it changes the value, and clicking types
 one. That saves about 90 points of panel width per row, which goes to longer names and wider
 previews.
 
 **Toggles** are for settings that take effect at once, like **Show buffer**. **Checkboxes** are
 for choosing items of a set, like the channels a brush paints. A disabled control fades as a
 whole, rather than greying only its label, so it never looks half active.
+
+The **color picker** shows sRGB numbers, although Crate stores and renders colors in linear
+light. Artists know colors by their display values: a mid gray is 0.5 or `#808080`, and hex codes
+travel between applications that all mean the display encoding. Earlier versions showed the
+linear values, so a color typed as 0.5 looked like about 74% gray, and a hex code from another
+application had to be converted first. The conversion now happens behind the picker, as in
+other painting software; the linear values only matter to the renderer.
 
 ## The work in the middle
 

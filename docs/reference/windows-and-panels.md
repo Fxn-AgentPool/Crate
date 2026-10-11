@@ -29,13 +29,14 @@ The interface follows the rules in [About the interface](../explanation/about-th
 
 | Control | Looks like | Use |
 |---|---|---|
-| Field | A box with the label on the left and the value on the right, in Geist Mono. A blue fill shows where the value lies in its range; fields without a fixed range, like **Size**, have no fill. | Drag anywhere in it to change the value, double-click to type one. See below. |
+| Field | A box with the label on the left and the value on the right, in Geist Mono. A blue fill shows where the value lies in its range; fields without a fixed range, like **Size**, have no fill. | Drag anywhere in it to change the value, click to type one. See below. |
 | Toggle | A small switch, blue when on. | Settings that take effect at once, such as **Show buffer**. Click to switch. |
 | Checkbox | A small square, blue with a check when on. | Choosing items of a set, such as the channels a brush paints. |
 | Segmented control | A row of options in one box; the chosen one is lighter. | One choice of a few, such as **Bake mode** or **Resolution scale**. |
 | Section header | Small capitals with a ▸ or ▾, above a thin line. | Click to fold or unfold the section. Some show a summary or an action on the right. |
 | Keycap | A shortcut in Geist Mono on a dark chip, like `Ctrl B`. | Shows a keyboard shortcut. |
 | Tag | A small colored label in Geist Mono: green **cached**, amber **dirty**. | Shows a state. |
+| Color swatch | A box filled with the color. | Click to open the color picker. See below. |
 
 A disabled control is drawn at 45% opacity as a whole.
 
@@ -45,16 +46,52 @@ A disabled control is drawn at 45% opacity as a whole.
 |---|---|
 | Drag left or right | Changes the value. For a field with a fixed range, dragging across the field's full width covers the whole range; other fields change by a fixed step per point. |
 | `Ctrl` + drag | Changes the value 10 times more slowly. |
-| Double-click | Types a value. `Enter` or clicking elsewhere applies it, `Esc` cancels. Values outside the range are clamped to it; text that isn't a number leaves the value unchanged. |
+| Click | Types a value, with the current one selected. `Enter` or clicking elsewhere applies it, `Esc` cancels. Values outside the range are clamped to it; text that isn't a number leaves the value unchanged. |
 | Hover | Shows the field's tooltip, if it has one. |
 
-Clicking without dragging doesn't change the value. A field's value is clamped to its range
+A click only types once the pointer is released without dragging, so a drag never starts typing. A field's value is clamped to its range
 while dragging.
+
+### Color picker
+
+Clicking a color swatch opens the picker below it; clicking outside the picker or pressing `Esc`
+closes it. Every change applies at once; on a node or layer parameter, each drag or typed value
+is one undo step.
+
+| Part | Shows | Input |
+|---|---|---|
+| Square | Saturation (left to right) and value (bottom to top) at the current hue. A ring marks the color. | Click or drag to set saturation and value. |
+| Hue strip | The hues, below the square. A line marks the current hue. | Click or drag to set the hue. |
+| **R**, **G**, **B** | Fields, 0–1, three decimals. | As any [field](#fields). |
+| **Hex** | `#RRGGBB`, uppercase. | Click to type or paste; `Enter` or clicking elsewhere applies it, `Esc` cancels. Accepts six hex digits, with or without `#`, in either case, and surrounding spaces; other text leaves the color unchanged. Select it and copy (`Ctrl+C`) to take the color to other software. |
+
+All of them are in the display's sRGB encoding, the numbers other painting software shows: a
+mid-gray swatch is `0.5, 0.5, 0.5` and `#808080`, and a hex code copied from another application
+gives the same color here. Crate stores colors scene-linear (see
+[Color management](color-management.md#picked-colors)).
+
+The picker can't show values above 1: such a color shows as 1 in its brightest channels until it
+is edited, and editing it clamps it to 0–1. A gray keeps the hue it was picked with while the
+picker stays open.
 
 ## Library
 
-The Library has two rows of categories. **Project** categories show resources of the open
-project; **Library** categories show the user library.
+The Library shows one category at a time. A row of icon tabs at its top chooses it (hover a tab
+for the category's name): first the **Project** categories, which show resources of the open
+project, then, after a divider, the **Library** categories, which show the user library. The
+chosen tab is underlined. When the categories don't fit the panel's width, the tabs wrap to
+more rows.
+
+Below the tabs:
+
+| Part | Contents |
+|---|---|
+| Search | Shows only the items whose name contains the typed text, ignoring case. The field shows the **Search the library** shortcut (`Ctrl+F`) while empty, and a clear button once something is typed. `Esc` or the clear button empties it. The search is emptied when another category is chosen. |
+| Preview size | The slider right of the search field: how large tiles are, 40 to 160 points wide (default 58). Click or drag to set it, or hold `Ctrl` and turn the mouse wheel (or pinch) over the Library; double-click resets it. It applies to every category and is remembered between sessions. |
+| Info row | The category's name and whether it is a Project or Library category. On the right: the number of items, or *shown* / *all* while searching. Library categories also have **Refresh** and **Show in file browser** buttons there. |
+| Items | Tiles of the preview size: the thumbnail with the name below, in as many columns as fit, from the left. A tile is narrower only when the panel can't hold one. Environments span two columns. Hovering a tile outlines it. Reserved categories list names instead. |
+
+An empty category, and a search that matches nothing, show a note in a dashed box.
 
 The user library is the `library` folder in the user directory (see
 [Limits and requirements](limits.md)). Each Library category is a subfolder of it. Crate creates
@@ -63,16 +100,16 @@ hand. Any other subfolder of `library` appears as an extra category after the bu
 named after the folder, in alphabetical order. Folders and files whose names start with `.` are
 ignored, and so are files of other types than the category lists.
 
-Every Library category has **Refresh** (rescans the folder) and **Show in file browser** (opens
-it). Folders are scanned when a category is first shown and on **Refresh**; new extra folders
+**Refresh** rescans the library folders; **Show in file browser** opens the category's folder. Folders are scanned when a category is first shown and on **Refresh**; new extra folders
 appear after **Refresh**. Thumbnails are made in the background and appear as they are ready.
 
 | Category | Row | Folder | Files listed |
 |---|---|---|---|
-| Mesh Maps | Project | — | The six [mesh maps](mesh-maps.md), with a thumbnail of the first UDIM tile. Unbaked maps show **not baked**; out-of-date maps have an orange name. |
+| Mesh Maps | Project | — | The [mesh maps](mesh-maps.md), with a thumbnail of the first UDIM tile. Unbaked maps show **not baked**; out-of-date maps have an amber name. |
 | Images | Project | — | Imported images (including stencils and brush alphas), with thumbnails, sorted by name. Hover shows the size and the source file. |
 | Smart Materials | Library | `smart-materials` | `.smat` files, with thumbnails. Created with **Save as smart material**. |
 | Materials | Library | `materials` | Reserved: every file, by name, with no actions yet. |
+| Textures | Library | `textures` | First the procedural presets (**Perlin Noise**, **Simplex Noise**, **Value Noise**, **Cellular F1**, **Cellular F2**, **Cellular F2-F1**, **Gradient**: a Noise, Cellular or Gradient node with that type or output, other settings at their defaults), then images, with thumbnails. Preset thumbnails show the node on a flat square at its default scale. |
 | Smart Masks | Library | `smart-masks` | Reserved: every file, by name, with no actions yet. |
 | Brushes | Library | `brushes` | Reserved: every file, by name, with no actions yet. |
 | Alphas | Library | `alphas` | Images, with thumbnails. Color images are used by their luminance. |
@@ -85,7 +122,7 @@ category folder are not scanned. A file that can't be read shows **unreadable** 
 thumbnail; using it reports the error in the status bar.
 
 Thumbnails and previews keep the image's aspect ratio: images fit a square tile, environments
-a tile twice as wide as it is high. HDR and EXR files are tone-mapped with a fixed filmic curve
+a tile twice as wide as it is high. Smart materials without a saved preview show **no preview**. HDR and EXR files are tone-mapped with a fixed filmic curve
 (exposure 0), whatever the [view transform](color-management.md#view-transform); other images
 are shown as they are. Thumbnails of the project's
 images are made from their source files, in the background, when **Images** is first shown and
@@ -95,6 +132,8 @@ when an image is added.
 |---|---|---|---|
 | Mesh map | Adds it as a mask effect (a Mesh Map node) on the selected layer. | Onto the Node Editor: adds a Mesh Map node. | **Add to mask of selected layer**, **Show in viewport**. |
 | Smart material | Adds it above the selected layer. | Onto the Layers panel: adds it there. | **Add to layers**. |
+| Procedural preset | — | Onto the Node Editor: adds its node. | — |
+| Texture | Imports it into the project's images (it then appears in **Images**). | Onto the Node Editor: imports it and adds an Image node using it. | **Import into project**. |
 | Alpha | Sets it as the brush alpha. | — | **Use as brush alpha**. |
 | Stencil, or image in another folder | Loads it as a stencil. | — | **Load as stencil**. |
 | Environment | Loads it as the viewport environment. | — | **Load environment**. |
@@ -118,7 +157,7 @@ amber dot while the project has unsaved changes.
 |---|---|
 | File | New Project, Open Project, Open Recent, Save, Save As, Reimport Mesh, Export Textures |
 | Edit | Preferences, Undo, Redo |
-| Viewport | View transform, Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting. See [Color management](color-management.md). |
+| Viewport | View transform, Exposure, Environment rotation, Load environment (HDR/EXR), Studio lighting, Ambient occlusion. See [Viewport lighting](viewport-lighting.md) and [Color management](color-management.md). |
 | Project | Channels |
 | Window | Performance, Node Editor, Mesh Maps, Import Log |
 | Help | Check for Updates… (**Update Available…** when a newer release exists) |

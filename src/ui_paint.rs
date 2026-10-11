@@ -1,11 +1,12 @@
 //! The tool rail, the viewport toolbar, and the Brush, Brush Values and Paint Buffer panels.
 //! See docs/reference/brushes-tools-stencils.md, paint-buffer.md and windows-and-panels.md#viewport.
 
-use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Color32, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 
 use crate::channels::Channel;
 use crate::gpu::Gpu;
-use crate::paint::{BakeMode, OnCameraMove, PaintEngine, SizeSpace, Tool};
+use crate::icons::{self, Icon};
+use crate::paint::{BakeMode, Brush, OnCameraMove, PaintEngine, SizeSpace, Tool};
 use crate::project::Project;
 use crate::ui_theme as t;
 use crate::ui_widgets::{self as w, Check, Field, Section, Toggle};
@@ -29,8 +30,14 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
             } else if resp.hovered() {
                 p.rect_filled(rect, t::R_CONTROL, t::BG_INPUT);
             }
-            let color = if on { t::ACCENT } else if resp.hovered() { t::TEXT } else { t::TEXT_2 };
-            tool_icon(p, tool, rect.shrink(8.0), color);
+            // Blender's colored tool icons: full color when current or hovered, dimmed otherwise.
+            let color = if on || resp.hovered() { Color32::WHITE } else { t::TEXT_2 };
+            let icon = match tool {
+                Tool::Paint => Icon::Brush,
+                Tool::Erase => Icon::Erase,
+                Tool::PaintThrough => Icon::Stencil,
+            };
+            icons::paint(p, icon, rect.shrink(8.0), color);
             if resp.on_hover_text(format!("{name}  {}", format(&bindings.get(action)))).clicked() {
                 paint.tool = tool;
             }
@@ -41,31 +48,69 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
     });
 }
 
-/// Line icons for the tools, drawn into `r`.
-fn tool_icon(p: &egui::Painter, tool: Tool, r: Rect, color: Color32) {
-    let st = Stroke::new(1.4, color);
-    let at = |x: f32, y: f32| pos2(r.left() + x * r.width(), r.top() + y * r.height());
-    match tool {
-        Tool::Paint => {
-            // Handle, ferrule and a rounded tip, bottom left to top right.
-            p.line_segment([at(0.95, 0.05), at(0.45, 0.55)], st);
-            p.add(egui::Shape::closed_line(vec![at(0.42, 0.45), at(0.55, 0.58), at(0.35, 0.9), at(0.05, 0.95), at(0.1, 0.65)], st));
+/// Resolution of the tip preview drawn inside the brush cursor.
+const TIP_PREVIEW_RES: u32 = 128;
+
+/// The brush tip as shown inside the cursor, made again when the tip changes.
+#[derive(Default)]
+pub struct TipPreview {
+    /// Alpha image name and layer, and hardness (round tips only).
+    key: Option<(String, i32, u32)>,
+    tex: Option<egui::TextureHandle>,
+}
+
+impl TipPreview {
+    /// The tip in white, its alpha the dab's strength: the round falloff or the alpha image.
+    fn texture(&mut self, ctx: &egui::Context, gpu: &Gpu, p: &Project, brush: &Brush) -> Option<&egui::TextureHandle> {
+        let layer = p.scene.image_layer(&brush.alpha);
+        let hardness = if layer >= 0 { 0 } else { (brush.hardness.clamp(0.0, 0.99) * 1000.0) as u32 };
+        let key = (brush.alpha.clone(), layer, hardness);
+        if self.key.as_ref() != Some(&key) {
+            let n = TIP_PREVIEW_RES;
+            let alpha: Vec<u8> = if layer >= 0 {
+                // Read back from the image pool: what the dab shader samples.
+                let res = p.scene.images.res;
+                let bytes = gpu.read_texture(&p.scene.images.texture, layer as u32, 4);
+                let img = image::RgbaImage::from_raw(res, res, bytes)?;
+                let small = image::imageops::resize(&img, n, n, image::imageops::FilterType::Triangle);
+                small.pixels().map(|px| {
+                    let [r, g, b, a] = px.0.map(|c| c as f32 / 255.0);
+                    ((0.2126 * r + 0.7152 * g + 0.0722 * b) * a * 255.0) as u8
+                }).collect()
+            } else {
+                // The dab shader's falloff: full strength out to the hardness, then smoothstep.
+                let h = hardness as f32 / 1000.0;
+                (0..n * n).map(|i| {
+                    let (x, y) = ((i % n) as f32 + 0.5, (i / n) as f32 + 0.5);
+                    let d = ((x / n as f32 * 2.0 - 1.0).powi(2) + (y / n as f32 * 2.0 - 1.0).powi(2)).sqrt();
+                    let t = ((d - h) / (1.0 - h)).clamp(0.0, 1.0);
+                    let v = if d >= 1.0 { 0.0 } else { 1.0 - t * t * (3.0 - 2.0 * t) };
+                    (v * 255.0) as u8
+                }).collect()
+            };
+            let rgba: Vec<u8> = alpha.iter().flat_map(|&a| [255, 255, 255, a]).collect();
+            let img = egui::ColorImage::from_rgba_unmultiplied([n as usize, n as usize], &rgba);
+            self.tex = Some(ctx.load_texture("brush tip preview", img, egui::TextureOptions::LINEAR));
+            self.key = Some(key);
         }
-        Tool::Erase => {
-            // A tilted block, its lower half the rubber, on a base line.
-            let pts = [at(0.55, 0.05), at(0.95, 0.45), at(0.5, 0.9), at(0.1, 0.5)];
-            p.add(egui::Shape::closed_line(pts.to_vec(), st));
-            p.line_segment([at(0.33, 0.28), at(0.73, 0.68)], st);
-            p.line_segment([at(0.5, 0.95), at(0.95, 0.95)], st);
-        }
-        Tool::PaintThrough => {
-            // Stacked sheets: paint taken through a stencil.
-            let sheet = |y: f32| -> Vec<Pos2> { vec![at(0.5, y), at(0.95, y + 0.22), at(0.5, y + 0.44), at(0.05, y + 0.22)] };
-            p.add(egui::Shape::closed_line(sheet(0.05), st));
-            p.add(egui::Shape::line(vec![at(0.05, 0.5), at(0.5, 0.72), at(0.95, 0.5)], st));
-            p.add(egui::Shape::line(vec![at(0.05, 0.72), at(0.5, 0.94), at(0.95, 0.72)], st));
-        }
+        self.tex.as_ref()
     }
+}
+
+/// The brush cursor at `center`: the tip, rotated to the brush angle, inside a circle of the
+/// brush size. `radius` is in points.
+pub fn brush_cursor(ui: &egui::Ui, gpu: &Gpu, p: &Project, brush: &Brush, preview: &mut TipPreview, center: egui::Pos2, radius: f32) {
+    let painter = ui.painter();
+    if let Some(tex) = preview.texture(ui.ctx(), gpu, p, brush) {
+        // The alpha image fills the square around the circle, as in the dab shader.
+        let rect = egui::Rect::from_center_size(center, vec2(radius, radius) * 2.0);
+        egui::Image::new(tex)
+            .rotate(brush.angle.to_radians(), vec2(0.5, 0.5))
+            .tint(Color32::from_white_alpha(70))
+            .paint_at(ui, rect);
+    }
+    painter.circle_stroke(center, radius, Stroke::new(1.0, Color32::from_white_alpha(200)));
+    painter.circle_stroke(center, radius + 1.0, Stroke::new(1.0, Color32::from_black_alpha(120)));
 }
 
 /// The strip above the viewport: Size, Flow and Hardness, and the bake mode on the right.
@@ -133,7 +178,7 @@ pub fn brush_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut Pa
                 }
             }
         }
-        if !b.alpha.is_empty() && ui.add(w::ghost("×")).on_hover_text("Round brush").clicked() {
+        if !b.alpha.is_empty() && ui.add(w::ghost_icon(Icon::Close)).on_hover_text("Round brush").clicked() {
             b.alpha.clear();
         }
     });
@@ -176,7 +221,7 @@ pub fn brush_values_panel(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngin
                         let mut rgb = v.values[i];
                         let size = egui::vec2(ui.available_width(), t::H_CONTROL - 4.0);
                         ui.spacing_mut().interact_size = size;
-                        if ui.color_edit_button_rgb(&mut rgb).changed() {
+                        if crate::ui_widgets::color_edit(ui, &mut rgb).changed() {
                             v.values[i] = rgb;
                         }
                     });
@@ -312,7 +357,7 @@ pub fn stencils_panel(ui: &mut egui::Ui, p: &mut Project) {
 /// The Stencils section's header actions: add a stencil, remove the active one.
 pub fn stencils_actions(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
     if let Some(a) = p.stencils.active {
-        if ui.add(w::ghost("−")).on_hover_text("Remove the active stencil").clicked() {
+        if ui.add(w::ghost_icon(Icon::Remove)).on_hover_text("Remove the active stencil").clicked() {
             p.stencils.remove(a);
         }
     }

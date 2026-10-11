@@ -1,0 +1,26 @@
+# Viewport ambient occlusion (docs/reference/viewport-lighting.md#ambient-occlusion).
+new assets/crate.glb 1024
+size 256x256
+camera 30 35
+
+# Without a baked AO map the setting changes nothing.
+render target/tests/ao/unbaked_on.png
+ambient-occlusion off
+render target/tests/ao/unbaked_off.png
+expect-same target/tests/ao/unbaked_on.png target/tests/ao/unbaked_off.png 0
+
+# Baked, it darkens the crate's inside.
+bake ao
+ambient-occlusion on
+render target/tests/ao/on.png
+ambient-occlusion off
+render target/tests/ao/off.png
+expect-different target/tests/ao/on.png target/tests/ao/off.png 20
+
+# Saved with the project.
+save target/tests/ao/ao.crate
+open target/tests/ao/ao.crate
+render target/tests/ao/reopened.png
+expect-same target/tests/ao/off.png target/tests/ao/reopened.png 0
+
+expect-error ambient-occlusion maybe

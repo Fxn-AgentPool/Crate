@@ -20,6 +20,7 @@ const MODE_MESH_MAP: u32 = 2u;
 
 const FLAG_TILES: u32 = 1u;
 const FLAG_HDRI: u32 = 2u;
+const FLAG_AO: u32 = 4u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // UDIM slot (floor(u) + 10 * floor(v)) -> texture array layer, 0xffffffff when unused.
@@ -27,6 +28,8 @@ const FLAG_HDRI: u32 = 2u;
 // Equirectangular environment with a mip chain (used when FLAG_HDRI is set).
 @group(0) @binding(2) var env_map: texture_2d<f32>;
 @group(0) @binding(3) var env_samp: sampler;
+// The environment's diffuse irradiance divided by pi, equirectangular (baked on load).
+@group(0) @binding(4) var irradiance_map: texture_2d<f32>;
 
 struct VsIn {
     @location(0) pos: vec3f,
@@ -110,11 +113,16 @@ fn has_hdri() -> bool {
     return (frame.mode.z & FLAG_HDRI) != 0u;
 }
 
-fn env_sample(dir_in: vec3f, roughness: f32) -> vec3f {
+// Environment-space direction -> equirectangular uv, with the environment rotation applied.
+fn equirect_uv(dir_in: vec3f) -> vec2f {
     let d = normalize(rotate_y(dir_in, frame.viewport.w));
-    let uv = vec2f(atan2(d.x, -d.z) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
+    return vec2f(atan2(d.x, -d.z) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
+}
+
+// Mip level i of env_map is GGX-prefiltered for roughness i / (levels - 1) (see env_prefilter.wgsl).
+fn env_sample(dir_in: vec3f, roughness: f32) -> vec3f {
     let levels = f32(textureNumLevels(env_map));
-    return textureSampleLevel(env_map, env_samp, uv, roughness * (levels - 2.0)).rgb;
+    return textureSampleLevel(env_map, env_samp, equirect_uv(dir_in), roughness * (levels - 1.0)).rgb;
 }
 
 // Analytic studio environment: sky gradient, warm ground, soft key light.
@@ -133,7 +141,7 @@ fn env_radiance(dir_in: vec3f) -> vec3f {
 }
 
 fn env_irradiance(n: vec3f) -> vec3f {
-    if has_hdri() { return env_sample(n, 1.0); }
+    if has_hdri() { return textureSampleLevel(irradiance_map, env_samp, equirect_uv(n), 0.0).rgb; }
     let d = rotate_y(n, frame.viewport.w);
     let sky = vec3f(0.75, 0.8, 0.88);
     let ground = vec3f(0.3, 0.27, 0.24);
@@ -168,7 +176,13 @@ fn ggx_light(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, f0: vec3f, rough: f32)
     return (kd + spec) * n_l;
 }
 
-fn shade(m: Material, n: vec3f, v: vec3f) -> vec3f {
+// Specular occlusion from ambient occlusion (Lagarde & de Rousiers, "Moving Frostbite to PBR").
+fn specular_occlusion(n_v: f32, ao: f32, rough: f32) -> f32 {
+    return clamp(pow(n_v + ao, exp2(-16.0 * rough * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+// `ao` darkens the environment terms only, not the studio key and fill lights.
+fn shade(m: Material, n: vec3f, v: vec3f, ao: f32) -> vec3f {
     let rough = clamp(m.roughness, 0.02, 1.0);
     let metal = clamp(m.metallic, 0.0, 1.0);
     let base = max(m.base_color, vec3f(0.0));
@@ -188,12 +202,12 @@ fn shade(m: Material, n: vec3f, v: vec3f) -> vec3f {
     let r = reflect(-v, n);
     var spec_env: vec3f;
     if has_hdri() {
-        spec_env = env_sample(r, sqrt(rough));
+        spec_env = env_sample(r, rough);
     } else {
         spec_env = mix(env_radiance(r), env_irradiance(r), smoothstep(0.0, 0.8, rough));
     }
-    c += spec_env * env_brdf_approx(f0, rough, n_v);
-    c += albedo * env_irradiance(n);
+    c += spec_env * env_brdf_approx(f0, rough, n_v) * specular_occlusion(n_v, ao, rough);
+    c += albedo * env_irradiance(n) * ao;
     return c + m.emissive;
 }
 
@@ -250,7 +264,9 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f 
             c = mesh_map_display(s);
         }
         default: {
-            c = shade(m, n, v) * exp2(frame.viewport.z);
+            var ao = 1.0;
+            if (frame.mode.z & FLAG_AO) != 0u { ao = mesh_ao(tile_tex(s.tile_uv), s.layer); }
+            c = shade(m, n, v, ao) * exp2(frame.viewport.z);
         }
     }
     if (frame.mode.z & FLAG_TILES) != 0u {

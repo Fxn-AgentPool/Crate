@@ -93,6 +93,8 @@ pub struct ViewSettings {
     pub height_scale: f32,
     /// An HDRI environment is loaded and used for lighting.
     pub hdri: bool,
+    /// Darken environment lighting with the baked AO map (docs/reference/viewport-lighting.md).
+    pub ambient_occlusion: bool,
 }
 
 impl Default for ViewSettings {
@@ -106,6 +108,7 @@ impl Default for ViewSettings {
             env_rotation: 0.0,
             height_scale: 0.01,
             hdri: false,
+            ambient_occlusion: true,
         }
     }
 }
@@ -213,6 +216,8 @@ pub struct Viewport {
     /// Scene resources layout (group 1).
     scene_layout: wgpu::BindGroupLayout,
     env_view: wgpu::TextureView,
+    /// Diffuse irradiance of the environment (cosine-convolved, divided by pi), equirectangular.
+    irradiance_view: wgpu::TextureView,
     env_sampler: wgpu::Sampler,
     tile_map: Option<wgpu::Buffer>,
     lut_aces13: wgpu::TextureView,
@@ -245,6 +250,7 @@ impl Viewport {
                 gpu::uniform_entry(1, vf),
                 gpu::texture_entry(2, frag, wgpu::TextureViewDimension::D2, true),
                 gpu::sampler_entry(3, frag),
+                gpu::texture_entry(4, frag, wgpu::TextureViewDimension::D2, true),
             ],
         });
         let tonemap_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -319,6 +325,7 @@ impl Viewport {
             material_code: String::new(),
             scene_layout: scene_layout.clone(),
             env_view: env_texture(gpu, 1, 1, &[vec![0u16; 4]]).create_view(&Default::default()),
+            irradiance_view: env_texture(gpu, 1, 1, &[vec![0u16; 4]]).create_view(&Default::default()),
             lut_aces13: lut_texture(gpu, "ACES 1.3", LUT_ACES13).create_view(&Default::default()),
             lut_aces20: lut_texture(gpu, "ACES 2.0", LUT_ACES20).create_view(&Default::default()),
             env_sampler: d.create_sampler(&wgpu::SamplerDescriptor {
@@ -362,37 +369,47 @@ impl Viewport {
                 wgpu::BindGroupEntry { binding: 1, resource: tile_map.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.env_view) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.env_sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.irradiance_view) },
             ],
         }));
     }
 
     /// Loads an equirectangular HDR/EXR environment (None restores the studio lighting).
     pub fn set_environment(&mut self, gpu: &Gpu, path: Option<&std::path::Path>) -> anyhow::Result<()> {
+        let to_f16 = |v: &[f32]| v.iter().map(|v| half::f16::from_f32(v.min(65000.0)).to_bits()).collect::<Vec<u16>>();
+        let mut irradiance = env_texture(gpu, 1, 1, &[vec![0u16; 4]]);
         let tex = match path {
             None => env_texture(gpu, 1, 1, &[vec![0u16; 4]]),
             Some(p) => {
                 use anyhow::Context;
                 let img = image::open(p).with_context(|| format!("Could not read {}", p.display()))?.to_rgba32f();
                 // Keep the base level at most 2048 wide; build the mip chain by box filtering.
-                let mut cur = if img.width() > 2048 {
-                    image::imageops::resize(&img, 2048, 1024, image::imageops::FilterType::Triangle)
-                } else {
-                    img
-                };
+                // (Not image::imageops::resize: it clamps float pixels to 1, clipping every light.)
+                let mut cur = (img.width(), img.height(), img.into_raw());
+                while cur.0 > 2048 {
+                    cur = halve(cur.0, cur.1, &cur.2);
+                }
                 let mut mips = Vec::new();
                 loop {
-                    mips.push((cur.width(), cur.height(), cur.as_raw().iter().map(|v| half::f16::from_f32(v.min(65000.0)).to_bits()).collect::<Vec<u16>>()));
-                    if cur.width() <= 4 || cur.height() <= 2 {
+                    mips.push((cur.0, cur.1, to_f16(&cur.2)));
+                    // Irradiance is smooth, so a small source suffices; box filtering keeps small, bright lights' energy.
+                    if cur.0 <= IRRADIANCE_SOURCE_WIDTH && irradiance.width() == 1 {
+                        let (w, h, data) = irradiance_map(cur.0, cur.1, &cur.2);
+                        irradiance = env_texture(gpu, w, h, &[to_f16(&data)]);
+                    }
+                    if cur.0 <= 4 || cur.1 <= 2 {
                         break;
                     }
-                    cur = image::imageops::resize(&cur, cur.width() / 2, cur.height() / 2, image::imageops::FilterType::Triangle);
+                    cur = halve(cur.0, cur.1, &cur.2);
                 }
                 let (w, h, _) = mips[0];
+                let levels = SPECULAR_LEVELS.min(mips.len() as u32);
                 let data: Vec<Vec<u16>> = mips.into_iter().map(|m| m.2).collect();
-                env_texture(gpu, w, h, &data)
+                prefilter_environment(gpu, &env_texture(gpu, w, h, &data), &self.env_sampler, levels)
             }
         };
         self.env_view = tex.create_view(&Default::default());
+        self.irradiance_view = irradiance.create_view(&Default::default());
         self.rebind(gpu);
         Ok(())
     }
@@ -557,7 +574,7 @@ impl Viewport {
             bbox_min: mesh.bbox_min.extend(0.0).into(),
             bbox_size: size.max(Vec3::splat(1e-6)).extend(0.0).into(),
             viewport: [width as f32, height as f32, view.exposure, view.env_rotation],
-            mode: [mode, index, view.show_tiles as u32 | (view.hdri as u32) << 1, view.height_scale.to_bits()],
+            mode: [mode, index, view.show_tiles as u32 | (view.hdri as u32) << 1 | (view.ambient_occlusion as u32) << 2, view.height_scale.to_bits()],
             light: [key.x, key.y, key.z, 0.35],
         };
         gpu.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -694,6 +711,29 @@ mod tests {
     }
 
     #[test]
+    fn halving_keeps_bright_values() {
+        // 3x2: a bright texel must survive (no clamping), and the odd column folds in.
+        let src: Vec<f32> = [50.0, 1.0, 3.0, 1.0, 1.0, 3.0].iter().flat_map(|v| [*v, *v, *v, 1.0]).collect();
+        let (w, h, out) = halve(3, 2, &src);
+        assert_eq!((w, h), (1, 1));
+        assert!((out[0] - 59.0 / 6.0).abs() < 1e-4, "{out:?}");
+        assert_eq!(out[3], 1.0);
+    }
+
+    #[test]
+    fn irradiance_of_uniform_environment_is_its_radiance() {
+        // A uniform environment of radiance L gives E = pi * L in every direction.
+        let (w, h) = (64, 32);
+        let src: Vec<f32> = (0..w * h).flat_map(|_| [2.0, 1.0, 0.5, 1.0]).collect();
+        let (_, _, out) = irradiance_map(w, h, &src);
+        for px in out.chunks_exact(4) {
+            for (got, want) in px[..3].iter().zip([2.0, 1.0, 0.5]) {
+                assert!((got - want).abs() < want * 0.02, "{px:?}");
+            }
+        }
+    }
+
+    #[test]
     fn view_transform_keys_round_trip() {
         for t in ViewTransform::ALL {
             assert_eq!(ViewTransform::from_key(t.key()), Some(t));
@@ -701,6 +741,150 @@ mod tests {
         assert_eq!(ViewTransform::default(), ViewTransform::AgX);
         assert_eq!(ViewTransform::from_key("filmic"), None);
     }
+}
+
+/// Halves an RGBA float image with a 2x2 box filter, keeping values above 1. An odd last
+/// row or column is folded into its neighbor.
+fn halve(w: u32, h: u32, src: &[f32]) -> (u32, u32, Vec<f32>) {
+    let (ow, oh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0.0f32; (ow * oh * 4) as usize];
+    for y in 0..h {
+        let oy = (y / 2).min(oh - 1);
+        for x in 0..w {
+            let ox = (x / 2).min(ow - 1);
+            let (si, oi) = (((y * w + x) * 4) as usize, ((oy * ow + ox) * 4) as usize);
+            for c in 0..4 {
+                out[oi + c] += src[si + c];
+            }
+        }
+    }
+    // Each output texel's share of source texels (more at a folded odd edge).
+    for oy in 0..oh {
+        let ny = if oy == oh - 1 { h - 2 * oy } else { 2 }.min(h);
+        for ox in 0..ow {
+            let nx = if ox == ow - 1 { w - 2 * ox } else { 2 }.min(w);
+            let oi = ((oy * ow + ox) * 4) as usize;
+            for v in &mut out[oi..oi + 4] {
+                *v /= (nx * ny) as f32;
+            }
+        }
+    }
+    (ow, oh, out)
+}
+
+const IRRADIANCE_SOURCE_WIDTH: u32 = 128;
+const IRRADIANCE_WIDTH: u32 = 32;
+
+/// Direction of an equirectangular texel center, matching `equirect_uv` in viewport.wgsl.
+fn equirect_dir(x: u32, y: u32, w: u32, h: u32) -> [f32; 3] {
+    let phi = ((x as f32 + 0.5) / w as f32 - 0.5) * std::f32::consts::TAU;
+    let theta = (y as f32 + 0.5) / h as f32 * std::f32::consts::PI;
+    [phi.sin() * theta.sin(), theta.cos(), -phi.cos() * theta.sin()]
+}
+
+/// Cosine-convolves an equirectangular RGBA environment into a small irradiance map holding
+/// E(n) / pi, so Lambertian diffuse is `albedo * map(n)`.
+fn irradiance_map(sw: u32, sh: u32, src: &[f32]) -> (u32, u32, Vec<f32>) {
+    // Each source texel as a direction weighted by its solid angle.
+    let texel = std::f32::consts::TAU / sw as f32 * std::f32::consts::PI / sh as f32;
+    let source: Vec<([f32; 3], [f32; 3])> = (0..sh)
+        .flat_map(|y| (0..sw).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let d = equirect_dir(x, y, sw, sh);
+            let i = ((y * sw + x) * 4) as usize;
+            let weight = texel * (1.0 - d[1] * d[1]).max(0.0).sqrt() / std::f32::consts::PI;
+            (d, [src[i] * weight, src[i + 1] * weight, src[i + 2] * weight])
+        })
+        .collect();
+    let (w, h) = (IRRADIANCE_WIDTH, IRRADIANCE_WIDTH / 2);
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let n = equirect_dir(x, y, w, h);
+            let mut e = [0.0f32; 3];
+            for (d, l) in &source {
+                let c = n[0] * d[0] + n[1] * d[1] + n[2] * d[2];
+                if c > 0.0 {
+                    e[0] += l[0] * c;
+                    e[1] += l[1] * c;
+                    e[2] += l[2] * c;
+                }
+            }
+            out.extend_from_slice(&[e[0], e[1], e[2], 1.0]);
+        }
+    }
+    (w, h, out)
+}
+
+/// Mip levels of the specular environment; level i holds GGX roughness i / (levels - 1).
+const SPECULAR_LEVELS: u32 = 7;
+const SPECULAR_SAMPLES: u32 = 512;
+
+/// Convolves a box-filtered environment mip chain with the GGX lobe into a new texture whose
+/// mip level i is prefiltered for roughness i / (levels - 1), read by `env_sample` in viewport.wgsl.
+fn prefilter_environment(gpu: &Gpu, source: &wgpu::Texture, sampler: &wgpu::Sampler, levels: u32) -> wgpu::Texture {
+    let d = &gpu.device;
+    let (w, h) = (source.width(), source.height());
+    let tex = d.create_texture(&wgpu::TextureDescriptor {
+        label: Some("specular environment"),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+        view_formats: &[],
+    });
+    let module = gpu::shader(d, "environment prefilter", include_str!("shaders/env_prefilter.wgsl"));
+    let pipeline = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("environment prefilter"),
+        layout: None,
+        module: &module,
+        entry_point: Some("prefilter"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let source_view = source.create_view(&Default::default());
+    // One submit per level keeps each GPU batch short (the largest is ~270M samples).
+    for level in 0..levels {
+        let (lw, lh) = ((w >> level).max(1), (h >> level).max(1));
+        let roughness = if levels > 1 { level as f32 / (levels - 1) as f32 } else { 0.0 };
+        let mut params = Vec::with_capacity(16);
+        for word in [lw, lh, roughness.to_bits(), SPECULAR_SAMPLES] {
+            params.extend_from_slice(&word.to_le_bytes());
+        }
+        let buffer = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("environment prefilter"),
+            size: params.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        gpu.queue.write_buffer(&buffer, 0, &params);
+        let target = tex.create_view(&wgpu::TextureViewDescriptor {
+            base_mip_level: level,
+            mip_level_count: Some(1),
+            ..Default::default()
+        });
+        let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("environment prefilter"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&source_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&target) },
+            ],
+        });
+        let mut enc = d.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(lw.div_ceil(8), lh.div_ceil(8), 1);
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+    tex
 }
 
 /// Rgba16Float texture with the given mip levels (u16 halves, RGBA).
