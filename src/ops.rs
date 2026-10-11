@@ -45,17 +45,6 @@ pub enum LayerKind {
 }
 
 impl LayerKind {
-    /// Short badge shown in the Layers panel.
-    pub fn icon(self) -> &'static str {
-        match self {
-            LayerKind::Paint => "P",
-            LayerKind::Fill => "F",
-            LayerKind::Group => "G",
-            LayerKind::Graph => "N",
-            LayerKind::SmartMaterial => "S",
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             LayerKind::Paint => "Paint layer",

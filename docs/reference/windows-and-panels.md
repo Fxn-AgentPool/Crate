@@ -106,7 +106,7 @@ The Library is shown only while a project is open.
 | Part | Where | Contents |
 |---|---|---|
 | Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, the bake mode (**Live** with a green dot, or **Manual**); clicking it switches the mode, like `Ctrl+Shift+B`. |
-| Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. |
+| Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. Hidden while the viewport is too narrow for it. |
 
 ## Menus
 

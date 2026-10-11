@@ -425,10 +425,28 @@ impl CrateApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let frame = egui::Frame::new()
             .fill(crate::ui_theme::BG_CHROME)
-            .inner_margin(egui::Margin::symmetric(8, 2))
+            .inner_margin(egui::Margin::symmetric(12, 6))
             .stroke(egui::Stroke::new(1.0, crate::ui_theme::DIVIDER));
         egui::Panel::top("menu").frame(frame).show(ui, |ui| {
+            use crate::ui_theme as t;
+            // The project's name in the middle, with a dot while it has unsaved changes.
+            let bar = ui.max_rect();
+            if let Some(doc) = &self.doc {
+                let name = doc.name.clone().unwrap_or_else(|| "Untitled".into());
+                let galley = ui.painter().layout_no_wrap(name, t::body(), t::TEXT);
+                let dirty = doc.has_unsaved_changes();
+                let w = galley.size().x + if dirty { 14.0 } else { 0.0 };
+                let pos = egui::pos2(bar.center().x - w / 2.0, bar.center().y - galley.size().y / 2.0);
+                ui.painter().galley(pos, galley, t::TEXT);
+                if dirty {
+                    ui.painter().circle_filled(egui::pos2(bar.center().x + w / 2.0 - 3.0, bar.center().y), 3.0, t::ATTENTION);
+                }
+            }
             egui::MenuBar::new().ui(ui, |ui| {
+                let (mark, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::hover());
+                ui.painter().rect_filled(mark, 4, t::BRAND);
+                ui.label(egui::RichText::new("Crate").font(egui::FontId::new(12.5, egui::FontFamily::Name(t::SEMIBOLD.into()))));
+                ui.add_space(8.0);
                 ui.menu_button("File", |ui| {
                     if ui.button("New Project…\tCtrl+N").clicked() {
                         self.guarded(Pending::New);
@@ -553,8 +571,8 @@ impl CrateApp {
                 };
                 let m = &doc.mesh;
                 ui.label(mono(doc.original_mesh.file_name().unwrap_or_default().to_string_lossy().into_owned(), t::TEXT_2));
-                ui.label(mono(format!("{} triangles", m.triangle_count()), t::TEXT_3));
-                ui.label(mono(format!("tiles {}", m.tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")), t::TEXT_3));
+                ui.label(mono(format!("{} tris", thousands(m.triangle_count() as u64)), t::TEXT_3));
+                ui.label(mono(format!("UDIM {}", m.tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")), t::TEXT_3));
                 ui.label(mono(format!("{}²", doc.tile_resolution()), t::TEXT_3));
                 if !doc.material_errors.is_empty() {
                     ui.colored_label(t::ERROR, doc.material_errors.join("; "));
@@ -565,14 +583,12 @@ impl CrateApp {
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(mono(
-                        match self.view.display {
-                            DisplayMode::Material => "Material".to_string(),
-                            DisplayMode::Channel(c) => Channel::ALL[c as usize].name().to_string(),
-                            DisplayMode::MeshMap(i) => MeshMap::ALL[i as usize].name().to_string(),
-                        },
-                        t::TEXT_3,
-                    ));
+                    let shown = match self.view.display {
+                        DisplayMode::Material => "Material",
+                        DisplayMode::Channel(c) => Channel::ALL[c as usize].name(),
+                        DisplayMode::MeshMap(i) => MeshMap::ALL[i as usize].name(),
+                    };
+                    ui.label(mono(format!("{shown} view"), t::TEXT_3));
                     let target = paint_target_label(doc);
                     let color = if doc.selection.is_some() && target != "No paint target" { t::TEXT_2 } else { t::ATTENTION };
                     ui.label(mono(target, color));
@@ -600,7 +616,15 @@ impl CrateApp {
     }
 
     fn viewport_ui(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.available_rect_before_wrap();
+        let mut rect = ui.available_rect_before_wrap();
+        if let Some(doc) = self.doc.as_mut() {
+            let (bar, rest) = rect.split_top_bottom_at_y(rect.top() + 40.0);
+            let shortcut = crate::shortcuts::format(&self.bindings.get(crate::shortcuts::Action::ToggleBakeMode));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
+                crate::ui_paint::viewport_toolbar(ui, &self.gpu, doc, &mut self.paint, &shortcut);
+            });
+            rect = rest;
+        }
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         let Some(doc) = self.doc.as_mut() else {
             ui.painter().rect_filled(rect, 0.0, egui::Color32::from_gray(40));
@@ -811,6 +835,7 @@ impl CrateApp {
                 ui.painter().circle_stroke(hp, r + 1.0, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)));
             }
         }
+        display_switcher(ui, rect, &mut self.view.display, &self.doc.as_ref().unwrap().channels);
         if response.dragged() || response.hovered() {
             ui.ctx().request_repaint();
         }
@@ -1035,6 +1060,7 @@ impl CrateApp {
     fn side_panels(&mut self, ui: &mut egui::Ui) {
         let Some(doc) = &mut self.doc else { return };
         let mut library_action = None;
+        crate::ui_paint::tool_rail(ui, &mut self.paint, &self.bindings);
         let panel_frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::same(crate::ui_theme::PANEL_PAD as i8));
         egui::Panel::left("left").resizable(true).default_size(280.0).frame(panel_frame).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1079,14 +1105,21 @@ impl CrateApp {
             None => {}
         }
         let mut actions = PanelActions::default();
-        egui::Panel::right("right").resizable(true).default_size(330.0).show(ui, |ui| {
+        // The Layers list runs edge to edge; the headers and Properties keep the panel padding.
+        let bare = egui::Frame::side_top_panel(ui.style()).inner_margin(0);
+        egui::Panel::right("right").resizable(true).default_size(330.0).frame(bare).show(ui, |ui| {
             let h = ui.available_height();
-            egui::Panel::bottom("properties").resizable(true).default_size(h * 0.5).show(ui, |ui| {
-                crate::ui_layer_list::panel_header(ui, "Properties");
-                ui_layers::properties_panel(ui, &self.gpu, doc);
+            egui::Panel::bottom("properties").resizable(true).default_size(h * 0.5).frame(bare).show(ui, |ui| {
+                let name = ui_layers::selection_name(doc).unwrap_or_default();
+                crate::ui_layer_list::panel_header(ui, "Properties", |ui| {
+                    ui.label(egui::RichText::new(name).color(crate::ui_theme::TEXT_2));
+                });
+                egui::Frame::NONE.inner_margin(egui::Margin::same(crate::ui_theme::PANEL_PAD as i8)).show(ui, |ui| {
+                    ui_layers::properties_panel(ui, &self.gpu, doc);
+                });
             });
-            egui::CentralPanel::default().show(ui, |ui| {
-                crate::ui_layer_list::panel_header(ui, "Layers");
+            egui::CentralPanel::default().frame(bare).show(ui, |ui| {
+                crate::ui_layer_list::panel_header(ui, "Layers", |ui| crate::ui_layer_list::channel_menu(ui, doc));
                 self.thumbs.prune(doc);
                 crate::ui_layer_list::layers_panel(ui, &self.gpu, doc, &mut actions, &mut self.thumbs);
             });
@@ -1111,7 +1144,7 @@ impl CrateApp {
             doc.set_preview(&self.gpu, None);
         }
         if self.node_editor.open {
-            egui::Panel::bottom("node editor").resizable(true).default_size(380.0).min_size(220.0).show(ui, |ui| {
+            egui::Panel::bottom("node editor").resizable(true).default_size(380.0).min_size(220.0).frame(bare).show(ui, |ui| {
                 self.node_editor.ui(ui, &self.gpu, doc);
             });
         }
@@ -1209,8 +1242,9 @@ impl CrateApp {
         }
 
         if self.show_mesh_maps {
-            let mut open = true;
-            // Settings in a scrolling column on the left, the bake preview filling the rest.
+            let (mut open, mut close) = (true, false);
+            // Settings in a scrolling column on the left, the bake preview filling the rest, the
+            // bake action in a footer.
             egui::Window::new("Mesh Maps")
                 .open(&mut open)
                 .resizable(true)
@@ -1221,8 +1255,12 @@ impl CrateApp {
                         ui.label("No project.");
                         return;
                     }
-                    let (width, height) = (ui.available_width() * 0.35, ui.available_height());
-                    ui.horizontal_top(|ui| {
+                    const FOOTER: f32 = 44.0;
+                    let full = ui.available_width();
+                    let (width, height) = (full * 0.35, ui.available_height() - FOOTER);
+                    let body = egui::Layout::left_to_right(egui::Align::Min);
+                    ui.allocate_ui_with_layout(egui::vec2(full, height), body, |ui| {
+                        ui.set_height(height);
                         // Top-down: the column would otherwise inherit the split's left-to-right
                         // layout and put the sections side by side.
                         let top_down = egui::Layout::top_down(egui::Align::Min);
@@ -1242,8 +1280,9 @@ impl CrateApp {
                             }
                         });
                     });
+                    close = self.mesh_maps_footer(ui);
                 });
-            self.show_mesh_maps = open;
+            self.show_mesh_maps = open && !close;
         }
     }
 
@@ -1325,6 +1364,36 @@ impl CrateApp {
         }
     }
 
+    /// The Mesh Maps window's footer: selection summary and progress, Close and Bake selected.
+    /// Returns whether Close was clicked.
+    fn mesh_maps_footer(&mut self, ui: &mut egui::Ui) -> bool {
+        use crate::ui_theme as t;
+        use crate::ui_widgets as w;
+        let Some(doc) = &mut self.doc else { return false };
+        let r = ui.available_rect_before_wrap();
+        ui.painter().hline(r.x_range(), r.top() + 0.5, egui::Stroke::new(1.0, t::DIVIDER));
+        ui.add_space(10.0);
+        let mut close = false;
+        ui.horizontal(|ui| {
+            let selected = self.bake_selection.iter().filter(|b| **b).count();
+            let outdated = MeshMap::ALL.into_iter().filter(|m| doc.maps.status(*m) == MapStatus::OutOfDate).count();
+            ui.label(egui::RichText::new(format!("{selected} selected · {outdated} outdated")).color(t::TEXT_2));
+            if let Some(job) = &doc.bake_job {
+                ui.add(egui::ProgressBar::new(job.progress()).show_percentage().desired_width(160.0).fill(t::accent(0.6)));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let can_bake = doc.bake_job.is_none() && selected > 0;
+                if ui.add_enabled(can_bake, w::primary("Bake selected")).clicked() {
+                    let maps: Vec<MeshMap> = MeshMap::ALL.into_iter().filter(|m| self.bake_selection[m.index()]).collect();
+                    doc.start_bake(&self.gpu, &maps);
+                    self.bake_selection = [false; 8];
+                }
+                close = ui.add(w::ghost("Close")).clicked();
+            });
+        });
+        close
+    }
+
     fn mesh_maps_ui(&mut self, ui: &mut egui::Ui) {
         use crate::ui_theme as t;
         use crate::ui_widgets::{self as w, Check, Field, Section, Toggle};
@@ -1353,18 +1422,6 @@ impl CrateApp {
                         ui.label(egui::RichText::new(st.label()).color(color).font(t::caption()));
                     });
                 });
-            }
-            ui.add_space(4.0);
-            ui.add_enabled_ui(!baking && self.bake_selection.iter().any(|b| *b), |ui| {
-                if ui.add(w::primary("Bake selected")).clicked() {
-                    let maps: Vec<MeshMap> =
-                        MeshMap::ALL.into_iter().filter(|m| self.bake_selection[m.index()]).collect();
-                    doc.start_bake(&self.gpu, &maps);
-                    self.bake_selection = [false; 8];
-                }
-            });
-            if let Some(job) = &doc.bake_job {
-                ui.add(egui::ProgressBar::new(job.progress()).show_percentage().fill(t::accent(0.6)));
             }
             if let Some(pct) = doc.maps.last_misses {
                 w::hint(ui, format!("Missed: {pct:.1}% of texels"));
@@ -1453,8 +1510,6 @@ const CAMERA_LOCKED: &str = "Camera locked: bake or clear the buffer first (Ctrl
 
 fn paint_panels(ui: &mut egui::Ui, gpu: &Gpu, doc: &mut Project, paint: &mut PaintEngine) {
     use crate::ui_widgets::Section;
-    crate::ui_paint::tool_bar(ui, paint);
-    ui.add_space(6.0);
     Section::new("Brush").right(crate::ui_paint::brush_summary(paint)).show(ui, |ui| {
         crate::ui_paint::brush_panel(ui, gpu, doc, paint);
     });
@@ -1470,6 +1525,39 @@ fn paint_panels(ui: &mut egui::Ui, gpu: &Gpu, doc: &mut Project, paint: &mut Pai
         |ui, doc| crate::ui_paint::stencils_actions(ui, gpu, doc),
         |ui, doc| crate::ui_paint::stencils_panel(ui, doc),
     );
+}
+
+/// The viewport's display choice, over its top-left corner: Material and the enabled channels.
+fn display_switcher(ui: &mut egui::Ui, viewport: egui::Rect, display: &mut DisplayMode, channels: &crate::channels::ChannelSettings) {
+    use crate::ui_theme as t;
+    let mut options = vec![(DisplayMode::Material, "Material")];
+    options.extend(Channel::ALL.into_iter().filter(|c| channels.is_enabled(*c)).map(|c| (DisplayMode::Channel(c.index() as u32), c.name())));
+    let galleys: Vec<_> = options.iter().map(|(_, name)| ui.painter().layout_no_wrap(name.to_string(), t::body(), t::TEXT)).collect();
+    let width: f32 = galleys.iter().map(|g| g.size().x + 20.0).sum::<f32>() + 2.0 * (options.len() as f32 - 1.0) + 4.0;
+    let rect = egui::Rect::from_min_size(viewport.min + egui::vec2(12.0, 12.0), egui::vec2(width, 28.0));
+    if rect.right() > viewport.right() - 12.0 || rect.bottom() > viewport.bottom() {
+        return;
+    }
+    let p = ui.painter_at(viewport);
+    p.rect(rect, 6, t::BG_PANEL, egui::Stroke::new(1.0, t::BORDER), egui::StrokeKind::Inside);
+    let mut x = rect.left() + 2.0;
+    for ((mode, name), galley) in options.iter().zip(galleys) {
+        let w = galley.size().x + 20.0;
+        let r = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 2.0), egui::vec2(w, rect.height() - 4.0));
+        let resp = ui.interact(r, egui::Id::new(("display switcher", *name)), Sense::click());
+        let on = *display == *mode;
+        if on {
+            p.rect_filled(r, 4, t::BG_ACTIVE);
+        } else if resp.hovered() {
+            p.rect_filled(r, 4, t::BG_INPUT);
+        }
+        let color = if on { t::TEXT } else { t::TEXT_2 };
+        p.galley_with_override_text_color(r.center() - galley.size() / 2.0, galley, color);
+        if resp.clicked() {
+            *display = *mode;
+        }
+        x += w + 2.0;
+    }
 }
 
 /// Name of the layer or mask layer painting writes to.
@@ -1488,6 +1576,19 @@ fn paint_target_label(doc: &Project) -> String {
     .unwrap_or_else(|| "No paint target".into())
 }
 
+/// 12317 → "12,317".
+fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -1499,4 +1600,15 @@ fn capitalize(s: &str) -> String {
 /// The interface's style (see ui_theme.rs).
 fn apply_theme(ctx: &egui::Context) {
     crate::ui_theme::apply(ctx);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn thousands_groups_digits() {
+        assert_eq!(super::thousands(0), "0");
+        assert_eq!(super::thousands(999), "999");
+        assert_eq!(super::thousands(12317), "12,317");
+        assert_eq!(super::thousands(1234567), "1,234,567");
+    }
 }

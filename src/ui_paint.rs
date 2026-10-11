@@ -1,7 +1,7 @@
-//! Brush, Brush Values and Paint Buffer panels.
-//! See docs/reference/brushes-tools-stencils.md and paint-buffer.md.
+//! The tool rail, the viewport toolbar, and the Brush, Brush Values and Paint Buffer panels.
+//! See docs/reference/brushes-tools-stencils.md, paint-buffer.md and windows-and-panels.md#viewport.
 
-use egui::RichText;
+use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 
 use crate::channels::Channel;
 use crate::gpu::Gpu;
@@ -10,9 +10,104 @@ use crate::project::Project;
 use crate::ui_theme as t;
 use crate::ui_widgets::{self as w, Check, Field, Section, Toggle};
 
-pub fn tool_bar(ui: &mut egui::Ui, paint: &mut PaintEngine) {
-    w::segmented(ui, &mut paint.tool, &[(Tool::Paint, "Paint"), (Tool::Erase, "Erase"), (Tool::PaintThrough, "Paint Through")])
-        .on_hover_text("B, E, P");
+/// Width of the tool rail at the left edge of the window.
+const RAIL_W: f32 = 48.0;
+
+/// The tool rail: one icon per tool, the current one in the selection color.
+pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::shortcuts::Bindings) {
+    use crate::shortcuts::{Action, format};
+    let frame = egui::Frame::new().fill(t::BG_CHROME).inner_margin(egui::Margin::symmetric(8, 8));
+    egui::Panel::left("tool rail").exact_size(RAIL_W).resizable(false).frame(frame).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let tools = [(Tool::Paint, "Paint", Action::ToolPaint), (Tool::Erase, "Erase", Action::ToolErase), (Tool::PaintThrough, "Paint Through", Action::ToolPaintThrough)];
+        for (tool, name, action) in tools {
+            let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+            let on = paint.tool == tool;
+            let p = ui.painter();
+            if on {
+                p.rect(rect, t::R_CONTROL, t::accent(0.14), Stroke::new(1.0, t::accent(0.45)), StrokeKind::Inside);
+            } else if resp.hovered() {
+                p.rect_filled(rect, t::R_CONTROL, t::BG_INPUT);
+            }
+            let color = if on { t::ACCENT } else if resp.hovered() { t::TEXT } else { t::TEXT_2 };
+            tool_icon(p, tool, rect.shrink(8.0), color);
+            if resp.on_hover_text(format!("{name}  {}", format(&bindings.get(action)))).clicked() {
+                paint.tool = tool;
+            }
+        }
+        ui.add_space(4.0);
+        let r = ui.available_rect_before_wrap();
+        ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, t::DIVIDER));
+    });
+}
+
+/// Line icons for the tools, drawn into `r`.
+fn tool_icon(p: &egui::Painter, tool: Tool, r: Rect, color: Color32) {
+    let st = Stroke::new(1.4, color);
+    let at = |x: f32, y: f32| pos2(r.left() + x * r.width(), r.top() + y * r.height());
+    match tool {
+        Tool::Paint => {
+            // Handle, ferrule and a rounded tip, bottom left to top right.
+            p.line_segment([at(0.95, 0.05), at(0.45, 0.55)], st);
+            p.add(egui::Shape::closed_line(vec![at(0.42, 0.45), at(0.55, 0.58), at(0.35, 0.9), at(0.05, 0.95), at(0.1, 0.65)], st));
+        }
+        Tool::Erase => {
+            // A tilted block, its lower half the rubber, on a base line.
+            let pts = [at(0.55, 0.05), at(0.95, 0.45), at(0.5, 0.9), at(0.1, 0.5)];
+            p.add(egui::Shape::closed_line(pts.to_vec(), st));
+            p.line_segment([at(0.33, 0.28), at(0.73, 0.68)], st);
+            p.line_segment([at(0.5, 0.95), at(0.95, 0.95)], st);
+        }
+        Tool::PaintThrough => {
+            // Stacked sheets: paint taken through a stencil.
+            let sheet = |y: f32| -> Vec<Pos2> { vec![at(0.5, y), at(0.95, y + 0.22), at(0.5, y + 0.44), at(0.05, y + 0.22)] };
+            p.add(egui::Shape::closed_line(sheet(0.05), st));
+            p.add(egui::Shape::line(vec![at(0.05, 0.5), at(0.5, 0.72), at(0.95, 0.5)], st));
+            p.add(egui::Shape::line(vec![at(0.05, 0.72), at(0.5, 0.94), at(0.95, 0.72)], st));
+        }
+    }
+}
+
+/// The strip above the viewport: Size, Flow and Hardness, and the bake mode on the right.
+pub fn viewport_toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut PaintEngine, bake_shortcut: &str) {
+    let rect = ui.max_rect();
+    ui.painter().rect_filled(rect, 0.0, t::BG_PANEL);
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
+    let inner = rect.shrink2(vec2(t::PANEL_PAD, 0.0));
+    let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    ui.spacing_mut().item_spacing.x = 6.0;
+    let b = &mut paint.brush;
+    ui.add(Field::new(&mut b.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
+    let mut flow = b.flow * 100.0;
+    if ui.add(Field::new(&mut flow, 0.0..=100.0).label("Flow").decimals(0).suffix("%").width(128.0)).changed() {
+        b.flow = flow / 100.0;
+    }
+    ui.add(Field::new(&mut b.hardness, 0.0..=1.0).label("Hardness").decimals(2).width(128.0));
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let live = paint.mode == BakeMode::Live;
+        if bake_mode_pill(ui, live).on_hover_text(format!("Switch to {} ({bake_shortcut})", if live { "Manual" } else { "Live" })).clicked() {
+            paint.set_mode(gpu, p, if live { BakeMode::Manual } else { BakeMode::Live });
+        }
+    });
+}
+
+/// "● Bake Live": the bake mode, with a green dot while Live.
+fn bake_mode_pill(ui: &mut egui::Ui, live: bool) -> egui::Response {
+    let font = t::body();
+    let label = ui.painter().layout_no_wrap("Bake".into(), font.clone(), t::TEXT_2);
+    let mode = ui.painter().layout_no_wrap(if live { "Live" } else { "Manual" }.into(), t::body_strong(), t::TEXT);
+    let width = 10.0 + 6.0 + 6.0 + label.size().x + 5.0 + mode.size().x + 10.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, t::H_CONTROL), Sense::click());
+    let p = ui.painter();
+    let bg = if resp.hovered() { t::BG_ACTIVE } else { t::BG_INPUT };
+    p.rect(rect, t::R_CONTROL, bg, Stroke::new(1.0, t::BORDER), StrokeKind::Inside);
+    let y = rect.center().y;
+    p.circle_filled(pos2(rect.left() + 13.0, y), 3.0, if live { t::SOCK_MATERIAL } else { t::TEXT_3 });
+    let x = rect.left() + 22.0;
+    let lw = label.size().x;
+    p.galley(pos2(x, y - label.size().y / 2.0), label, t::TEXT_2);
+    p.galley(pos2(x + lw + 5.0, y - mode.size().y / 2.0), mode, t::TEXT);
+    resp
 }
 
 pub fn brush_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut PaintEngine) {

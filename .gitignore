@@ -1,6 +1,7 @@
 # Build output, test renders and exports
 /target/
-
+/new-design/
+/assets/
 # Local Claude Code settings
 /.claude/settings.local.json
 

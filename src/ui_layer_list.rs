@@ -23,7 +23,7 @@ const EYE_W: f32 = 32.0;
 const BLEND_W: f32 = 38.0;
 const OPACITY_W: f32 = 30.0;
 
-const BG: Color32 = t::BG_CANVAS;
+const BG: Color32 = t::BG_PANEL;
 const ROW: Color32 = t::BG_PANEL;
 const ROW_HOVER: Color32 = Color32::from_rgb(0x1c, 0x1d, 0x21);
 const EFFECT: Color32 = t::BG_PANEL;
@@ -77,13 +77,39 @@ fn view_channel(ui: &egui::Ui) -> Channel {
     ui.ctx().data(|d| d.get_temp::<usize>(egui::Id::new("layer view channel"))).map(|i| Channel::ALL[i]).unwrap_or(Channel::BaseColor)
 }
 
-/// Strip header in the style of the panels ("LAYERS", "PROPERTIES").
-pub fn panel_header(ui: &mut egui::Ui, title: &str) {
+/// Strip header of the right panels ("LAYERS", "PROPERTIES"), with `right` drawn right-aligned
+/// at its other end.
+pub fn panel_header(ui: &mut egui::Ui, title: &str, right: impl FnOnce(&mut egui::Ui)) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), t::H_SECTION), Sense::hover());
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
     let text = egui::RichText::new(title.to_uppercase()).font(t::section()).color(t::TEXT_2).extra_letter_spacing(0.6);
     let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
-    ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, t::TEXT_2);
+    let title_right = rect.left() + t::PANEL_PAD + galley.size().x;
+    ui.painter().galley(pos2(rect.left() + t::PANEL_PAD, rect.center().y - galley.size().y / 2.0), galley, t::TEXT_2);
+    let right_rect = Rect::from_min_max(pos2(title_right + 12.0, rect.top()), pos2(rect.right() - t::PANEL_PAD, rect.bottom()));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new().id_salt(("panel header", title)).max_rect(right_rect).layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    child.set_clip_rect(right_rect);
+    right(&mut child);
+}
+
+/// The Layers header's channel menu: the channel whose blend mode and opacity the rows show.
+pub fn channel_menu(ui: &mut egui::Ui, p: &Project) {
+    let mut ch = view_channel(ui);
+    egui::ComboBox::from_id_salt("layer view channel combo")
+        .width(108.0)
+        .selected_text(ch.name())
+        .show_ui(ui, |ui| {
+            for c in Channel::ALL {
+                if p.channels.is_enabled(c) {
+                    ui.selectable_value(&mut ch, c, c.name());
+                }
+            }
+        })
+        .response
+        .on_hover_text("Channel whose blend mode and opacity the layers show");
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("layer view channel"), ch.index()));
 }
 
 /// Column titles above the rows: NAME, BLEND, OP.
@@ -99,8 +125,11 @@ fn column_header(ui: &mut egui::Ui) {
 }
 
 pub fn layers_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, actions: &mut PanelActions, thumbs: &mut Thumbnails) {
+    ui.add_space(4.0);
     toolbar(ui, gpu, p);
-    ui.add_space(2.0);
+    ui.add_space(4.0);
+    let r = ui.available_rect_before_wrap();
+    ui.painter().hline(r.x_range(), r.top() + 0.5, Stroke::new(1.0, t::DIVIDER));
     column_header(ui);
     let rect = ui.available_rect_before_wrap();
     ui.painter().rect_filled(rect, 0.0, BG);
@@ -258,6 +287,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> egui:
 fn toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
     let sel = p.selection.map(|s| s.layer());
     ui.horizontal(|ui| {
+        ui.add_space(t::PANEL_PAD - 4.0);
         ui.spacing_mut().item_spacing.x = 1.0;
         if icon_button(ui, Icon::Brush, "Add paint layer (Ctrl+Shift+N)", true).clicked() {
             ui_layers::add_paint(gpu, p);
@@ -295,23 +325,6 @@ fn toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         if icon_button(ui, Icon::Trash, "Delete (Delete)", sel.is_some()).clicked() {
             ui_layers::delete_selected(gpu, p);
         }
-        // Channel shown in the rows' blend mode / opacity readout.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut ch = view_channel(ui);
-            egui::ComboBox::from_id_salt("layer view channel combo")
-                .width(96.0)
-                .selected_text(ch.name())
-                .show_ui(ui, |ui| {
-                    for c in Channel::ALL {
-                        if p.channels.is_enabled(c) {
-                            ui.selectable_value(&mut ch, c, c.name());
-                        }
-                    }
-                })
-                .response
-                .on_hover_text("Channel whose blend mode and opacity the layers show");
-            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("layer view channel"), ch.index()));
-        });
     });
 }
 

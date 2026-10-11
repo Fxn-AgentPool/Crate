@@ -123,26 +123,6 @@ pub(crate) fn mask_add_menu(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: La
     }
 }
 
-fn kind_color(k: LayerKind) -> Color32 {
-    match k {
-        LayerKind::Paint => Color32::from_rgb(150, 90, 40),
-        LayerKind::Fill => Color32::from_rgb(50, 110, 60),
-        LayerKind::Group => Color32::from_rgb(90, 90, 110),
-        LayerKind::Graph => Color32::from_rgb(80, 70, 130),
-        LayerKind::SmartMaterial => Color32::from_rgb(140, 110, 30),
-    }
-}
-
-/// Small colored label used as an icon.
-fn badge(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
-    egui::Frame::new()
-        .fill(color)
-        .corner_radius(3)
-        .inner_margin(egui::Margin::symmetric(4, 0))
-        .show(ui, |ui| ui.label(RichText::new(text).small().strong().color(Color32::WHITE)))
-        .response
-}
-
 // ------------------------------------------------------------------ commands
 
 pub fn add_paint(gpu: &Gpu, p: &mut Project) {
@@ -212,6 +192,14 @@ pub fn move_selected(gpu: &Gpu, p: &mut Project, delta: i32) {
 
 // ------------------------------------------------------------------ properties
 
+/// Name of the selected layer or mask layer, for the Properties header.
+pub fn selection_name(p: &Project) -> Option<String> {
+    match p.selection? {
+        Selection::Layer(l) => ops::slot(&p.graph, l).map(|s| s.name.clone()),
+        Selection::MaskLayer(l, i) => ops::mask_slot(&p.graph, l, i).map(|m| m.name.clone()),
+    }
+}
+
 pub fn properties_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
     let Some(sel) = p.selection else {
         ui.label(RichText::new("Select a layer.").weak());
@@ -237,10 +225,6 @@ pub fn track(p: &mut Project, gpu: &Gpu, resp: &egui::Response, label: &str, app
 fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) {
     let Some(slot) = ops::slot(&p.graph, l).cloned() else { return };
     let kind = ops::layer_kind(&p.graph, &slot);
-    ui.horizontal(|ui| {
-        badge(ui, kind.icon(), kind_color(kind));
-        ui.label(RichText::new(&slot.name).font(t::body_strong()));
-    });
     let mut opacity = slot.opacity * 100.0;
     let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
     track(p, gpu, &r, "Layer opacity", |g| {
@@ -379,10 +363,6 @@ fn fill_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId) 
 
 fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, i: usize) {
     let Some(m) = ops::mask_slot(&p.graph, l, i).cloned() else { return };
-    ui.horizontal(|ui| {
-        badge(ui, "M", Color32::from_gray(90));
-        ui.label(RichText::new(&m.name).font(t::body_strong()));
-    });
     let mut opacity = m.opacity * 100.0;
     let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
     track(p, gpu, &r, "Mask opacity", |g| {

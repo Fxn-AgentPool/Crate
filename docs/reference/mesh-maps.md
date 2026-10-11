@@ -134,6 +134,11 @@ high-poly bake uses, so you can check the cage before baking. The viewport is no
 window can be resized by its edges (980 × 620 points at first). The settings take the left 35%
 of its width and scroll when they don't fit; the preview takes the rest.
 
+A footer runs along the bottom of the window. On the left it counts the checked maps and the
+out-of-date ones, for example **7 selected · 2 outdated**, followed by the bake's progress while
+a bake runs. On the right are **Close** and **Bake selected**, which is available when at least
+one map is checked and no bake is running.
+
 | Part | Color | Default opacity | Shows |
 |---|---|---|---|
 | Low poly | blue | 0.5 | The low-poly mesh. |

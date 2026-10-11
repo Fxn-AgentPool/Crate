@@ -26,6 +26,33 @@ const NODE_W: f32 = 200.0;
 const EDIT_ZOOM: f32 = 0.5;
 const HEADER: f32 = 22.0;
 const ROW: f32 = 20.0;
+/// The editor's inputs, listed under "? All shortcuts" (docs/reference/node-editor.md).
+const SHORTCUTS: &[(&str, &str)] = &[
+    ("Tab, right-click", "Add menu"),
+    ("Drag from output", "Connect"),
+    ("Drag empty space", "Box select (Shift adds)"),
+    ("Right-drag, Alt+drag", "Pan"),
+    ("Wheel", "Zoom"),
+    ("Ctrl+Shift+Click", "Preview a node; on empty space, stop"),
+    ("Alt+right-drag", "Lazy connect"),
+    ("Shift+Alt+right-drag", "Lazy connect with a menu"),
+    ("Ctrl+right-drag", "Cut links"),
+    ("Right-click a node", "Node menu"),
+    ("Delete", "Delete selected"),
+    ("Ctrl+X", "Dissolve selected"),
+    ("Alt+X", "Delete unused nodes"),
+    ("Ctrl+C, Ctrl+V", "Copy, paste"),
+    ("H", "Collapse or expand"),
+    ("Shift+W A S D", "Align top, left, bottom, right"),
+    ("Shift+=", "Align in a row or column"),
+    ("Alt+S", "Swap"),
+    ("K", "Link active to selected"),
+    ("Shift+C", "Copy settings to selected"),
+    ("Backspace", "Reset to defaults"),
+    ("A, Alt+A", "Select all, none"),
+    ("Home", "Frame all"),
+    ("Ctrl+0 + - 8 / , .", "Merge: mix, add, subtract, multiply, divide, min, max"),
+];
 const NEW_LAYER: &str = "slot_new";
 const NEW_EFFECT: &str = "m_new";
 
@@ -696,43 +723,76 @@ impl NodeEditor {
         if std::mem::take(&mut self.auto_layout_needed) {
             self.frame_needed = true;
         }
-        ui.horizontal(|ui| {
-            match self.focus {
-                Focus::Layer(l) => {
-                    let name = ops::slot(&p.graph, l).map(|s| s.name.clone()).unwrap_or_default();
-                    ui.strong(format!("Node Editor: {name}"));
-                    if ui.small_button("Whole graph").on_hover_text("Show the whole project graph").clicked() {
-                        self.set_focus(Focus::Root);
-                    }
-                }
-                Focus::Root => {
-                    ui.strong("Node Editor: whole project");
-                    if let Some(sel) = p.selection {
-                        if ui.small_button("Selected layer").on_hover_text("Show only the selected layer's graph (G)").clicked() {
-                            self.set_focus(Focus::Layer(sel.layer()));
-                        }
-                    }
-                }
-            }
-            if let Some(l) = p.preview.clone() {
-                let title = p.graph.get(l.node).map(|n| n.title().to_string()).unwrap_or_default();
-                ui.colored_label(crate::ui_theme::GOOD, format!("Previewing {title} › {}", pretty(&l.output)));
-                if ui.small_button("Stop preview").on_hover_text("Or Ctrl+Shift+click empty space").clicked() {
-                    p.set_preview(gpu, None);
-                }
-            }
-            ui.label(
-                egui::RichText::new(
-                    "Tab / right-click: add · drag output: connect · drag: box select · right-drag, Alt+drag: pan · \
-                     Ctrl+Shift+click: preview · Alt+right-drag: lazy connect · Ctrl+right-drag: cut links · right-click a node: more",
-                )
-                .weak(),
-            );
-        });
+        self.header(ui, gpu, p);
         egui::Panel::right("node props").resizable(true).default_size(260.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.properties(ui, gpu, p));
         });
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, gpu, p));
+    }
+
+    /// "NODE EDITOR / <view>", the view switch and preview state, and the main inputs as keycaps.
+    fn header(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
+        use crate::ui_theme as t;
+        use crate::ui_widgets as w;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), t::H_SECTION), Sense::hover());
+        ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
+        let mut ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(Vec2::new(t::PANEL_PAD, 0.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let ui = &mut ui;
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(egui::RichText::new("NODE EDITOR").font(t::section()).color(t::TEXT_2).extra_letter_spacing(0.6));
+        ui.label(egui::RichText::new("/").color(t::TEXT_3));
+        match self.focus {
+            Focus::Layer(l) => {
+                let name = ops::slot(&p.graph, l).map(|s| s.name.clone()).unwrap_or_default();
+                ui.label(egui::RichText::new(name).font(t::body_strong()).color(t::TEXT));
+                if ui.add(w::ghost("Whole graph")).on_hover_text("Show the whole project graph").clicked() {
+                    self.set_focus(Focus::Root);
+                }
+            }
+            Focus::Root => {
+                ui.label(egui::RichText::new("Whole project").font(t::body_strong()).color(t::TEXT));
+                if let Some(sel) = p.selection {
+                    if ui.add(w::ghost("Selected layer")).on_hover_text("Show only the selected layer's graph (G)").clicked() {
+                        self.set_focus(Focus::Layer(sel.layer()));
+                    }
+                }
+            }
+        }
+        if let Some(l) = p.preview.clone() {
+            let title = p.graph.get(l.node).map(|n| n.title().to_string()).unwrap_or_default();
+            ui.colored_label(t::GOOD, format!("Previewing {title} › {}", pretty(&l.output)));
+            if ui.add(w::secondary("Stop preview")).on_hover_text("Or Ctrl+Shift+click empty space").clicked() {
+                p.set_preview(gpu, None);
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let hint = |ui: &mut egui::Ui, keys: &str, what: &str| -> egui::Response {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    w::keycap(ui, keys);
+                    ui.label(egui::RichText::new(what).font(t::caption()).color(t::TEXT_3));
+                })
+                .response
+            };
+            // Right to left: the last hint first.
+            hint(ui, "?", "All shortcuts").on_hover_ui(|ui| {
+                egui::Grid::new("node editor shortcuts").num_columns(2).spacing([16.0, 3.0]).show(ui, |ui| {
+                    for (keys, what) in SHORTCUTS {
+                        ui.label(egui::RichText::new(*keys).font(t::value()).color(t::TEXT_2));
+                        ui.label(*what);
+                        ui.end_row();
+                    }
+                });
+            });
+            for (keys, what) in [("Ctrl+RMB", "Cut links"), ("Ctrl+Shift+Click", "Preview"), ("Tab", "Add")] {
+                ui.add_space(6.0);
+                hint(ui, keys, what);
+            }
+        });
     }
 
     fn to_screen(&self, origin: Pos2, pos: [f32; 2]) -> Pos2 {
