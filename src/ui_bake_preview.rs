@@ -42,14 +42,15 @@ impl BakePane {
             let row = |ui: &mut egui::Ui, part: &mut Part, name: &str, color: egui::Color32, enabled: bool| {
                 ui.add_enabled_ui(enabled, |ui| {
                     ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
+                        ui.add(crate::ui_widgets::Check::new(&mut part.show, ""));
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
                         ui.painter().rect_filled(rect, 2.0, color);
-                        ui.checkbox(&mut part.show, name);
+                        ui.label(name);
                     });
                 })
                 .response
                 .on_disabled_hover_text("Needs a high-poly mesh.");
-                ui.add_enabled(enabled && part.show, egui::Slider::new(&mut part.opacity, 0.0..=1.0).text("Opacity"));
+                ui.add_enabled(enabled && part.show, crate::ui_widgets::Field::new(&mut part.opacity, 0.0..=1.0).label("Opacity").decimals(2).width(150.0));
                 ui.end_row();
             };
             row(ui, &mut parts.low, "Low poly", egui::Color32::from_rgb(80, 150, 255), true);
@@ -103,7 +104,7 @@ impl BakePane {
             ui.label("Loading preview…");
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
         } else if let Some(e) = preview.error() {
-            ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+            ui.colored_label(crate::ui_theme::ERROR, e);
         }
     }
 }

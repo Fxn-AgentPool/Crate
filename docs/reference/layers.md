@@ -13,6 +13,11 @@ stack is shown by default. Layers are composited bottom to top.
 | Graph layer | nodes | Any node graph that outputs a Material. Shown when the content is not a Paint, Fill or Stack node. |
 | Smart material | star | A Group or Graph layer instanced from the smart material library, showing its exposed parameters. |
 
+Each row shows, from the left: visibility, the expand arrow of folders and layers with
+effects, the content and mask thumbnails, an icon for the layer type (hover for the type), the
+name, and the blend mode and opacity of the channel chosen at the top of the panel. The blend
+mode is amber when it isn't Normal, so non-default layers stand out. Hidden layers are faded.
+
 ## Layer properties
 
 | Property | Range | Default | Description |
@@ -23,6 +28,10 @@ stack is shown by default. Layers are composited bottom to top.
 | Channels | per channel | all enabled | Which channels the layer affects. |
 | Channel blend mode | see [Blend modes](blend-modes.md) | Normal | Set per channel. |
 | Channel opacity | 0–100 % | 100 % | Set per channel. Multiplies with layer opacity. |
+
+In the Properties panel, **Affects channels** shows the channels as chips, lit when the layer
+affects them. **Blend per channel** lists the affected channels with their blend mode, amber when
+it isn't Normal, and their opacity.
 
 ## Fill layer properties
 

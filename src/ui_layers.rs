@@ -7,6 +7,8 @@ use crate::gpu::Gpu;
 use crate::graph::{self, BlendMode, Graph, MaskSource, NodeId, ParamDef, ParamKind, Value};
 use crate::ops::{self, LayerKind, LayerRef, Selection};
 use crate::project::Project;
+use crate::ui_theme as t;
+use crate::ui_widgets::{Check, Chip, Field, Section, Toggle};
 
 /// Requests from the panels that the app handles (they need more than the project).
 #[derive(Default)]
@@ -237,33 +239,50 @@ fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) 
     let kind = ops::layer_kind(&p.graph, &slot);
     ui.horizontal(|ui| {
         badge(ui, kind.icon(), kind_color(kind));
-        ui.heading(&slot.name);
+        ui.label(RichText::new(&slot.name).font(t::body_strong()));
     });
     let mut opacity = slot.opacity * 100.0;
-    let r = ui.add(egui::Slider::new(&mut opacity, 0.0..=100.0).text("Opacity").suffix(" %"));
+    let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
     track(p, gpu, &r, "Layer opacity", |g| {
         if let Some(s) = ops::slot_mut(g, l) {
             s.opacity = opacity / 100.0;
         }
     });
 
-    egui::CollapsingHeader::new("Channels").default_open(true).show(ui, |ui| {
-        egui::Grid::new("layer channels").num_columns(4).show(ui, |ui| {
-            for c in Channel::ALL {
-                if !p.channels.is_enabled(c) {
-                    continue;
+    let channels: Vec<Channel> = Channel::ALL.into_iter().filter(|c| p.channels.is_enabled(*c)).collect();
+    Section::new("Affects channels").id_salt("layer affects channels").show(ui, |ui| {
+        let gap = ui.spacing().item_spacing.x * 0.5;
+        let width = ((ui.available_width() - 2.0 * gap) / 3.0).floor();
+        for row in channels.chunks(3) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for c in row {
+                    let mut enabled = slot.channels[c.index()].enabled;
+                    let r = ui.add(Chip::new(&mut enabled, c.name(), width));
+                    track(p, gpu, &r, "Layer channel", |g| {
+                        if let Some(s) = ops::slot_mut(g, l) {
+                            s.channels[c.index()].enabled = enabled;
+                        }
+                    });
                 }
-                let cb = slot.channels[c.index()];
-                let mut enabled = cb.enabled;
-                let r = ui.checkbox(&mut enabled, c.name());
-                track(p, gpu, &r, "Layer channel", |g| {
-                    if let Some(s) = ops::slot_mut(g, l) {
-                        s.channels[c.index()].enabled = enabled;
-                    }
-                });
+            });
+        }
+    });
+
+    Section::new("Blend per channel").id_salt("layer blend per channel").show(ui, |ui| {
+        for c in channels.iter().copied().filter(|c| slot.channels[c.index()].enabled) {
+            let cb = slot.channels[c.index()];
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, t::H_CONTROL), egui::Sense::hover());
+                ui.painter().circle_filled(r.left_center() + egui::vec2(3.0, 0.0), 3.0, t::TEXT_2);
+                ui.painter().text(r.left_center() + egui::vec2(12.0, 0.0), egui::Align2::LEFT_CENTER, c.name(), t::body(), t::TEXT);
                 let mut mode = cb.mode;
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(("mode", c.index())).width(100.0).selected_text(mode.name()).show_ui(ui, |ui| {
+                let field_w = 56.0;
+                let combo_w = (ui.available_width() - field_w - ui.spacing().item_spacing.x).max(60.0);
+                // Amber when the mode isn't Normal, so non-default blends stand out.
+                let text = if mode == BlendMode::Normal { RichText::new(mode.name()) } else { RichText::new(mode.name()).color(t::ATTENTION) };
+                egui::ComboBox::from_id_salt(("mode", c.index())).width(combo_w).selected_text(text).show_ui(ui, |ui| {
                     for m in BlendMode::for_channel(c) {
                         changed |= ui.selectable_value(&mut mode, *m, m.name()).changed();
                     }
@@ -276,15 +295,14 @@ fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) 
                     });
                 }
                 let mut op = cb.opacity * 100.0;
-                let r = ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).suffix(" %"));
+                let r = ui.add(Field::new(&mut op, 0.0..=100.0).decimals(0).width(field_w)).on_hover_text("Channel opacity (%)");
                 track(p, gpu, &r, "Channel opacity", |g| {
                     if let Some(s) = ops::slot_mut(g, l) {
                         s.channels[c.index()].opacity = op / 100.0;
                     }
                 });
-                ui.end_row();
-            }
-        });
+            });
+        }
     });
 
     let Some(content) = slot.content else { return };
@@ -344,7 +362,7 @@ fn fill_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId) 
             let (on, val, src, img) = graph::fill_param_names(c);
             let find = |name: &str| defs.iter().find(|d| d.name == name).unwrap();
             let mut enabled = n.param(on).as_bool();
-            let r = ui.checkbox(&mut enabled, c.name());
+            let r = ui.add(Check::new(&mut enabled, c.name()));
             track(p, gpu, &r, "Fill channel", |g| g.set(node, on, Value::Bool(enabled)));
             ui.add_enabled_ui(enabled, |ui| {
                 if n.param(src).as_str() == "Image" {
@@ -363,10 +381,10 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
     let Some(m) = ops::mask_slot(&p.graph, l, i).cloned() else { return };
     ui.horizontal(|ui| {
         badge(ui, "M", Color32::from_gray(90));
-        ui.heading(&m.name);
+        ui.label(RichText::new(&m.name).font(t::body_strong()));
     });
     let mut opacity = m.opacity * 100.0;
-    let r = ui.add(egui::Slider::new(&mut opacity, 0.0..=100.0).text("Opacity").suffix(" %"));
+    let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
     track(p, gpu, &r, "Mask opacity", |g| {
         if let Some(ms) = ops::mask_slot_mut(g, l, i) {
             ms.opacity = opacity / 100.0;
@@ -374,10 +392,12 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
     });
     let mut mode = m.mode;
     let mut changed = false;
-    egui::ComboBox::from_label("Blend mode").selected_text(mode.name()).show_ui(ui, |ui| {
-        for b in BlendMode::MASK {
-            changed |= ui.selectable_value(&mut mode, *b, b.name()).changed();
-        }
+    crate::ui_widgets::setting(ui, "Blend mode", |ui| {
+        egui::ComboBox::from_id_salt("mask blend mode").width(ui.available_width()).selected_text(mode.name()).show_ui(ui, |ui| {
+            for b in BlendMode::MASK {
+                changed |= ui.selectable_value(&mut mode, *b, b.name()).changed();
+            }
+        });
     });
     if changed {
         p.edit(gpu, "Mask blend mode", |g| {
@@ -393,7 +413,7 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
             let names = ["In black", "In white", "Gamma", "Out black", "Out white"];
             for k in 0..5 {
                 let range = if k == 2 { 0.01..=10.0 } else { 0.0..=1.0 };
-                let r = ui.add(egui::Slider::new(&mut v[k], range).text(names[k]));
+                let r = ui.add(Field::new(&mut v[k], range).label(names[k]));
                 track(p, gpu, &r, "Levels", |g| {
                     if let Some(ms) = ops::mask_slot_mut(g, l, i) {
                         ms.source = MaskSource::Levels {
@@ -431,9 +451,36 @@ fn pretty(name: &str) -> String {
 pub fn param_widget(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, def: &ParamDef, label: &str) {
     ui.horizontal(|ui| {
         expose_pin(ui, gpu, p, node, def.name);
-        ui.label(pretty(label));
-        param_value(ui, gpu, p, node, def, label);
+        match def.kind {
+            // Numbers carry their label inside the field.
+            ParamKind::Float { .. } | ParamKind::Int { .. } => number_value(ui, gpu, p, node, def, &pretty(label)),
+            _ => {
+                crate::ui_widgets::setting(ui, &pretty(label), |ui| param_value(ui, gpu, p, node, def, label));
+            }
+        }
     });
+}
+
+/// A Float or Int parameter as a field labelled `label`.
+fn number_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, def: &ParamDef, label: &str) {
+    let v = p.graph.node(node).param(def.name);
+    let name = def.name;
+    match def.kind {
+        ParamKind::Float { min, max } => {
+            let mut x = v.as_f32();
+            let field = Field::new(&mut x, min..=max).label(label);
+            // Wide ranges are limits rather than scales: no fill, a fixed step.
+            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002) as f64) };
+            let r = ui.add(field);
+            track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x)));
+        }
+        ParamKind::Int { min, max } => {
+            let mut x = v.as_f32() as i32;
+            let r = ui.add(Field::new(&mut x, min..=max).label(label).no_fill().speed(0.1));
+            track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x as f32)));
+        }
+        _ => {}
+    }
 }
 
 /// Toggles whether a node parameter is exposed on its layer.
@@ -459,21 +506,19 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
     match def.kind {
         ParamKind::Float { min, max } => {
             let mut x = v.as_f32();
-            let r = if max - min <= 2.0 {
-                ui.add(egui::Slider::new(&mut x, min..=max))
-            } else {
-                ui.add(egui::DragValue::new(&mut x).range(min..=max).speed((max - min) * 0.002))
-            };
+            let field = Field::new(&mut x, min..=max);
+            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002) as f64) };
+            let r = ui.add(field);
             track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x)));
         }
         ParamKind::Int { min, max } => {
             let mut x = v.as_f32() as i32;
-            let r = ui.add(egui::DragValue::new(&mut x).range(min..=max));
+            let r = ui.add(Field::new(&mut x, min..=max).no_fill().speed(0.1));
             track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x as f32)));
         }
         ParamKind::Bool => {
             let mut b = v.as_bool();
-            let r = ui.checkbox(&mut b, "");
+            let r = ui.add(Toggle(&mut b));
             track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Bool(b)));
         }
         ParamKind::Color => {
@@ -485,8 +530,9 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
             let mut c = v.as_vec3();
             let mut changed = false;
             let mut started = false;
+            let fw = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
             for k in 0..3 {
-                let r = ui.add(egui::DragValue::new(&mut c[k]).speed(0.01));
+                let r = ui.add(Field::new(&mut c[k], -1.0e6..=1.0e6).decimals(2).speed(0.01).no_fill().width(fw));
                 changed |= r.changed();
                 started |= r.drag_started();
             }
@@ -513,7 +559,7 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
         ParamKind::Image => {
             let cur = v.as_str().to_string();
             let label = if cur.is_empty() { "(none)".to_string() } else { cur.clone() };
-            if ui.button(label).on_hover_text("Choose an image").clicked() {
+            if ui.add(crate::ui_widgets::secondary(label)).on_hover_text("Choose an image").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Image", &["png", "jpg", "jpeg", "tga", "tif", "tiff", "exr"])
                     .pick_file()

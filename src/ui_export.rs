@@ -144,14 +144,14 @@ impl ExportDialog {
                 Some(Ok(r)) => {
                     ui.label(format!("Exported {} files.", r.files.len()));
                     for w in &r.warnings {
-                        ui.colored_label(egui::Color32::from_rgb(230, 180, 70), w);
+                        ui.colored_label(crate::ui_theme::ATTENTION, w);
                     }
                     if ui.button("Show in file browser").clicked() {
                         crate::prefs::open_folder(&s.output_dir);
                     }
                 }
                 Some(Err(e)) => {
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+                    ui.colored_label(crate::ui_theme::ERROR, e);
                 }
                 None => {}
             }

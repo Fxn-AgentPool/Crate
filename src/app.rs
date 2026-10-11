@@ -423,7 +423,11 @@ impl CrateApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("menu").show(ui, |ui| {
+        let frame = egui::Frame::new()
+            .fill(crate::ui_theme::BG_CHROME)
+            .inner_margin(egui::Margin::symmetric(8, 2))
+            .stroke(egui::Stroke::new(1.0, crate::ui_theme::DIVIDER));
+        egui::Panel::top("menu").frame(frame).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Project…\tCtrl+N").clicked() {
@@ -528,62 +532,69 @@ impl CrateApp {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::bottom("status").show(ui, |ui| {
+        use crate::ui_theme as t;
+        let frame = egui::Frame::new().fill(t::BG_CHROME).inner_margin(egui::Margin::symmetric(12, 3)).stroke(egui::Stroke::new(1.0, t::DIVIDER));
+        egui::Panel::bottom("status").frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
+                let mono = |text: String, color: egui::Color32| egui::RichText::new(text).font(t::value()).color(color);
                 if let Some(e) = &self.error {
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
-                    ui.separator();
+                    ui.colored_label(t::ERROR, e);
                 }
                 if let Some(v) = self.updater.available() {
-                    let r = ui.add(egui::Label::new(egui::RichText::new(format!("Crate {v} is available")).color(egui::Color32::from_rgb(110, 200, 120))).sense(Sense::click()));
+                    let r = ui.add(egui::Label::new(egui::RichText::new(format!("Crate {v} is available")).color(t::GOOD)).sense(Sense::click()));
                     if r.on_hover_text("Help → Check for Updates…").clicked() {
                         self.updater.open = true;
                     }
-                    ui.separator();
                 }
                 let Some(doc) = &self.doc else {
-                    ui.label("No project. File → New Project (Ctrl+N).");
+                    ui.label(egui::RichText::new("No project. File → New Project (Ctrl+N).").color(t::TEXT_3));
                     return;
                 };
                 let m = &doc.mesh;
-                ui.label(format!(
-                    "{} · {} triangles · tiles {} · {}²",
-                    doc.original_mesh.file_name().unwrap_or_default().to_string_lossy(),
-                    m.triangle_count(),
-                    m.tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", "),
-                    doc.tile_resolution(),
-                ));
-                ui.separator();
-                ui.label(if self.paint.mode == BakeMode::Live { "Live" } else { "Manual" });
-                if self.paint.unbaked {
-                    ui.colored_label(egui::Color32::from_rgb(240, 150, 40), "Unbaked");
-                }
-                ui.separator();
-                ui.label(paint_target_label(doc));
-                ui.separator();
-                ui.label(match self.view.display {
-                    DisplayMode::Material => "Material".to_string(),
-                    DisplayMode::Channel(c) => Channel::ALL[c as usize].name().to_string(),
-                    DisplayMode::MeshMap(i) => MeshMap::ALL[i as usize].name().to_string(),
-                });
+                ui.label(mono(doc.original_mesh.file_name().unwrap_or_default().to_string_lossy().into_owned(), t::TEXT_2));
+                ui.label(mono(format!("{} triangles", m.triangle_count()), t::TEXT_3));
+                ui.label(mono(format!("tiles {}", m.tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")), t::TEXT_3));
+                ui.label(mono(format!("{}²", doc.tile_resolution()), t::TEXT_3));
                 if !doc.material_errors.is_empty() {
-                    ui.separator();
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 80), doc.material_errors.join("; "));
+                    ui.colored_label(t::ERROR, doc.material_errors.join("; "));
                 }
-                if let Some((msg, t)) = &self.message {
-                    if ui.input(|i| i.time) - t < 3.0 {
-                        ui.separator();
-                        ui.label(msg);
+                if let Some((msg, time)) = &self.message {
+                    if ui.input(|i| i.time) - time < 3.0 {
+                        ui.label(egui::RichText::new(msg).color(t::TEXT_2));
                     }
                 }
-                if let Some(job) = &doc.bake_job {
-                    ui.separator();
-                    ui.add(
-                        egui::ProgressBar::new(job.progress())
-                            .desired_width(160.0)
-                            .text("Baking mesh maps"),
-                    );
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(mono(
+                        match self.view.display {
+                            DisplayMode::Material => "Material".to_string(),
+                            DisplayMode::Channel(c) => Channel::ALL[c as usize].name().to_string(),
+                            DisplayMode::MeshMap(i) => MeshMap::ALL[i as usize].name().to_string(),
+                        },
+                        t::TEXT_3,
+                    ));
+                    let target = paint_target_label(doc);
+                    let color = if doc.selection.is_some() && target != "No paint target" { t::TEXT_2 } else { t::ATTENTION };
+                    ui.label(mono(target, color));
+                    if self.paint.unbaked {
+                        ui.label(mono("Unbaked".into(), t::ATTENTION));
+                    }
+                    let live = self.paint.mode == BakeMode::Live;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        ui.label(mono(if live { "Live" } else { "Manual" }.into(), t::TEXT_2));
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), Sense::hover());
+                        ui.painter().circle_filled(r.center(), 3.0, if live { t::SOCK_MATERIAL } else { t::TEXT_3 });
+                    });
+                    if let Some(job) = &doc.bake_job {
+                        ui.add(
+                            egui::ProgressBar::new(job.progress())
+                                .desired_width(160.0)
+                                .fill(t::accent(0.6))
+                                .text("Baking mesh maps"),
+                        );
+                    }
+                });
             });
         });
     }
@@ -707,7 +718,7 @@ impl CrateApp {
             if let Some(hp) = hover {
                 let doc = self.doc.as_mut().unwrap();
                 if self.paint.tool == Tool::PaintThrough && stencil.is_none() {
-                    self.message = Some(("Paint Through needs a stencil: Window > Stencils > Add.".into(), time));
+                    self.message = Some(("Paint Through needs a stencil: + in the Stencils section.".into(), time));
                 } else if let Err(e) = self.paint.begin_stroke(gpu, doc, &self.camera, (w, h), to_px(hp), pressure) {
                     self.message = Some((e, time));
                 }
@@ -790,7 +801,7 @@ impl CrateApp {
             self.tile_overlay(ui, rect);
         }
         if self.paint.unbaked {
-            let orange = egui::Color32::from_rgb(240, 150, 40);
+            let orange = crate::ui_theme::ATTENTION;
             ui.painter().rect_stroke(rect.shrink(1.5), 0.0, egui::Stroke::new(3.0, orange), egui::StrokeKind::Inside);
         }
         if let Some(hp) = hover.filter(|p| rect.contains(*p)) {
@@ -1024,10 +1035,11 @@ impl CrateApp {
     fn side_panels(&mut self, ui: &mut egui::Ui) {
         let Some(doc) = &mut self.doc else { return };
         let mut library_action = None;
-        egui::Panel::left("left").resizable(true).default_size(280.0).show(ui, |ui| {
+        let panel_frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::same(crate::ui_theme::PANEL_PAD as i8));
+        egui::Panel::left("left").resizable(true).default_size(280.0).frame(panel_frame).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 paint_panels(ui, &self.gpu, doc, &mut self.paint);
-                egui::CollapsingHeader::new("Library").default_open(true).show(ui, |ui| {
+                crate::ui_widgets::Section::new("Library").show(ui, |ui| {
                     library_action = self.library.ui(ui, &self.gpu, doc);
                 });
             });
@@ -1168,8 +1180,8 @@ impl CrateApp {
                     egui::Grid::new("diags").striped(true).show(ui, |ui| {
                         for d in diags {
                             let color = match d.severity {
-                                Severity::Error => egui::Color32::from_rgb(230, 90, 80),
-                                Severity::Warning => egui::Color32::from_rgb(230, 180, 70),
+                                Severity::Error => crate::ui_theme::ERROR,
+                                Severity::Warning => crate::ui_theme::ATTENTION,
                                 Severity::Info => egui::Color32::from_gray(170),
                             };
                             ui.colored_label(color, format!("{:?}", d.severity));
@@ -1292,7 +1304,7 @@ impl CrateApp {
                     ui.end_row();
                 });
                 if let Some(e) = &dlg.error {
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+                    ui.colored_label(crate::ui_theme::ERROR, e);
                 }
                 ui.add_enabled_ui(dlg.mesh_path.is_some(), |ui| {
                     if ui.button("Create").clicked() {
@@ -1314,85 +1326,83 @@ impl CrateApp {
     }
 
     fn mesh_maps_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::ui_theme as t;
+        use crate::ui_widgets::{self as w, Check, Field, Section, Toggle};
         let Some(doc) = &mut self.doc else {
             ui.label("No project.");
             return;
         };
         let baking = doc.bake_job.is_some();
-        egui::Grid::new("maps").num_columns(2).striped(true).show(ui, |ui| {
+        Section::new("Maps").id_salt("mesh maps list").show(ui, |ui| {
             for m in MeshMap::ALL {
                 let possible = !m.needs_high() || doc.maps.high_poly.is_some();
                 if !possible {
                     self.bake_selection[m.index()] = false;
                 }
-                ui.add_enabled(possible, egui::Checkbox::new(&mut self.bake_selection[m.index()], m.name()))
-                    .on_disabled_hover_text("Needs a high-poly mesh (below).");
-                let st = doc.maps.status(m);
-                let color = match st {
-                    MapStatus::UpToDate => egui::Color32::from_rgb(120, 200, 120),
-                    MapStatus::OutOfDate => egui::Color32::from_rgb(230, 180, 70),
-                    MapStatus::Missing => egui::Color32::from_gray(150),
-                };
-                ui.colored_label(color, st.label());
-                ui.end_row();
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(possible, |ui| ui.add(Check::new(&mut self.bake_selection[m.index()], m.name())))
+                        .response
+                        .on_disabled_hover_text("Needs a high-poly mesh (below).");
+                    let st = doc.maps.status(m);
+                    let color = match st {
+                        MapStatus::UpToDate => t::GOOD,
+                        MapStatus::OutOfDate => t::ATTENTION,
+                        MapStatus::Missing => t::TEXT_3,
+                    };
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(st.label()).color(color).font(t::caption()));
+                    });
+                });
+            }
+            ui.add_space(4.0);
+            ui.add_enabled_ui(!baking && self.bake_selection.iter().any(|b| *b), |ui| {
+                if ui.add(w::primary("Bake selected")).clicked() {
+                    let maps: Vec<MeshMap> =
+                        MeshMap::ALL.into_iter().filter(|m| self.bake_selection[m.index()]).collect();
+                    doc.start_bake(&self.gpu, &maps);
+                    self.bake_selection = [false; 8];
+                }
+            });
+            if let Some(job) = &doc.bake_job {
+                ui.add(egui::ProgressBar::new(job.progress()).show_percentage().fill(t::accent(0.6)));
+            }
+            if let Some(pct) = doc.maps.last_misses {
+                w::hint(ui, format!("Missed: {pct:.1}% of texels"));
             }
         });
-        ui.add_enabled_ui(!baking && self.bake_selection.iter().any(|b| *b), |ui| {
-            if ui.button("Bake selected").clicked() {
-                let maps: Vec<MeshMap> =
-                    MeshMap::ALL.into_iter().filter(|m| self.bake_selection[m.index()]).collect();
-                doc.start_bake(&self.gpu, &maps);
-                self.bake_selection = [false; 8];
-            }
-        });
-        if let Some(job) = &doc.bake_job {
-            ui.add(egui::ProgressBar::new(job.progress()).show_percentage());
-        }
-        if let Some(pct) = doc.maps.last_misses {
-            ui.label(format!("Missed: {pct:.1}% of texels"));
-        }
-        ui.separator();
-        egui::CollapsingHeader::new("High poly").default_open(true).show(ui, |ui| {
+        Section::new("High poly").id_salt("mesh maps high poly").show(ui, |ui| {
             let before = (doc.maps.settings, doc.maps.high_poly.clone());
-            // The file name only, so a long path doesn't widen the settings; the path on hover.
-            match &doc.maps.high_poly {
-                Some(p) => {
-                    let name = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
-                    ui.add(egui::Label::new(egui::RichText::new(name).monospace()).truncate()).on_hover_text(p.display().to_string());
-                }
-                None => {
-                    ui.label(egui::RichText::new("none").monospace());
-                }
-            }
             ui.horizontal(|ui| {
-                if ui.add_enabled(!baking, egui::Button::new("Browse…")).clicked() {
+                // The file name only, so a long path doesn't widen the settings; the path on hover.
+                let buttons = 110.0;
+                let (r, resp) = ui.allocate_exact_size(egui::vec2((ui.available_width() - buttons).max(60.0), t::H_CONTROL), egui::Sense::hover());
+                ui.painter().rect(r, t::R_CONTROL, t::BG_APP, egui::Stroke::new(1.0, t::BORDER), egui::StrokeKind::Inside);
+                let (name, color) = match &doc.maps.high_poly {
+                    Some(p) => (p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned()), t::TEXT),
+                    None => ("none".to_string(), t::TEXT_3),
+                };
+                ui.painter().with_clip_rect(r.shrink(4.0)).text(r.left_center() + egui::vec2(9.0, 0.0), egui::Align2::LEFT_CENTER, name, t::value(), color);
+                if let Some(p) = &doc.maps.high_poly {
+                    resp.on_hover_text(p.display().to_string());
+                }
+                if ui.add_enabled(!baking, w::secondary("Browse…")).clicked() {
                     if let Some(p) = rfd::FileDialog::new().add_filter("Mesh", &["glb", "gltf", "obj"]).set_title("High-poly mesh").pick_file() {
                         doc.maps.high_poly = Some(p);
                     }
                 }
-                if ui.add_enabled(!baking && doc.maps.high_poly.is_some(), egui::Button::new("Clear")).clicked() {
+                if ui.add_enabled(!baking && doc.maps.high_poly.is_some(), w::ghost("×")).on_hover_text("Clear").clicked() {
                     doc.maps.high_poly = None;
                 }
             });
             let s = &mut doc.maps.settings;
-            egui::Grid::new("high poly settings").num_columns(2).show(ui, |ui| {
-                ui.label("Auto cage");
-                ui.checkbox(&mut s.auto_cage, "")
-                    .on_hover_text("Measure Frontal and Rear distance per vertex from the high poly");
-                ui.end_row();
-                ui.label("Frontal distance");
-                ui.add_enabled(!s.auto_cage, egui::DragValue::new(&mut s.frontal).speed(0.0005).range(0.0..=1.0));
-                ui.end_row();
-                ui.label("Rear distance");
-                ui.add_enabled(!s.auto_cage, egui::DragValue::new(&mut s.rear).speed(0.0005).range(0.0..=1.0));
-                ui.end_row();
-                ui.label("Match by name");
-                ui.checkbox(&mut s.match_by_name, "");
-                ui.end_row();
-                ui.label("Apply Normal map");
-                ui.checkbox(&mut s.apply_normal, "");
-                ui.end_row();
+            w::setting(ui, "Auto cage", |ui| ui.add(Toggle(&mut s.auto_cage)))
+                .on_hover_text("Measure Frontal and Rear distance per vertex from the high poly");
+            ui.add_enabled_ui(!s.auto_cage, |ui| {
+                ui.add(Field::new(&mut s.frontal, 0.0..=1.0).label("Frontal distance").decimals(4).speed(0.0005).no_fill());
+                ui.add(Field::new(&mut s.rear, 0.0..=1.0).label("Rear distance").decimals(4).speed(0.0005).no_fill());
             });
+            w::setting(ui, "Match by name", |ui| ui.add(Toggle(&mut s.match_by_name)));
+            w::setting(ui, "Apply Normal map", |ui| ui.add(Toggle(&mut s.apply_normal)));
             if (doc.maps.settings, doc.maps.high_poly.clone()) != before {
                 if doc.maps.high_poly != before.1 {
                     doc.maps.last_misses = None;
@@ -1408,40 +1418,25 @@ impl CrateApp {
                 doc.update_scene(&self.gpu);
             }
         });
-        ui.separator();
-        egui::CollapsingHeader::new("Bake settings").default_open(true).show(ui, |ui| {
+        Section::new("Bake settings").id_salt("mesh maps bake settings").show(ui, |ui| {
             let before = doc.maps.settings;
             let s = &mut doc.maps.settings;
-            egui::Grid::new("bake settings").num_columns(2).show(ui, |ui| {
-                ui.label("Resolution");
+            w::setting(ui, "Resolution", |ui| {
                 let res_text =
-                    if s.resolution == 0 { "Tile resolution".to_string() } else { s.resolution.to_string() };
-                egui::ComboBox::from_id_salt("map res").selected_text(res_text).show_ui(ui, |ui| {
+                    if s.resolution == 0 { "Tile resolution".to_string() } else { format!("{0}²", s.resolution) };
+                egui::ComboBox::from_id_salt("map res").width(ui.available_width()).selected_text(res_text).show_ui(ui, |ui| {
                     ui.selectable_value(&mut s.resolution, 0, "Tile resolution");
                     for r in [512u32, 1024, 2048, 4096] {
-                        ui.selectable_value(&mut s.resolution, r, r.to_string());
+                        ui.selectable_value(&mut s.resolution, r, format!("{r}²"));
                     }
                 });
-                ui.end_row();
-                ui.label("Samples");
-                ui.add(egui::DragValue::new(&mut s.samples).range(1..=1024));
-                ui.end_row();
-                ui.label("Max distance");
-                ui.add(egui::DragValue::new(&mut s.max_distance).speed(0.005).range(0.001..=1.0));
-                ui.end_row();
-                ui.label("Spread angle");
-                ui.add(egui::DragValue::new(&mut s.spread_angle).speed(1.0).range(1.0..=180.0).suffix("°"));
-                ui.end_row();
-                ui.label("Ignore backfaces");
-                ui.checkbox(&mut s.ignore_backfaces, "");
-                ui.end_row();
-                ui.label("Curvature radius");
-                ui.add(egui::DragValue::new(&mut s.curvature_radius).speed(0.0005).range(0.0001..=0.2));
-                ui.end_row();
-                ui.label("Padding");
-                ui.add(egui::DragValue::new(&mut s.padding).range(0..=64).suffix(" texels"));
-                ui.end_row();
             });
+            ui.add(Field::new(&mut s.samples, 1..=1024).label("Samples").speed(1.0).no_fill());
+            ui.add(Field::new(&mut s.max_distance, 0.001..=1.0).label("Max distance").decimals(3));
+            ui.add(Field::new(&mut s.spread_angle, 1.0..=180.0).label("Spread angle").decimals(0).suffix("°"));
+            ui.add(Field::new(&mut s.curvature_radius, 0.0001..=0.2).label("Curvature radius").decimals(4).speed(0.0005).no_fill());
+            ui.add(Field::new(&mut s.padding, 0..=64).label("Padding").suffix(" texels").speed(0.2).no_fill());
+            w::setting(ui, "Ignore backfaces", |ui| ui.add(Toggle(&mut s.ignore_backfaces)));
             if doc.maps.settings != before {
                 doc.maps.refresh_status();
                 for m in MeshMap::ALL {
@@ -1457,20 +1452,24 @@ impl CrateApp {
 const CAMERA_LOCKED: &str = "Camera locked: bake or clear the buffer first (Ctrl+B / Ctrl+Delete).";
 
 fn paint_panels(ui: &mut egui::Ui, gpu: &Gpu, doc: &mut Project, paint: &mut PaintEngine) {
+    use crate::ui_widgets::Section;
     crate::ui_paint::tool_bar(ui, paint);
-    ui.separator();
-    egui::CollapsingHeader::new("Brush").default_open(true).show(ui, |ui| {
+    ui.add_space(6.0);
+    Section::new("Brush").right(crate::ui_paint::brush_summary(paint)).show(ui, |ui| {
         crate::ui_paint::brush_panel(ui, gpu, doc, paint);
     });
-    egui::CollapsingHeader::new("Brush Values").default_open(true).show(ui, |ui| {
+    Section::new("Brush Values").show(ui, |ui| {
         crate::ui_paint::brush_values_panel(ui, doc, paint);
     });
-    egui::CollapsingHeader::new("Paint Buffer").default_open(true).show(ui, |ui| {
+    Section::new("Paint Buffer").show(ui, |ui| {
         crate::ui_paint::paint_buffer_panel(ui, gpu, doc, paint);
     });
-    egui::CollapsingHeader::new("Stencils").default_open(true).show(ui, |ui| {
-        crate::ui_paint::stencils_panel(ui, gpu, doc);
-    });
+    Section::new("Stencils").show_with_state(
+        ui,
+        doc,
+        |ui, doc| crate::ui_paint::stencils_actions(ui, gpu, doc),
+        |ui, doc| crate::ui_paint::stencils_panel(ui, doc),
+    );
 }
 
 /// Name of the layer or mask layer painting writes to.
@@ -1497,36 +1496,7 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-/// Neutral dark theme: flat grey panels, small corner radii, blue selection.
+/// The interface's style (see ui_theme.rs).
 fn apply_theme(ctx: &egui::Context) {
-    use egui::{Color32, CornerRadius, Stroke};
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.style_mut_of(egui::Theme::Dark, |style| {
-        let v = &mut style.visuals;
-        *v = egui::Visuals::dark();
-        v.panel_fill = Color32::from_rgb(40, 40, 43);
-        v.window_fill = Color32::from_rgb(44, 44, 47);
-        v.extreme_bg_color = Color32::from_rgb(28, 28, 30);
-        v.faint_bg_color = Color32::from_rgb(46, 46, 49);
-        v.window_stroke = Stroke::new(1.0, Color32::from_gray(25));
-        v.selection.bg_fill = Color32::from_rgb(56, 74, 100);
-        v.selection.stroke = Stroke::new(1.0, Color32::from_rgb(200, 215, 235));
-        v.hyperlink_color = Color32::from_rgb(110, 160, 230);
-        let r = CornerRadius::same(2);
-        v.window_corner_radius = CornerRadius::same(3);
-        v.menu_corner_radius = r;
-        for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
-            w.corner_radius = r;
-        }
-        v.widgets.noninteractive.bg_fill = Color32::from_rgb(40, 40, 43);
-        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_gray(30));
-        v.widgets.inactive.bg_fill = Color32::from_rgb(58, 58, 62);
-        v.widgets.inactive.weak_bg_fill = Color32::from_rgb(52, 52, 56);
-        v.widgets.hovered.bg_fill = Color32::from_rgb(70, 70, 75);
-        v.widgets.hovered.weak_bg_fill = Color32::from_rgb(64, 64, 68);
-        v.widgets.active.bg_fill = Color32::from_rgb(56, 74, 100);
-        v.slider_trailing_fill = true;
-        style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        style.spacing.button_padding = egui::vec2(6.0, 2.0);
-    });
+    crate::ui_theme::apply(ctx);
 }

@@ -140,9 +140,9 @@ impl Default for NodeEditor {
 
 fn type_color(t: SocketType) -> Color32 {
     match t {
-        SocketType::Float => Color32::from_gray(170),
-        SocketType::Color => Color32::from_rgb(230, 200, 60),
-        SocketType::Material => Color32::from_rgb(90, 200, 110),
+        SocketType::Float => crate::ui_theme::SOCK_FLOAT,
+        SocketType::Color => crate::ui_theme::SOCK_COLOR,
+        SocketType::Material => crate::ui_theme::SOCK_MATERIAL,
     }
 }
 
@@ -716,7 +716,7 @@ impl NodeEditor {
             }
             if let Some(l) = p.preview.clone() {
                 let title = p.graph.get(l.node).map(|n| n.title().to_string()).unwrap_or_default();
-                ui.colored_label(Color32::from_rgb(110, 200, 120), format!("Previewing {title} › {}", pretty(&l.output)));
+                ui.colored_label(crate::ui_theme::GOOD, format!("Previewing {title} › {}", pretty(&l.output)));
                 if ui.small_button("Stop preview").on_hover_text("Or Ctrl+Shift+click empty space").clicked() {
                     p.set_preview(gpu, None);
                 }
@@ -823,7 +823,21 @@ impl NodeEditor {
         let rect = ui.available_rect_before_wrap();
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, Color32::from_gray(28));
+        painter.rect_filled(rect, 0.0, crate::ui_theme::BG_CANVAS);
+        // Dot grid, 20 points apart at zoom 1.
+        let step = 20.0 * self.zoom;
+        if step >= 8.0 {
+            let o = rect.min + Vec2::new((self.pan.x).rem_euclid(step), (self.pan.y).rem_euclid(step));
+            let mut y = o.y;
+            while y < rect.max.y {
+                let mut x = o.x;
+                while x < rect.max.x {
+                    painter.circle_filled(Pos2::new(x, y), 1.0, crate::ui_theme::BORDER);
+                    x += step;
+                }
+                y += step;
+            }
+        }
         if self.frame_needed || (resp.hovered() && ui.input(|i| i.key_pressed(egui::Key::Home))) {
             self.frame_all(&p.graph, rect);
             self.frame_needed = false;
@@ -864,7 +878,7 @@ impl NodeEditor {
 
         let all = self.all_nodes(&p.graph);
         if all.is_empty() {
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Empty graph: press Tab to add a node", egui::FontId::proportional(14.0), Color32::from_gray(120));
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Empty graph: press Tab to add a node", egui::FontId::proportional(13.0), crate::ui_theme::TEXT_3);
         }
 
         // Links.
@@ -898,9 +912,13 @@ impl NodeEditor {
                 let node = p.graph.node(n);
                 (node.title().to_string(), node.cached)
             };
-            painter.rect_filled(r, 5.0, Color32::from_gray(if n == SINK { 50 } else { 42 }));
+            painter.rect_filled(r, 6.0, crate::ui_theme::BG_PANEL);
             let header = Rect::from_min_size(r.min, Vec2::new(r.width(), HEADER * self.zoom));
-            painter.rect_filled(header, 5.0, if n == SINK { Color32::from_rgb(60, 80, 120) } else { Color32::from_rgb(60, 60, 75) });
+            let header_fill = if n == SINK { crate::ui_theme::accent(0.22) } else { Color32::from_rgb(0x1c, 0x1d, 0x21) };
+            painter.rect_filled(header, egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, header_fill);
+            if !collapsed {
+                painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, crate::ui_theme::DIVIDER));
+            }
             let mut title_x = 6.0;
             if n != SINK {
                 // Collapse arrow: pointing down when expanded, right when collapsed.
@@ -911,44 +929,50 @@ impl NodeEditor {
                 } else {
                     vec![c + Vec2::new(-s, -s * 0.6), c + Vec2::new(s, -s * 0.6), c + Vec2::new(0.0, s * 0.8)]
                 };
-                painter.add(egui::Shape::convex_polygon(pts, Color32::from_gray(200), Stroke::NONE));
+                painter.add(egui::Shape::convex_polygon(pts, crate::ui_theme::TEXT_3, Stroke::NONE));
                 title_x = 18.0;
             }
-            painter.text(header.left_center() + Vec2::new(title_x * self.zoom, 0.0), egui::Align2::LEFT_CENTER, &title, font.clone(), Color32::WHITE);
+            let title_font = egui::FontId::new(font.size, egui::FontFamily::Name(crate::ui_theme::MEDIUM.into()));
+            painter.text(header.left_center() + Vec2::new(title_x * self.zoom, 0.0), egui::Align2::LEFT_CENTER, &title, title_font, crate::ui_theme::TEXT);
             if cached {
-                painter.text(header.right_center() - Vec2::new(6.0, 0.0), egui::Align2::RIGHT_CENTER, "cached", egui::FontId::proportional(10.0 * self.zoom), Color32::from_rgb(120, 200, 230));
+                // A green "cached" tag.
+                let tag_font = egui::FontId::monospace(9.5 * self.zoom);
+                let g = painter.layout_no_wrap("cached".into(), tag_font, crate::ui_theme::GOOD);
+                let tr = Rect::from_min_size(header.right_center() - Vec2::new(8.0 + g.size().x + 10.0 * self.zoom, g.size().y / 2.0 + 1.0), g.size() + Vec2::new(10.0 * self.zoom, 2.0));
+                painter.rect_filled(tr, 3.0, Color32::from_rgba_unmultiplied(149, 223, 164, 36));
+                painter.galley(tr.min + Vec2::new(5.0 * self.zoom, 1.0), g, crate::ui_theme::GOOD);
             }
             let previewed = p.preview.as_ref().is_some_and(|l| l.node == n);
             let outline = if selected {
-                Stroke::new(2.0, Color32::from_rgb(240, 190, 60))
+                Stroke::new(1.5, crate::ui_theme::ACCENT)
             } else if previewed {
-                Stroke::new(2.0, Color32::from_rgb(90, 200, 110))
+                Stroke::new(2.0, crate::ui_theme::SOCK_MATERIAL)
             } else {
-                Stroke::new(1.0, Color32::from_gray(70))
+                Stroke::new(1.0, crate::ui_theme::BORDER_STRONG)
             };
             if previewed {
                 let out = p.preview.as_ref().map(|l| l.output.clone()).unwrap_or_default();
                 if let Some(pos) = self.output_pos(&p.graph, origin, n, &out) {
-                    painter.circle_stroke(pos, 8.0 * self.zoom, Stroke::new(2.0, Color32::from_rgb(90, 200, 110)));
+                    painter.circle_stroke(pos, 8.0 * self.zoom, Stroke::new(2.0, crate::ui_theme::SOCK_MATERIAL));
                 }
             }
-            painter.rect_stroke(r, 5.0, outline, egui::StrokeKind::Inside);
+            painter.rect_stroke(r, 6.0, outline, egui::StrokeKind::Inside);
             if collapsed {
                 // Only connected sockets, on the header's edges.
                 let linked_in = !links_into(&p.graph, layer, n).is_empty();
                 let linked_out = all.iter().any(|m| links_into(&p.graph, layer, *m).iter().any(|(_, src, _)| *src == n));
                 if linked_in {
-                    painter.circle_filled(r.left_center(), 5.0 * self.zoom, Color32::from_gray(170));
+                    painter.circle_filled(r.left_center(), 5.0 * self.zoom, crate::ui_theme::SOCK_FLOAT);
                 }
                 if linked_out {
-                    painter.circle_filled(r.right_center(), 5.0 * self.zoom, Color32::from_gray(170));
+                    painter.circle_filled(r.right_center(), 5.0 * self.zoom, crate::ui_theme::SOCK_FLOAT);
                 }
                 continue;
             }
             for (name, ty) in outputs(&p.graph, n) {
                 let pos = self.output_pos(&p.graph, origin, n, &name).unwrap();
                 painter.circle_filled(pos, 5.0 * self.zoom, type_color(ty));
-                painter.text(pos - Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::RIGHT_CENTER, pretty(&name), font.clone(), Color32::LIGHT_GRAY);
+                painter.text(pos - Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::RIGHT_CENTER, pretty(&name), font.clone(), crate::ui_theme::TEXT_2);
             }
             for (name, label, ty) in inputs(&p.graph, n) {
                 let pos = self.input_pos(&p.graph, origin, n, &name).unwrap();
@@ -956,7 +980,7 @@ impl NodeEditor {
                 let ok = link_ty.is_none_or(|lt| compatible(lt, ty));
                 let c = if ok { type_color(ty) } else { type_color(ty).gamma_multiply(0.25) };
                 painter.circle_filled(pos, 5.0 * self.zoom, c);
-                let text = if name == NEW_LAYER || name == NEW_EFFECT { Color32::from_gray(140) } else { Color32::LIGHT_GRAY };
+                let text = if name == NEW_LAYER || name == NEW_EFFECT { crate::ui_theme::TEXT_3 } else { crate::ui_theme::TEXT };
                 painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), text);
             }
             if n != SINK {
@@ -1073,8 +1097,8 @@ impl NodeEditor {
                 Drag::Box { start, .. } => {
                     if let Some(ptr) = pointer {
                         let b = Rect::from_two_pos(*start, ptr);
-                        painter.rect_filled(b, 0.0, Color32::from_rgba_unmultiplied(90, 140, 220, 30));
-                        painter.rect_stroke(b, 0.0, Stroke::new(1.0, Color32::from_rgb(110, 160, 230)), egui::StrokeKind::Inside);
+                        painter.rect_filled(b, 0.0, crate::ui_theme::accent(0.14));
+                        painter.rect_stroke(b, 0.0, Stroke::new(1.0, crate::ui_theme::accent(0.6)), egui::StrokeKind::Inside);
                     }
                 }
                 Drag::Cut { points } => {
@@ -1083,7 +1107,7 @@ impl NodeEditor {
                             points.push(ptr);
                         }
                     }
-                    painter.extend(egui::Shape::dashed_line(points, Stroke::new(1.5, Color32::from_rgb(230, 90, 80)), 6.0, 4.0));
+                    painter.extend(egui::Shape::dashed_line(points, Stroke::new(1.5, crate::ui_theme::ERROR), 6.0, 4.0));
                 }
                 Drag::Lazy { from, .. } => {
                     if let Some(ptr) = pointer {
@@ -1091,7 +1115,7 @@ impl NodeEditor {
                         let target = self.node_at(&p.graph, origin, &all, ptr).filter(|b| b != from);
                         if let Some(b) = target {
                             let ok = !wrangler::link_options(&p.graph, layer, *from, b).is_empty();
-                            let c = if ok { Color32::from_rgb(110, 200, 120) } else { Color32::from_rgb(230, 90, 80) };
+                            let c = if ok { crate::ui_theme::SOCK_MATERIAL } else { crate::ui_theme::ERROR };
                             painter.rect_stroke(self.node_rect(&p.graph, origin, b), 5.0, Stroke::new(2.0, c), egui::StrokeKind::Outside);
                         }
                         painter.line_segment([a, ptr], Stroke::new(1.5, Color32::from_gray(200)));

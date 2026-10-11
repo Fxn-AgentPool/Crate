@@ -4,7 +4,7 @@ This guide shows you how to project an image onto the model by painting through 
 
 ## Load the stencil
 
-1. In the **Stencils** section of the left panel, click **Add**.
+1. In the **Stencils** section header of the left panel, click **+**.
 2. Select an image. It's copied into the project.
 3. Under **Paint Through target**, enable the channels to write. For a decal, Base Color is usually
    enough. To also roughen or smooth the area, enable Roughness: it receives the image's luminance.

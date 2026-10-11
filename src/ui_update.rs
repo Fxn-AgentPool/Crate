@@ -131,7 +131,7 @@ impl Updater {
                 });
             }
             ui.separator();
-            let red = egui::Color32::from_rgb(230, 90, 80);
+            let red = crate::ui_theme::ERROR;
             let mut check = false;
             match &state {
                 State::Idle => check = ui.button("Check now").clicked(),

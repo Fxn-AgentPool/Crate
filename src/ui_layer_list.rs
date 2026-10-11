@@ -1,6 +1,6 @@
-//! The Layers panel list: tall rows with content and mask thumbnails, blend mode and opacity
-//! readouts for a chosen channel, nested effects (mask layers), folders and drag-to-reorder.
-//! See docs/reference/layers.md.
+//! The Layers panel list: rows with content and mask thumbnails, a type icon, blend mode and
+//! opacity columns for a chosen channel, nested effects (mask layers), folders and
+//! drag-to-reorder. See docs/reference/layers.md and docs/explanation/about-the-interface.md.
 
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 
@@ -11,21 +11,44 @@ use crate::ops::{self, LayerKind, LayerRef, Selection};
 use crate::project::Project;
 use crate::thumbs::Thumbnails;
 use crate::ui_layers::{self, PanelActions};
+use crate::ui_theme as t;
 
-const ROW_H: f32 = 44.0;
-const EFFECT_H: f32 = 24.0;
-const THUMB: f32 = 34.0;
+const ROW_H: f32 = 32.0;
+const EFFECT_H: f32 = 26.0;
+const THUMB: f32 = 22.0;
 const INDENT: f32 = 14.0;
+/// Width of the visibility column.
+const EYE_W: f32 = 32.0;
+/// Widths of the blend mode and opacity columns.
+const BLEND_W: f32 = 38.0;
+const OPACITY_W: f32 = 30.0;
 
-const BG: Color32 = Color32::from_rgb(34, 34, 36);
-const ROW: Color32 = Color32::from_rgb(46, 46, 49);
-const ROW_HOVER: Color32 = Color32::from_rgb(54, 54, 58);
-const ROW_SELECTED: Color32 = Color32::from_rgb(56, 74, 100);
-const EFFECT: Color32 = Color32::from_rgb(40, 40, 43);
-const TEXT: Color32 = Color32::from_rgb(220, 220, 222);
-const TEXT_DIM: Color32 = Color32::from_rgb(140, 140, 146);
-const ACCENT: Color32 = Color32::from_rgb(240, 240, 240);
-const DROP: Color32 = Color32::from_rgb(90, 160, 240);
+const BG: Color32 = t::BG_CANVAS;
+const ROW: Color32 = t::BG_PANEL;
+const ROW_HOVER: Color32 = Color32::from_rgb(0x1c, 0x1d, 0x21);
+const EFFECT: Color32 = t::BG_PANEL;
+const TEXT: Color32 = t::TEXT;
+const TEXT_DIM: Color32 = t::TEXT_3;
+const ACCENT: Color32 = t::ACCENT;
+const DROP: Color32 = t::ACCENT;
+/// Opacity of hidden layers' rows.
+const HIDDEN_OPACITY: f32 = 0.55;
+
+/// Selected rows: accent fill with an accent outline.
+fn paint_selected(painter: &egui::Painter, rect: Rect) {
+    painter.rect_filled(rect, 0.0, t::accent(0.16));
+    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, t::accent(0.45)), StrokeKind::Inside);
+}
+
+/// The blend mode and opacity columns at the right of a row.
+fn paint_columns(painter: &egui::Painter, rect: Rect, mode: &str, normal: bool, opacity: &str, dim: bool) {
+    let y = rect.center().y;
+    let blend_x = rect.right() - OPACITY_W - BLEND_W;
+    let mode_color = if !normal { t::ATTENTION } else { TEXT_DIM };
+    let font = FontId::monospace(10.5);
+    painter.text(pos2(blend_x, y), egui::Align2::LEFT_CENTER, mode, font.clone(), mode_color);
+    painter.text(pos2(rect.right() - 10.0, y), egui::Align2::RIGHT_CENTER, opacity, font, if dim { TEXT_DIM } else { t::TEXT_2 });
+}
 
 fn short_mode(m: BlendMode) -> &'static str {
     match m {
@@ -56,24 +79,33 @@ fn view_channel(ui: &egui::Ui) -> Channel {
 
 /// Strip header in the style of the panels ("LAYERS", "PROPERTIES").
 pub fn panel_header(ui: &mut egui::Ui, title: &str) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(30, 30, 32));
-    ui.painter().text(
-        rect.left_center() + vec2(8.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        title.to_uppercase(),
-        FontId::proportional(11.0),
-        Color32::from_gray(170),
-    );
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), t::H_SECTION), Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
+    let text = egui::RichText::new(title.to_uppercase()).font(t::section()).color(t::TEXT_2).extra_letter_spacing(0.6);
+    let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+    ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, t::TEXT_2);
+}
+
+/// Column titles above the rows: NAME, BLEND, OP.
+fn column_header(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    let p = ui.painter();
+    let font = FontId::new(10.0, egui::FontFamily::Name(t::MEDIUM.into()));
+    let y = rect.center().y;
+    p.text(pos2(rect.left() + EYE_W + 22.0, y), egui::Align2::LEFT_CENTER, "NAME", font.clone(), TEXT_DIM);
+    p.text(pos2(rect.right() - OPACITY_W - BLEND_W, y), egui::Align2::LEFT_CENTER, "BLEND", font.clone(), TEXT_DIM);
+    p.text(pos2(rect.right() - 10.0, y), egui::Align2::RIGHT_CENTER, "OP", font, TEXT_DIM);
+    p.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
 }
 
 pub fn layers_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, actions: &mut PanelActions, thumbs: &mut Thumbnails) {
     toolbar(ui, gpu, p);
     ui.add_space(2.0);
+    column_header(ui);
     let rect = ui.available_rect_before_wrap();
     ui.painter().rect_filled(rect, 0.0, BG);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 1.0;
+        ui.spacing_mut().item_spacing.y = 0.0;
         let root = p.graph.root;
         if p.graph.node(root).slots.is_empty() {
             ui.add_space(12.0);
@@ -210,14 +242,14 @@ fn draw_icon(p: &egui::Painter, icon: Icon, r: Rect, color: Color32) {
 fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 24.0), if enabled { Sense::click() } else { Sense::hover() });
     let color = if !enabled {
-        Color32::from_gray(80)
+        Color32::from_rgb(0x44, 0x47, 0x4e)
     } else if resp.hovered() {
-        Color32::WHITE
+        t::TEXT
     } else {
-        Color32::from_gray(190)
+        t::TEXT_2
     };
     if resp.hovered() && enabled {
-        ui.painter().rect_filled(rect, 3.0, Color32::from_gray(60));
+        ui.painter().rect_filled(rect, t::R_CONTROL, t::BG_INPUT);
     }
     draw_icon(ui.painter(), icon, rect.shrink(4.0), color);
     resp.on_hover_text(tip)
@@ -306,7 +338,7 @@ fn stack_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, stack: NodeId, dept
 
 /// Paints a content thumbnail for a layer.
 fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content: Option<NodeId>, r: Rect) {
-    painter.rect_filled(r, 2.0, Color32::from_gray(24));
+    painter.rect(r, 4.0, t::BG_APP, Stroke::new(1.0, t::BORDER_STRONG), StrokeKind::Inside);
     match kind {
         LayerKind::Fill => {
             let n = content.and_then(|c| p.graph.get(c));
@@ -330,7 +362,7 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
                     );
                 }
             } else {
-                draw_icon(painter, Icon::Bucket, r.shrink(8.0), Color32::from_gray(150));
+                draw_icon(painter, Icon::Bucket, r.shrink(5.0), t::TEXT_2);
             }
         }
         LayerKind::Paint => {
@@ -344,11 +376,16 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
                     }
                 }
             }
-            draw_icon(painter, Icon::Brush, r.shrink(8.0), Color32::from_gray(200));
+            draw_icon(painter, Icon::Brush, r.shrink(5.0), t::TEXT);
         }
-        LayerKind::Group => draw_icon(painter, Icon::Folder, r.shrink(7.0), Color32::from_gray(200)),
-        LayerKind::Graph => draw_icon(painter, Icon::Nodes, r.shrink(8.0), Color32::from_gray(200)),
-        LayerKind::SmartMaterial => draw_icon(painter, Icon::Star, r.shrink(8.0), Color32::from_rgb(230, 190, 90)),
+        LayerKind::Group => draw_icon(painter, Icon::Folder, r.shrink(5.0), t::TEXT_2),
+        LayerKind::Graph => {
+            // A node graph: a material socket and a color socket.
+            let c = r.center();
+            painter.circle_filled(c - vec2(3.0, 0.0), 2.0, t::SOCK_MATERIAL);
+            painter.circle_filled(c + vec2(3.0, 0.0), 2.0, t::SOCK_COLOR);
+        }
+        LayerKind::SmartMaterial => draw_icon(painter, Icon::Star, r.shrink(5.0), t::BRAND),
     }
 }
 
@@ -388,25 +425,26 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     let content_selected = p.selection == Some(Selection::Layer(l)) || p.multi.contains(&l);
     let mask_selected = matches!(p.selection, Some(Selection::MaskLayer(sl, _)) if sl == l);
     let selected = content_selected || mask_selected;
-    let painter = ui.painter_at(rect);
-    let bg = if selected {
-        ROW_SELECTED
-    } else if resp.hovered() {
-        ROW_HOVER
-    } else {
-        ROW
-    };
-    painter.rect_filled(rect, 0.0, bg);
+    let mut painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, if resp.hovered() { ROW_HOVER } else { ROW });
+    if selected {
+        paint_selected(&painter, rect);
+    }
+    painter.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
+    painter.vline(rect.left() + EYE_W - 0.5, rect.y_range(), Stroke::new(1.0, t::DIVIDER));
     if depth > 0 {
         // Folder contents: a guide line on the left.
-        let x = rect.left() + 30.0 + (depth as f32 - 0.5) * INDENT;
-        painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0, Color32::from_gray(70)));
+        let x = rect.left() + EYE_W + 4.0 + (depth as f32 - 0.5) * INDENT;
+        painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0, t::BORDER_STRONG));
     }
 
     // Visibility.
-    let eye_rect = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(20.0, 20.0));
+    let eye_rect = Rect::from_center_size(pos2(rect.left() + EYE_W / 2.0, rect.center().y), vec2(18.0, 18.0));
     let eye = ui.interact(eye_rect, ui.id().with(("eye", l.stack, l.index)), Sense::click());
-    draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if slot.visible { TEXT } else { Color32::from_gray(70) });
+    draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if slot.visible { t::TEXT_2 } else { Color32::from_rgb(0x4a, 0x4d, 0x55) });
+    if !slot.visible {
+        painter.set_opacity(HIDDEN_OPACITY);
+    }
     if eye.clicked() {
         p.edit(gpu, "Toggle visibility", |g| {
             if let Some(s) = ops::slot_mut(g, l) {
@@ -414,9 +452,8 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
             }
         });
     }
-    painter.line_segment([pos2(rect.left() + 28.0, rect.top() + 6.0), pos2(rect.left() + 28.0, rect.bottom() - 6.0)], Stroke::new(1.0, Color32::from_gray(64)));
 
-    let mut x = rect.left() + 32.0 + depth as f32 * INDENT;
+    let mut x = rect.left() + EYE_W + 6.0 + depth as f32 * INDENT;
     // Expand arrow: folders and layers with effects.
     let expandable = kind == LayerKind::Group || slot.mask.is_some();
     let arrow_rect = Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(14.0, 18.0));
@@ -428,7 +465,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
         } else {
             vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
         };
-        painter.add(egui::Shape::convex_polygon(pts, if arrow.hovered() { Color32::WHITE } else { TEXT_DIM }, Stroke::NONE));
+        painter.add(egui::Shape::convex_polygon(pts, if arrow.hovered() { TEXT } else { TEXT_DIM }, Stroke::NONE));
         if arrow.clicked() {
             if let Some(s) = ops::slot_mut(&mut p.graph, l) {
                 s.expanded = !s.expanded;
@@ -450,7 +487,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
         None => content_thumb(&painter, p, kind, slot.content, content_rect),
     }
     if content_selected {
-        painter.rect_stroke(content_rect.expand(1.0), 3.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+        painter.rect_stroke(content_rect.expand(1.0), 4.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
     }
     x += THUMB + 4.0;
 
@@ -468,7 +505,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
             None => mask_thumb(&painter, p, mask, mask_rect),
         }
         if mask_selected {
-            painter.rect_stroke(mask_rect.expand(1.0), 3.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+            painter.rect_stroke(mask_rect.expand(1.0), 4.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
         }
         let mr = ui.interact(mask_rect, ui.id().with(("mask thumb", l.stack, l.index)), Sense::click());
         if mr.clicked() {
@@ -483,29 +520,40 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     } else {
         x += 2.0;
     }
+    // Type icon: the kind is an icon, not a subtitle.
+    let icon = match kind {
+        LayerKind::Paint => Icon::Brush,
+        LayerKind::Fill => Icon::Bucket,
+        LayerKind::Group => Icon::Folder,
+        LayerKind::Graph => Icon::Nodes,
+        LayerKind::SmartMaterial => Icon::Star,
+    };
+    let icon_rect = Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(13.0, 13.0));
+    draw_icon(&painter, icon, icon_rect, TEXT_DIM);
+    let kind_tip = ui.interact(icon_rect, ui.id().with(("kind", l.stack, l.index)), Sense::hover());
+    kind_tip.on_hover_text(match kind {
+        LayerKind::Group => format!("Folder · {} layers", p.graph.get(slot.content.unwrap_or(0)).map(|n| n.slots.len()).unwrap_or(0)),
+        LayerKind::SmartMaterial => "Smart material".into(),
+        k => k.name().into(),
+    });
+    x += 18.0;
 
     // Name, kind, and the blend mode / opacity readout for the viewed channel.
     let ch = view_channel(ui);
     let cb = slot.channels[ch.index()];
-    let readout = if cb.enabled {
-        format!("{} {:.0}", short_mode(cb.mode), cb.opacity * slot.opacity * 100.0)
+    let (mode, normal, opacity) = if cb.enabled {
+        (short_mode(cb.mode), cb.mode == BlendMode::Normal, format!("{:.0}", cb.opacity * slot.opacity * 100.0))
     } else {
-        "off".to_string()
+        ("off", true, String::new())
     };
-    let right = rect.right() - 8.0;
-    let readout_galley = painter.layout_no_wrap(readout, FontId::proportional(11.0), if cb.enabled { TEXT_DIM } else { Color32::from_gray(90) });
-    let readout_pos = pos2(right - readout_galley.size().x, rect.top() + 7.0);
-    let name_color = if slot.visible { TEXT } else { TEXT_DIM };
-    let name_width = (readout_pos.x - x - 6.0).max(10.0);
-    let name_galley = painter.layout(slot.name.clone(), FontId::proportional(13.0), name_color, name_width);
-    painter.galley(pos2(x, rect.top() + 6.0), name_galley, name_color);
-    painter.galley(readout_pos, readout_galley, TEXT_DIM);
-    let sub = match kind {
-        LayerKind::Group => format!("Folder · {} layers", p.graph.get(slot.content.unwrap_or(0)).map(|n| n.slots.len()).unwrap_or(0)),
-        LayerKind::SmartMaterial => "Smart material".into(),
-        k => k.name().into(),
-    };
-    painter.text(pos2(x, rect.bottom() - 7.0), egui::Align2::LEFT_BOTTOM, sub, FontId::proportional(10.5), TEXT_DIM);
+    let name_color = if content_selected { Color32::WHITE } else { TEXT };
+    let name_width = (rect.right() - OPACITY_W - BLEND_W - x - 6.0).max(10.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(slot.name.clone(), t::body_strong(), name_color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(name_width);
+    let name_galley = painter.layout_job(job);
+    painter.galley(pos2(x, rect.center().y - name_galley.size().y / 2.0), name_galley, name_color);
+    paint_columns(&painter, rect, mode, normal, &opacity, !cb.enabled);
+    painter.set_opacity(1.0);
 
     // Selection and context menu.
     if resp.clicked() {
@@ -566,12 +614,20 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
         let width = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(vec2(width, EFFECT_H), Sense::click());
         let selected = p.selection == Some(Selection::MaskLayer(l, i));
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, if selected { ROW_SELECTED } else if resp.hovered() { ROW_HOVER } else { EFFECT });
+        let mut painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, if resp.hovered() { ROW_HOVER } else { EFFECT });
+        if selected {
+            paint_selected(&painter, rect);
+        }
+        painter.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
+        painter.vline(rect.left() + EYE_W - 0.5, rect.y_range(), Stroke::new(1.0, t::DIVIDER));
 
-        let eye_rect = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(16.0, 16.0));
+        let eye_rect = Rect::from_center_size(pos2(rect.left() + EYE_W / 2.0, rect.center().y), vec2(16.0, 16.0));
         let eye = ui.interact(eye_rect, ui.id().with(("fx eye", l.stack, l.index, i)), Sense::click());
-        draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if m.visible { TEXT } else { Color32::from_gray(70) });
+        draw_icon(&painter, Icon::Eye, eye_rect.shrink(2.0), if m.visible { t::TEXT_2 } else { Color32::from_rgb(0x4a, 0x4d, 0x55) });
+        if !m.visible {
+            painter.set_opacity(HIDDEN_OPACITY);
+        }
         if eye.clicked() {
             p.edit(gpu, "Toggle effect", |g| {
                 if let Some(ms) = ops::mask_slot_mut(g, l, i) {
@@ -579,10 +635,10 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
                 }
             });
         }
-        let x = rect.left() + 32.0 + depth as f32 * INDENT + 24.0;
+        let x = rect.left() + EYE_W + 6.0 + depth as f32 * INDENT + 24.0;
         // Tree connector from the layer's mask thumbnail.
-        painter.line_segment([pos2(x - 12.0, rect.top()), pos2(x - 12.0, rect.center().y)], Stroke::new(1.0, Color32::from_gray(80)));
-        painter.line_segment([pos2(x - 12.0, rect.center().y), pos2(x - 4.0, rect.center().y)], Stroke::new(1.0, Color32::from_gray(80)));
+        painter.line_segment([pos2(x - 12.0, rect.top()), pos2(x - 12.0, rect.center().y)], Stroke::new(1.0, t::BORDER_STRONG));
+        painter.line_segment([pos2(x - 12.0, rect.center().y), pos2(x - 4.0, rect.center().y)], Stroke::new(1.0, t::BORDER_STRONG));
         let icon = match &m.source {
             MaskSource::Levels { .. } => Icon::Levels,
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
@@ -592,7 +648,7 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
             },
         };
         let icon_rect = Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(16.0, 16.0));
-        draw_icon(&painter, icon, icon_rect, Color32::from_gray(190));
+        draw_icon(&painter, icon, icon_rect, t::TEXT_2);
         // Fill effects show their value as a swatch.
         if let MaskSource::Node(n) = &m.source {
             if let Some(node) = p.graph.get(*n).filter(|n| n.ty == "constant") {
@@ -602,14 +658,9 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
                 painter.rect_stroke(sw, 2.0, Stroke::new(1.0, Color32::from_gray(110)), StrokeKind::Outside);
             }
         }
-        painter.text(pos2(x + 22.0, rect.center().y), egui::Align2::LEFT_CENTER, &m.name, FontId::proportional(12.0), if m.visible { TEXT } else { TEXT_DIM });
-        painter.text(
-            pos2(rect.right() - 8.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            format!("{} {:.0}", short_mode(m.mode), m.opacity * 100.0),
-            FontId::proportional(11.0),
-            TEXT_DIM,
-        );
+        painter.text(pos2(x + 22.0, rect.center().y), egui::Align2::LEFT_CENTER, &m.name, t::body(), TEXT);
+        paint_columns(&painter, rect, short_mode(m.mode), m.mode == BlendMode::Normal, &format!("{:.0}", m.opacity * 100.0), false);
+        painter.set_opacity(1.0);
         if resp.clicked() {
             p.multi.clear();
             p.selection = Some(Selection::MaskLayer(l, i));

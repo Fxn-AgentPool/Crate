@@ -27,7 +27,7 @@ about 10 minutes.
 
 ## Load the stencil
 
-1. In the **Stencils** section of the left panel, click **Add**.
+1. In the **Stencils** section header of the left panel, click **+**.
 2. Select `assets/D_SampleDecal.png`.
 
 A white arrow pointing up appears over the viewport, semi-transparent. Orbit

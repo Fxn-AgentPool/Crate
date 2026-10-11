@@ -30,7 +30,7 @@ The folders are listed in [Windows and panels](../reference/windows-and-panels.m
 
 1. Copy images into the `stencils` folder.
 2. In **Library → Stencils**, click **Refresh**.
-3. Double-click a stencil to load it. It's copied into the project, as with **Stencils → Add**.
+3. Double-click a stencil to load it. It's copied into the project, as with **+** in the **Stencils** section.
    See [How to paint through a stencil](paint-through-a-stencil.md).
 
 ## Add a collection of your own
