@@ -5,11 +5,12 @@ the viewport.
 
 | Panel | Default location | Contents |
 |---|---|---|
-| Viewport | center | 3D view of the mesh. Paint buffer and stencils are drawn over it. |
-| Layers | right | The root stack, or the selected group. See [Layers and masks](layers.md). |
-| Properties | right, below Layers | Parameters of the selected layer, mask layer or node. |
+| Viewport | center | 3D view of the mesh. Paint buffer and stencils are drawn over it. See [Viewport](#viewport). |
+| Viewport toolbar | above the viewport | The brush's **Size**, **Flow** and **Hardness**, and the bake mode. See [Viewport](#viewport). |
+| Layers | right | The root stack, or the selected group. The channel menu in its header chooses the channel whose blend mode and opacity the rows show. See [Layers and masks](layers.md). |
+| Properties | right, below Layers | Parameters of the selected layer, mask layer or node. Its header shows the selected layer's or mask layer's name. |
 | Node Editor | bottom (hidden) | The graph of the selected layer, or of the whole project. `Ctrl+Space` toggles it. See [Node Editor](node-editor.md). |
-| Tools | left, top | Paint, Erase and Paint Through. |
+| Tools | left edge | A column of icons: Paint, Erase and Paint Through. The current tool is highlighted; hover shows its name and shortcut. |
 | Brush | left | Tool and brush properties. See [Brushes, tools and stencils](brushes-tools-stencils.md). |
 | Brush Values | left, below Brush | Per-channel values painted by the brush. |
 | Paint Buffer | left | Bake mode, buffer and projection settings. See [Paint buffer](paint-buffer.md). |
@@ -100,7 +101,18 @@ when an image is added.
 
 The Library is shown only while a project is open.
 
+## Viewport
+
+| Part | Where | Contents |
+|---|---|---|
+| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, the bake mode (**Live** with a green dot, or **Manual**); clicking it switches the mode, like `Ctrl+Shift+B`. |
+| Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. |
+
 ## Menus
+
+The menu bar starts with the Crate mark. The open project's name is shown in its middle, with an
+amber dot while the project has unsaved changes.
+
 
 | Menu | Items |
 |---|---|
@@ -134,11 +146,11 @@ shown in the status bar and the entry stays in the list.
 
 | Field | Values |
 |---|---|
-| Mesh | File name, triangle count, tiles and tile resolution |
+| Mesh | File name, triangle count (**12,317 tris**), UDIM tiles (**UDIM 1001, 1002**) and tile resolution (**2048²**) |
 | Bake mode | **Live**, **Manual** |
 | Buffer | **Unbaked** when the buffer holds paint (Manual mode) |
 | Target | Name of the layer or mask that painting writes to, or **No paint target** |
-| Display | **Material**, or the channel or mesh map shown |
+| Display | **Material view**, or the channel or mesh map shown followed by **view** |
 | Background tasks | Mesh map bake progress |
 | Messages | Undo/redo, errors and hints, briefly |
 

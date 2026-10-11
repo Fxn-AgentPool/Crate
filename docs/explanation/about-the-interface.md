@@ -29,6 +29,13 @@ previews.
 for choosing items of a set, like the channels a brush paints. A disabled control fades as a
 whole, rather than greying only its label, so it never looks half active.
 
+## The work in the middle
+
+Tools sit in a narrow column of icons at the left edge, and the brush values changed most while
+painting (size, flow, hardness) sit in a strip above the viewport, next to the bake mode. The
+panels at the sides run the full height of the window, so the viewport column holds only what
+acts on the viewport.
+
 ## Type and grid
 
 Crate uses Geist for the interface and Geist Mono for every number, file name, resolution and

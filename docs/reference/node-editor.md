@@ -14,8 +14,12 @@ the nodes themselves, see [Nodes](nodes.md).
 
 | View | Shows |
 |---|---|
-| Layer | The selected layer's content and mask subgraphs, plus a **Layer** node whose **Content** and **Mask** inputs are the layer's. Header: **Node Editor: <layer>**, with a **Whole graph** button. |
-| Whole project | Everything that feeds the Material Output. Header: **Node Editor: whole project**, with a **Selected layer** button when a layer is selected. Shown when no layer is selected, and when the viewed layer is deleted. |
+| Layer | The selected layer's content and mask subgraphs, plus a **Layer** node whose **Content** and **Mask** inputs are the layer's. Header: **NODE EDITOR / <layer>**, with a **Whole graph** button. |
+| Whole project | Everything that feeds the Material Output. Header: **NODE EDITOR / Whole project**, with a **Selected layer** button when a layer is selected. Shown when no layer is selected, and when the viewed layer is deleted. |
+
+The right end of the header shows the most used inputs as keycaps: `Tab` **Add**,
+`Ctrl+Shift+Click` **Preview**, `Ctrl+RMB` **Cut links**. **?** **All shortcuts** lists every
+mouse and key input of the editor; hover over it to see the list.
 
 Nodes added in the editor stay visible until connected, even if nothing reads them yet. Nodes
 added elsewhere (for example new layers) are placed to the left of the node that reads them, level

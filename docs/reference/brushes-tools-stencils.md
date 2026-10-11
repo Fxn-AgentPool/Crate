@@ -9,12 +9,15 @@
 | Paint Through | `P` | Paints pixels sampled from the active stencil into the buffer. |
 | Color picker | hold `Alt+Shift`, click | Samples the current channel display at the cursor. |
 
+Paint, Erase and Paint Through are also chosen in the tool rail at the left edge of the window.
+
 The **target** of all tools is the selected Paint layer, or the selected Paint mask layer.
 If neither is selected, painting is disabled and the cursor shows ⊘.
 
 ## Brush properties
 
-**Brush** panel:
+**Brush** panel. **Size**, **Flow** and **Hardness** are also in the
+[viewport toolbar](windows-and-panels.md#viewport), where Flow is shown in percent:
 
 | Property | Range | Default | Description |
 |---|---|---|---|
