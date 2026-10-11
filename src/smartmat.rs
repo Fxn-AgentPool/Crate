@@ -15,10 +15,7 @@ use crate::paint::{PAGE, read_pages, write_pages};
 use crate::project::Project;
 
 pub const FORMAT: &str = "crate-smart-material";
-/// Smart materials saved before the rename (`.psmat` files).
-const LEGACY_FORMAT: &str = "painter-smart-material";
 pub const EXT: &str = "smat";
-pub const LEGACY_EXT: &str = "psmat";
 
 #[derive(Serialize, Deserialize)]
 struct MaterialFile {
@@ -122,7 +119,7 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
     }
     // Images used by the subgraph.
     for n in &nodes {
-        for (_, v) in &n.params {
+        for v in n.params.values() {
             let name = v.as_str();
             if let Some(src) = p.image_sources.get(name) {
                 if let Ok(bytes) = std::fs::read(src) {
@@ -146,7 +143,7 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
 /// Inserts a smart material as a new layer above `above`. Returns the new layer.
 pub fn insert(gpu: &Gpu, p: &mut Project, path: &Path, above: Option<LayerRef>) -> Result<LayerRef> {
     let file: MaterialFile = serde_json::from_slice(&read_entry(path, "material.json")?).context("invalid smart material")?;
-    if file.format != FORMAT && file.format != LEGACY_FORMAT {
+    if file.format != FORMAT {
         bail!("not a smart material");
     }
     // Images first, so parameters resolve.

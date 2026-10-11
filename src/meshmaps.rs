@@ -92,7 +92,7 @@ impl MeshMap {
     }
 
     /// Baked from the high poly when one is set.
-    pub fn from_high(self) -> bool {
+    pub fn baked_from_high(self) -> bool {
         !matches!(self, MeshMap::Position | MeshMap::WorldNormal)
     }
 
@@ -156,7 +156,7 @@ impl BakeSettings {
         if self.resolution != old.resolution || self.padding != old.padding {
             return true;
         }
-        if map.from_high()
+        if map.baked_from_high()
             && (self.high_poly != old.high_poly
                 || (self.high_poly != 0
                     && (self.auto_cage != old.auto_cage
@@ -287,6 +287,8 @@ enum Step {
     Ray { map: MeshMap, tile: u32, row_start: u32 },
 }
 
+// Only one exists at a time, so the size difference doesn't matter.
+#[allow(clippy::large_enum_variant)]
 enum HighState {
     Loading(std::thread::JoinHandle<anyhow::Result<HighCpu>>),
     Ready(HighBake),
@@ -478,7 +480,7 @@ impl MeshMaps {
         let project_pipeline = compute(&project, "main");
 
         let size = (mesh.bbox_max - mesh.bbox_min).max(glam::Vec3::splat(1e-6));
-        let mut maps = Self {
+        let maps = Self {
             res,
             layers,
             position: MapTexture::new(gpu, "map position", POS_FORMAT, res, layers),
@@ -561,6 +563,35 @@ impl MeshMaps {
         }
     }
 
+    /// A map's texture and its bytes per texel.
+    pub fn texture(&self, map: MeshMap) -> (&wgpu::Texture, u32) {
+        match map {
+            MeshMap::Position => (&self.position.texture, 16),
+            MeshMap::WorldNormal => (&self.normal.texture, 8),
+            MeshMap::Id => (&self.id.texture, 4),
+            MeshMap::AmbientOcclusion => (&self.ao.texture, 4),
+            MeshMap::Curvature => (&self.curvature.texture, 4),
+            MeshMap::Thickness => (&self.thickness.texture, 4),
+            MeshMap::Normal => (&self.tnormal.texture, 8),
+            MeshMap::Height => (&self.height.texture, 4),
+        }
+    }
+
+    /// Reads one tile of a map back as stored: position in object space, World Normal in
+    /// -1..1, Normal encoded 0..1, ID colors 0..1 and scalar maps as gray with alpha 1.
+    pub fn read(&self, gpu: &Gpu, map: MeshMap, layer: u32) -> Vec<[f32; 4]> {
+        let (tex, bpp) = self.texture(map);
+        let bytes = gpu.read_texture(tex, layer, bpp);
+        match map {
+            MeshMap::Position => bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).to_vec(),
+            MeshMap::WorldNormal | MeshMap::Normal => {
+                bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| c.map(|h| h.to_f32())).collect()
+            }
+            MeshMap::Id => bytemuck::cast_slice::<u8, [u8; 4]>(&bytes).iter().map(|c| c.map(|v| v as f32 / 255.0)).collect(),
+            _ => bytemuck::cast_slice::<u8, f32>(&bytes).iter().map(|v| [*v, *v, *v, 1.0]).collect(),
+        }
+    }
+
     pub fn status(&self, map: MeshMap) -> MapStatus {
         self.status[map.index()]
     }
@@ -589,14 +620,6 @@ impl MeshMaps {
     pub fn mark_out_of_date(&mut self, map: MeshMap) {
         self.status[map.index()] = MapStatus::OutOfDate;
         self.baked_with[map.index()] = Some(self.settings);
-    }
-
-    pub fn mark_all_out_of_date(&mut self) {
-        for s in &mut self.status {
-            if *s == MapStatus::UpToDate {
-                *s = MapStatus::OutOfDate;
-            }
-        }
     }
 
     /// Advances the bake preview; doesn't block (see `bakepreview::Preview::update`).
@@ -650,7 +673,7 @@ impl MeshMaps {
             }
         }
         let high = match &self.high_poly {
-            Some(path) if maps.iter().any(|m| m.from_high()) => {
+            Some(path) if maps.iter().any(|m| m.baked_from_high()) => {
                 let (path, import, groups, by_name) = (path.clone(), import.clone(), self.low_groups.clone(), self.settings.match_by_name);
                 let cage = self
                     .settings
@@ -1188,36 +1211,23 @@ fn tex_res(v: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
 /// docs/reference/mesh-maps.md#maps: normals `n * 0.5 + 0.5`, position normalized to the
 /// bounding box, scalar maps as gray.
 pub fn save_png(gpu: &Gpu, maps: &MeshMaps, map: MeshMap, layer: u32, path: &std::path::Path) -> anyhow::Result<()> {
-    let (tex, bpp) = match map {
-        MeshMap::Position => (&maps.position.texture, 16),
-        MeshMap::WorldNormal => (&maps.normal.texture, 8),
-        MeshMap::Id => (&maps.id.texture, 4),
-        MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
-        MeshMap::Curvature => (&maps.curvature.texture, 4),
-        MeshMap::Thickness => (&maps.thickness.texture, 4),
-        MeshMap::Normal => (&maps.tnormal.texture, 8),
-        MeshMap::Height => (&maps.height.texture, 4),
-    };
-    let bytes = gpu.read_texture(tex, layer, bpp);
+    let px = maps.read(gpu, map, layer);
     let res = maps.res;
     let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let rgb: Vec<[f32; 3]> = match map {
-        MeshMap::Position => bytemuck::cast_slice::<u8, [f32; 4]>(&bytes)
+        MeshMap::Position => px
             .iter()
             .map(|p| {
                 let v = (glam::Vec3::new(p[0], p[1], p[2]) - maps.bbox_min) / maps.bbox_size;
                 [v.x, v.y, v.z]
             })
             .collect(),
-        MeshMap::WorldNormal | MeshMap::Normal => {
-            bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| [c[0].to_f32(), c[1].to_f32(), c[2].to_f32()]).collect()
-        }
-        MeshMap::Id => bytes.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect(),
+        MeshMap::WorldNormal | MeshMap::Normal | MeshMap::Id => px.iter().map(|c| [c[0], c[1], c[2]]).collect(),
         _ => {
-            let v: Vec<u16> = bytemuck::cast_slice::<u8, f32>(&bytes).iter().map(|v| q(*v)).collect();
+            let v: Vec<u16> = px.iter().map(|c| q(c[0])).collect();
             image::ImageBuffer::<image::Luma<u16>, _>::from_raw(res, res, v).unwrap().save(path)?;
             return Ok(());
         }

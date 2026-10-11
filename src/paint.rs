@@ -153,13 +153,6 @@ impl Transform2 {
         *self == Self::default()
     }
 
-    /// Maps a point of the untransformed layer to the screen.
-    pub fn apply(&self, p: Vec2, center: Vec2) -> Vec2 {
-        let (s, c) = self.rotation.sin_cos();
-        let d = (p - center) * self.scale;
-        center + self.offset + Vec2::new(c * d.x - s * d.y, s * d.x + c * d.y)
-    }
-
     /// Rows of the 2x3 affine mapping screen points back to the untransformed layer.
     pub fn inverse_rows(&self, center: Vec2) -> ([f32; 4], [f32; 4]) {
         let (s, c) = self.rotation.sin_cos();

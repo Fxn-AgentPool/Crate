@@ -304,7 +304,7 @@ mod tests {
     fn winding_does_not_flip_sides() {
         // Reversed winding, same +Z normals: a point above is still frontal.
         let mut low = quad(0, 0.0);
-        for t in low.indices.chunks_exact_mut(3) {
+        for t in low.indices.as_chunks_mut::<3>().0 {
             t.swap(1, 2);
         }
         let diag = 10.0;

@@ -20,8 +20,6 @@ use crate::project::Project;
 use crate::stencil::StencilSet;
 
 pub const FORMAT: &str = "crate-project";
-/// Projects saved before the rename.
-const LEGACY_FORMAT: &str = "painter-project";
 pub const VERSION: u32 = 1;
 
 /// State saved with the project that lives outside `Project`.
@@ -334,25 +332,8 @@ pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, ex
 }
 
 fn save_map(gpu: &Gpu, p: &Project, m: MeshMap, layer: u32, path: &Path) -> Result<()> {
-    let maps = &p.maps;
-    let (tex, bpp) = match m {
-        MeshMap::Position => (&maps.position.texture, 16),
-        MeshMap::WorldNormal => (&maps.normal.texture, 8),
-        MeshMap::Id => (&maps.id.texture, 4),
-        MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
-        MeshMap::Curvature => (&maps.curvature.texture, 4),
-        MeshMap::Thickness => (&maps.thickness.texture, 4),
-        MeshMap::Normal => (&maps.tnormal.texture, 8),
-        MeshMap::Height => (&maps.height.texture, 4),
-    };
-    let bytes = gpu.read_texture(tex, layer, bpp);
-    let res = maps.res as usize;
-    let px: Vec<[f32; 4]> = match m {
-        MeshMap::Position => bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).to_vec(),
-        MeshMap::WorldNormal | MeshMap::Normal => bytemuck::cast_slice::<u8, [half::f16; 4]>(&bytes).iter().map(|c| c.map(|h| h.to_f32())).collect(),
-        MeshMap::Id => bytes.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]).collect(),
-        _ => bytemuck::cast_slice::<u8, f32>(&bytes).iter().map(|v| [*v, *v, *v, 1.0]).collect(),
-    };
+    let px = p.maps.read(gpu, m, layer);
+    let res = p.maps.res as usize;
     let h = half::f16::from_f32;
     exr::prelude::write_rgba_file(path, res, res, |x, y| {
         let c = px[y * res + x];
@@ -370,24 +351,18 @@ fn load_map(gpu: &Gpu, p: &Project, m: MeshMap, layer: u32, path: &Path) -> Resu
     if img.width() != res || img.height() != res {
         bail!("{} has the wrong size", path.display());
     }
-    let (tex, data): (&wgpu::Texture, Vec<u8>) = match m {
-        MeshMap::Id => (&p.maps.id.texture, img.pixels().flat_map(|c| c.0.map(|v| (v * 255.0 + 0.5) as u8)).collect()),
+    let (tex, bpp) = p.maps.texture(m);
+    let data: Vec<u8> = match m {
+        MeshMap::Id => img.pixels().flat_map(|c| c.0.map(|v| (v * 255.0 + 0.5) as u8)).collect(),
         MeshMap::Normal => {
             let v: Vec<half::f16> = img.pixels().flat_map(|c| c.0.map(half::f16::from_f32)).collect();
-            (&p.maps.tnormal.texture, bytemuck::cast_slice(&v).to_vec())
+            bytemuck::cast_slice(&v).to_vec()
         }
         _ => {
-            let t = match m {
-                MeshMap::AmbientOcclusion => &p.maps.ao.texture,
-                MeshMap::Curvature => &p.maps.curvature.texture,
-                MeshMap::Height => &p.maps.height.texture,
-                _ => &p.maps.thickness.texture,
-            };
             let v: Vec<f32> = img.pixels().map(|c| c.0[0]).collect();
-            (t, bytemuck::cast_slice(&v).to_vec())
+            bytemuck::cast_slice(&v).to_vec()
         }
     };
-    let bpp = (data.len() as u32) / (res * res);
     gpu.queue.write_texture(
         wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
         &data,
@@ -525,7 +500,7 @@ pub struct Loaded {
 pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
     let text = std::fs::read_to_string(dir.join("project.json")).with_context(|| format!("{} is not a Crate project", dir.display()))?;
     let file: ProjectFile = serde_json::from_str(&text).context("project.json is invalid")?;
-    if file.format != FORMAT && file.format != LEGACY_FORMAT {
+    if file.format != FORMAT {
         bail!("not a Crate project (format {:?})", file.format);
     }
     if file.version > VERSION {
@@ -601,7 +576,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Adds the `.crate` extension if missing (`.painter`, from before the rename, is kept).
+/// Adds the `.crate` extension if missing.
 pub fn with_extension(path: PathBuf) -> PathBuf {
-    if path.extension().is_some_and(|e| e == "crate" || e == "painter") { path } else { path.with_extension("crate") }
+    if path.extension().is_some_and(|e| e == "crate") { path } else { path.with_extension("crate") }
 }

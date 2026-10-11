@@ -601,8 +601,8 @@ pub fn export(gpu: &Gpu, p: &mut Project, eval: &mut UvEvaluator, s: &ExportSett
     } else {
         for m in &preset.maps {
             let mut parsed: [Option<Source>; 4] = Default::default();
-            for k in 0..4 {
-                parsed[k] = parse_source(&m.sources[k])?;
+            for (p, s) in parsed.iter_mut().zip(&m.sources) {
+                *p = parse_source(s)?;
             }
             let mut chans = Vec::new();
             for src in parsed.iter().flatten() {

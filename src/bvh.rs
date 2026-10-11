@@ -133,6 +133,7 @@ impl Bvh {
     ) -> Option<(usize, f32)> {
         let leaf_cost = tris.len() as f32;
         let mut best: Option<(f32, usize, f32)> = None;
+        #[allow(clippy::needless_range_loop)] // `axis` indexes Vec3s too
         for axis in 0..3 {
             let lo = cbounds.min[axis];
             let hi = cbounds.max[axis];

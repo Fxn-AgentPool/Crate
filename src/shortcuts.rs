@@ -188,9 +188,9 @@ pub fn parse(text: &str) -> Option<KeyboardShortcut> {
     let mut key = None;
     for part in text.split('+') {
         match part.trim() {
-            "Ctrl" | "Cmd" => m = m | Modifiers::COMMAND,
-            "Shift" => m = m | Modifiers::SHIFT,
-            "Alt" => m = m | Modifiers::ALT,
+            "Ctrl" | "Cmd" => m |= Modifiers::COMMAND,
+            "Shift" => m |= Modifiers::SHIFT,
+            "Alt" => m |= Modifiers::ALT,
             k => key = Key::from_name(k),
         }
     }

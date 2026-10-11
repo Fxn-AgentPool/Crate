@@ -184,12 +184,6 @@ pub fn delete_selected(gpu: &Gpu, p: &mut Project) {
     }
 }
 
-pub fn move_selected(gpu: &Gpu, p: &mut Project, delta: i32) {
-    let Some(Selection::Layer(l)) = p.selection else { return };
-    let l = p.edit(gpu, "Move layer", |g| ops::shift(g, l, delta));
-    p.selection = Some(Selection::Layer(l));
-}
-
 // ------------------------------------------------------------------ properties
 
 /// Name of the selected layer or mask layer, for the Properties header.
@@ -527,8 +521,8 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
             let mut changed = false;
             let mut started = false;
             let fw = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-            for k in 0..3 {
-                let r = ui.add(Field::new(&mut c[k], -1.0e6..=1.0e6).decimals(2).speed(0.01).no_fill().width(fw));
+            for v in &mut c {
+                let r = ui.add(Field::new(v, -1.0e6..=1.0e6).decimals(2).speed(0.01).no_fill().width(fw));
                 changed |= r.changed();
                 started |= r.drag_started();
             }

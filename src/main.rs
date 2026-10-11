@@ -11,7 +11,6 @@ mod compile;
 mod export;
 mod gpu;
 mod graph;
-mod headless;
 mod library;
 mod highpoly;
 mod icons;
@@ -56,18 +55,6 @@ fn init_logging(default: &str) {
 fn main() -> ExitCode {
     // Removes the program the last update replaced (docs/reference/updates.md).
     update::cleanup_previous();
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    // Older form used by the test scripts: crate --headless run|render ...
-    if args.first().map(String::as_str) == Some("--headless") {
-        init_logging("error");
-        return match headless::run(&args[1..]) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("Error: {e:?}");
-                ExitCode::from(cli::EXIT_FAILED)
-            }
-        };
-    }
     let cli = cli::Cli::parse();
     if cli.command.is_some() {
         init_logging(match cli.verbose {

@@ -89,6 +89,9 @@ pub enum LibraryAction {
     ImportTexture(PathBuf),
 }
 
+/// A category's action on a file: its menu label and the action it makes.
+type UseItem = (&'static str, fn(PathBuf) -> LibraryAction);
+
 /// What a texture tile carries while dragged. Dropped onto the Node Editor, a file adds an Image
 /// node and a preset its Procedural node. Not a bare PathBuf, which the Layers panel takes for a
 /// smart material.
@@ -403,7 +406,7 @@ impl Library {
             return (None, refresh);
         }
         // What double-click and the context menu do; None lists the files without actions.
-        let use_item: Option<(&str, fn(PathBuf) -> LibraryAction)> = match kind {
+        let use_item: Option<UseItem> = match kind {
             Kind::Textures => Some(("Import into project", LibraryAction::ImportTexture)),
             Kind::Alphas => Some(("Use as brush alpha", LibraryAction::UseAlpha)),
             Kind::Stencils | Kind::Images => Some(("Load as stencil", LibraryAction::LoadStencil)),
@@ -736,16 +739,7 @@ fn list_row(ui: &mut Ui, name: &str) -> Response {
 /// Reads the first tile of a mesh map back and shrinks it to a thumbnail.
 fn map_thumbnail(gpu: &Gpu, p: &Project, m: MeshMap) -> egui::ColorImage {
     let maps = &p.maps;
-    let (tex, bpp) = match m {
-        MeshMap::Position => (&maps.position.texture, 16),
-        MeshMap::WorldNormal => (&maps.normal.texture, 8),
-        MeshMap::Id => (&maps.id.texture, 4),
-        MeshMap::AmbientOcclusion => (&maps.ao.texture, 4),
-        MeshMap::Curvature => (&maps.curvature.texture, 4),
-        MeshMap::Thickness => (&maps.thickness.texture, 4),
-        MeshMap::Normal => (&maps.tnormal.texture, 8),
-        MeshMap::Height => (&maps.height.texture, 4),
-    };
+    let (tex, bpp) = maps.texture(m);
     let bytes = gpu.read_texture(tex, 0, bpp);
     let res = maps.res as usize;
     let texel = |i: usize| -> [f32; 3] {

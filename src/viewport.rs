@@ -349,10 +349,6 @@ impl Viewport {
         self.targets.as_ref().map(|t| &t.output)
     }
 
-    pub fn frame_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.frame_layout
-    }
-
     /// Binds a mesh's tile map. Must be called when the mesh changes.
     pub fn set_mesh(&mut self, gpu: &Gpu, mesh: &GpuMesh) {
         self.tile_map = Some(mesh.tile_map.clone());
@@ -664,7 +660,7 @@ fn unpack_lut(compressed: &[u8]) -> anyhow::Result<(u32, Vec<u16>)> {
     anyhow::ensure!(data.len() == 8 + texels * 6, "LUT size doesn't match its header");
     let one = half::f16::from_f32(1.0).to_bits();
     let rgba = data[8..]
-        .chunks_exact(6)
+        .as_chunks::<6>().0.iter()
         .flat_map(|c| [u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]), u16::from_le_bytes([c[4], c[5]]), one])
         .collect();
     Ok((n, rgba))
@@ -691,56 +687,6 @@ fn lut_texture(gpu: &Gpu, label: &str, compressed: &[u8]) -> wgpu::Texture {
         size,
     );
     tex
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn embedded_luts_unpack() {
-        for lut in [LUT_ACES13, LUT_ACES20] {
-            let (n, rgba) = unpack_lut(lut).unwrap();
-            assert_eq!(n, 65);
-            assert_eq!(rgba.len(), 65usize.pow(3) * 4);
-            // Black maps to black, and the brightest corner to (nearly) white.
-            let px = |i: usize| [0, 1, 2].map(|k| half::f16::from_bits(rgba[i * 4 + k]).to_f32());
-            assert!(px(0).iter().all(|v| *v < 0.01), "{:?}", px(0));
-            assert!(px(65usize.pow(3) - 1).iter().all(|v| *v > 0.9), "{:?}", px(65usize.pow(3) - 1));
-        }
-    }
-
-    #[test]
-    fn halving_keeps_bright_values() {
-        // 3x2: a bright texel must survive (no clamping), and the odd column folds in.
-        let src: Vec<f32> = [50.0, 1.0, 3.0, 1.0, 1.0, 3.0].iter().flat_map(|v| [*v, *v, *v, 1.0]).collect();
-        let (w, h, out) = halve(3, 2, &src);
-        assert_eq!((w, h), (1, 1));
-        assert!((out[0] - 59.0 / 6.0).abs() < 1e-4, "{out:?}");
-        assert_eq!(out[3], 1.0);
-    }
-
-    #[test]
-    fn irradiance_of_uniform_environment_is_its_radiance() {
-        // A uniform environment of radiance L gives E = pi * L in every direction.
-        let (w, h) = (64, 32);
-        let src: Vec<f32> = (0..w * h).flat_map(|_| [2.0, 1.0, 0.5, 1.0]).collect();
-        let (_, _, out) = irradiance_map(w, h, &src);
-        for px in out.chunks_exact(4) {
-            for (got, want) in px[..3].iter().zip([2.0, 1.0, 0.5]) {
-                assert!((got - want).abs() < want * 0.02, "{px:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn view_transform_keys_round_trip() {
-        for t in ViewTransform::ALL {
-            assert_eq!(ViewTransform::from_key(t.key()), Some(t));
-        }
-        assert_eq!(ViewTransform::default(), ViewTransform::AgX);
-        assert_eq!(ViewTransform::from_key("filmic"), None);
-    }
 }
 
 /// Halves an RGBA float image with a 2x2 box filter, keeping values above 1. An odd last
@@ -909,4 +855,54 @@ fn env_texture(gpu: &Gpu, w: u32, h: u32, mips: &[Vec<u16>]) -> wgpu::Texture {
         );
     }
     tex
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_luts_unpack() {
+        for lut in [LUT_ACES13, LUT_ACES20] {
+            let (n, rgba) = unpack_lut(lut).unwrap();
+            assert_eq!(n, 65);
+            assert_eq!(rgba.len(), 65usize.pow(3) * 4);
+            // Black maps to black, and the brightest corner to (nearly) white.
+            let px = |i: usize| [0, 1, 2].map(|k| half::f16::from_bits(rgba[i * 4 + k]).to_f32());
+            assert!(px(0).iter().all(|v| *v < 0.01), "{:?}", px(0));
+            assert!(px(65usize.pow(3) - 1).iter().all(|v| *v > 0.9), "{:?}", px(65usize.pow(3) - 1));
+        }
+    }
+
+    #[test]
+    fn halving_keeps_bright_values() {
+        // 3x2: a bright texel must survive (no clamping), and the odd column folds in.
+        let src: Vec<f32> = [50.0, 1.0, 3.0, 1.0, 1.0, 3.0].iter().flat_map(|v| [*v, *v, *v, 1.0]).collect();
+        let (w, h, out) = halve(3, 2, &src);
+        assert_eq!((w, h), (1, 1));
+        assert!((out[0] - 59.0 / 6.0).abs() < 1e-4, "{out:?}");
+        assert_eq!(out[3], 1.0);
+    }
+
+    #[test]
+    fn irradiance_of_uniform_environment_is_its_radiance() {
+        // A uniform environment of radiance L gives E = pi * L in every direction.
+        let (w, h) = (64, 32);
+        let src: Vec<f32> = (0..w * h).flat_map(|_| [2.0, 1.0, 0.5, 1.0]).collect();
+        let (_, _, out) = irradiance_map(w, h, &src);
+        for px in out.as_chunks::<4>().0 {
+            for (got, want) in px[..3].iter().zip([2.0, 1.0, 0.5]) {
+                assert!((got - want).abs() < want * 0.02, "{px:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn view_transform_keys_round_trip() {
+        for t in ViewTransform::ALL {
+            assert_eq!(ViewTransform::from_key(t.key()), Some(t));
+        }
+        assert_eq!(ViewTransform::default(), ViewTransform::AgX);
+        assert_eq!(ViewTransform::from_key("filmic"), None);
+    }
 }

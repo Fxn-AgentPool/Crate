@@ -56,14 +56,6 @@ impl Pool {
         Self { texture, view, res, layers: layers.max(1) }
     }
 
-    pub fn layer_view(&self, layer: u32) -> wgpu::TextureView {
-        self.texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            base_array_layer: layer,
-            array_layer_count: Some(1),
-            ..Default::default()
-        })
-    }
 }
 
 pub fn layout(gpu: &Gpu) -> wgpu::BindGroupLayout {

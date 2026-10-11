@@ -1,8 +1,7 @@
 # Project format
 
 A Crate project is a directory with the extension `.crate`. The application presents it as a
-single document. Directories with the extension `.painter`, from before the rename to Crate,
-open too and keep their extension when saved.
+single document.
 
 ## Directory layout
 
@@ -30,7 +29,7 @@ UTF-8 JSON. Top-level keys:
 
 | Key | Type | Description |
 |---|---|---|
-| `format` | string | `"crate-project"`. Projects saved before the rename to Crate have `"painter-project"` and open unchanged; they are saved as `"crate-project"`. |
+| `format` | string | `"crate-project"`. |
 | `version` | integer | Format version. MVP: `1`. |
 | `mesh` | object | Source mesh path and import settings. See [Mesh import](mesh-and-udims.md). |
 | `tileResolution` | integer | Texel resolution of every UDIM tile: `1024`, `2048` or `4096`. |
@@ -77,8 +76,6 @@ least one texel in it has been painted.
 ## Smart material files
 
 Smart materials are stored outside projects, as `.smat` files in the user library directory.
-Files saved before the rename to Crate (`.psmat`, format `"painter-smart-material"`) are listed
-and open unchanged.
 A `.smat` file is a zip archive containing:
 
 | Entry | Description |

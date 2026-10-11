@@ -20,9 +20,6 @@ the `library` folder there, with one folder per Library category (see
 [Windows and panels](windows-and-panels.md#library)). It has no size limit; large folders take
 longer to scan and thumbnail.
 
-Settings saved before the rename to Crate, in a `Painter` (Linux: `painter`) folder, are moved
-to the new folder the first time Crate starts.
-
 ## Project limits
 
 | Item | Limit |

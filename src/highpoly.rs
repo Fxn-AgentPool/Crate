@@ -65,7 +65,7 @@ pub struct Cage {
 impl HighCpu {
     pub fn upload(self, gpu: &Gpu) -> Result<HighGpu> {
         // Fail with a message rather than a GPU validation error on very large meshes.
-        let limit = gpu.device.limits().max_storage_buffer_binding_size as u64;
+        let limit = gpu.device.limits().max_storage_buffer_binding_size;
         let largest = (std::mem::size_of_val(self.tris.as_slice()).max(std::mem::size_of_val(self.data.as_slice())))
             .max(std::mem::size_of_val(self.nodes.as_slice())) as u64;
         if largest > limit {

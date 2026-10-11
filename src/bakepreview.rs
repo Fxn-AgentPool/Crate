@@ -2,7 +2,7 @@
 //! the preview pane of the Mesh Maps window (drawn by bakeview.rs).
 //! See docs/reference/mesh-maps.md#bake-preview.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -270,7 +270,7 @@ impl Preview {
 }
 
 /// Reads the high poly and, with auto cage, measures the cage (as a bake does).
-fn load(path: &PathBuf, import: &ImportSettings, low: &LowMesh, low_groups: &[String], key: Key, diagonal: f32) -> Result<Loaded> {
+fn load(path: &Path, import: &ImportSettings, low: &LowMesh, low_groups: &[String], key: Key, diagonal: f32) -> Result<Loaded> {
     let mesh = crate::mesh::import_high(path, import)?;
     let frontal = key.auto_cage.then(|| {
         let (low_match, high_match) = crate::highpoly::match_parts(low_groups, &mesh.groups, key.match_by_name);

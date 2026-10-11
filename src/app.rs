@@ -1229,7 +1229,7 @@ impl CrateApp {
         let to_screen = |u: f32, v: f32| egui::pos2(origin.x + u * cell, origin.y - v * cell);
         if m.indices.len() / 3 <= 200_000 {
             let stroke = egui::Stroke::new(0.5, egui::Color32::from_rgba_unmultiplied(200, 200, 200, 90));
-            for tri in m.indices.chunks_exact(3) {
+            for tri in m.indices.as_chunks::<3>().0 {
                 let pts = [0, 1, 2].map(|k| {
                     let uv = m.vertices[tri[k] as usize].uv;
                     to_screen(uv[0], uv[1])
@@ -1587,7 +1587,7 @@ fn paint_panels(ui: &mut egui::Ui, gpu: &Gpu, doc: &mut Project, paint: &mut Pai
         ui,
         doc,
         |ui, doc| crate::ui_paint::stencils_actions(ui, gpu, doc),
-        |ui, doc| crate::ui_paint::stencils_panel(ui, doc),
+        crate::ui_paint::stencils_panel,
     );
 }
 
@@ -1654,7 +1654,7 @@ fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

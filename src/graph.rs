@@ -85,8 +85,6 @@ pub struct ParamDef {
     pub name: &'static str,
     pub kind: ParamKind,
     pub default: fn() -> Value,
-    /// Changing a structural parameter changes the generated shader code.
-    pub structural: bool,
 }
 
 pub struct NodeDef {
@@ -460,22 +458,9 @@ impl Graph {
 
 // ------------------------------------------------------------------ node definitions
 
-fn f(v: f32) -> fn() -> Value {
-    // Function pointers can't capture; use a small table of constructors instead.
-    match v {
-        _ if v == 0.0 => || Value::Float(0.0),
-        _ if v == 1.0 => || Value::Float(1.0),
-        _ if v == 0.5 => || Value::Float(0.5),
-        _ => unreachable!(),
-    }
-}
-
 macro_rules! p {
     ($name:expr, $kind:expr, $default:expr) => {
-        ParamDef { name: $name, kind: $kind, default: || $default, structural: false }
-    };
-    ($name:expr, $kind:expr, $default:expr, structural) => {
-        ParamDef { name: $name, kind: $kind, default: || $default, structural: true }
+        ParamDef { name: $name, kind: $kind, default: || $default }
     };
 }
 
@@ -499,22 +484,14 @@ pub const CURVATURE_SELECT: &[&str] = &["Convex", "Concave"];
 /// Per-channel parameters of a Fill node, named `<field>_<param>`.
 fn fill_params() -> Vec<ParamDef> {
     let mut v = vec![
-        p!("projection", ParamKind::Enum(PROJECTIONS), Value::Text("UV".into()), structural),
+        p!("projection", ParamKind::Enum(PROJECTIONS), Value::Text("UV".into())),
         p!("scale", float(0.001, 1000.0), Value::Float(1.0)),
         p!("rotation", float(-360.0, 360.0), Value::Float(0.0)),
         p!("offset", ParamKind::Vec3, Value::Vec3([0.0; 3])),
         p!("triplanar_blend", float(0.0, 1.0), Value::Float(0.25)),
     ];
     for c in Channel::ALL {
-        let (on, val, src, img): (&'static str, &'static str, &'static str, &'static str) = match c {
-            Channel::BaseColor => ("base_color_on", "base_color", "base_color_source", "base_color_image"),
-            Channel::Roughness => ("roughness_on", "roughness", "roughness_source", "roughness_image"),
-            Channel::Metallic => ("metallic_on", "metallic", "metallic_source", "metallic_image"),
-            Channel::Height => ("height_on", "height", "height_source", "height_image"),
-            Channel::Normal => ("normal_on", "normal", "normal_source", "normal_image"),
-            Channel::Emissive => ("emissive_on", "emissive", "emissive_source", "emissive_image"),
-            Channel::Opacity => ("opacity_on", "opacity", "opacity_source", "opacity_image"),
-        };
+        let (on, val, src, img) = fill_param_names(c);
         v.push(ParamDef {
             name: on,
             kind: ParamKind::Bool,
@@ -522,7 +499,6 @@ fn fill_params() -> Vec<ParamDef> {
                 Channel::Height | Channel::Normal | Channel::Emissive | Channel::Opacity => || Value::Bool(false),
                 _ => || Value::Bool(true),
             },
-            structural: false,
         });
         v.push(ParamDef {
             name: val,
@@ -536,28 +512,28 @@ fn fill_params() -> Vec<ParamDef> {
                 Channel::BaseColor => || Value::Vec3([0.5, 0.5, 0.5]),
                 Channel::Normal => || Value::Vec3([0.5, 0.5, 1.0]),
                 Channel::Emissive => || Value::Vec3([0.0; 3]),
-                Channel::Roughness => f(0.5),
-                Channel::Opacity => f(1.0),
-                _ => f(0.0),
+                Channel::Roughness => || Value::Float(0.5),
+                Channel::Opacity => || Value::Float(1.0),
+                _ => || Value::Float(0.0),
             },
-            structural: false,
         });
-        v.push(ParamDef {
-            name: src,
-            kind: ParamKind::Enum(&["Constant", "Image"]),
-            default: || Value::Text("Constant".into()),
-            structural: true,
-        });
-        v.push(ParamDef { name: img, kind: ParamKind::Image, default: || Value::Text(String::new()), structural: true });
+        v.push(p!(src, ParamKind::Enum(&["Constant", "Image"]), Value::Text("Constant".into())));
+        v.push(p!(img, ParamKind::Image, Value::Text(String::new())));
     }
     v
 }
 
+/// A Fill node's parameters for a channel: (on, value, source, image).
 pub fn fill_param_names(c: Channel) -> (&'static str, &'static str, &'static str, &'static str) {
-    let p = fill_params();
-    // Order per channel: on, value, source, image; channels start after the 5 shared params.
-    let base = 5 + c.index() * 4;
-    (p[base].name, p[base + 1].name, p[base + 2].name, p[base + 3].name)
+    match c {
+        Channel::BaseColor => ("base_color_on", "base_color", "base_color_source", "base_color_image"),
+        Channel::Roughness => ("roughness_on", "roughness", "roughness_source", "roughness_image"),
+        Channel::Metallic => ("metallic_on", "metallic", "metallic_source", "metallic_image"),
+        Channel::Height => ("height_on", "height", "height_source", "height_image"),
+        Channel::Normal => ("normal_on", "normal", "normal_source", "normal_image"),
+        Channel::Emissive => ("emissive_on", "emissive", "emissive_source", "emissive_image"),
+        Channel::Opacity => ("opacity_on", "opacity", "opacity_source", "opacity_image"),
+    }
 }
 
 static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
@@ -574,9 +550,9 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         NodeDef {
             ty: "image", title: "Image", category: "Sources", inputs: &[], outputs: &[("color", C), ("alpha", F)],
             params: vec![
-                p!("image", Image, Value::Text(String::new()), structural),
+                p!("image", Image, Value::Text(String::new())),
                 p!("srgb", Bool, Value::Bool(true)),
-                p!("projection", Enum(PROJECTIONS), Value::Text("UV".into()), structural),
+                p!("projection", Enum(PROJECTIONS), Value::Text("UV".into())),
                 p!("scale", float(0.001, 1000.0), Value::Float(1.0)),
                 p!("rotation", float(-360.0, 360.0), Value::Float(0.0)),
                 p!("offset", Vec3, Value::Vec3([0.0; 3])),
@@ -586,14 +562,14 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         },
         NodeDef {
             ty: "mesh_map", title: "Mesh Map", category: "Sources", inputs: &[], outputs: &[("float", F), ("color", C)],
-            params: vec![p!("map", Enum(MAP_NAMES), Value::Text("AO".into()), structural)],
+            params: vec![p!("map", Enum(MAP_NAMES), Value::Text("AO".into()))],
             non_local: false,
         },
         // Procedural
         NodeDef {
             ty: "noise", title: "Noise", category: "Procedural", inputs: &[], outputs: &[("out", F)],
             params: vec![
-                p!("type", Enum(NOISE_TYPES), Value::Text("Perlin".into()), structural),
+                p!("type", Enum(NOISE_TYPES), Value::Text("Perlin".into())),
                 p!("scale", float(0.01, 1000.0), Value::Float(4.0)),
                 p!("octaves", Int { min: 1, max: 10 }, Value::Float(5.0)),
                 p!("lacunarity", float(1.0, 4.0), Value::Float(2.0)),
@@ -607,8 +583,8 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
             params: vec![
                 p!("scale", float(0.01, 1000.0), Value::Float(4.0)),
                 p!("jitter", float(0.0, 1.0), Value::Float(1.0)),
-                p!("metric", Enum(METRICS), Value::Text("Euclidean".into()), structural),
-                p!("output", Enum(CELL_OUTPUTS), Value::Text("F1".into()), structural),
+                p!("metric", Enum(METRICS), Value::Text("Euclidean".into())),
+                p!("output", Enum(CELL_OUTPUTS), Value::Text("F1".into())),
                 p!("seed", Int { min: 0, max: 9999 }, Value::Float(0.0)),
             ],
             non_local: false,
@@ -626,7 +602,7 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         },
         NodeDef {
             ty: "id_select", title: "ID Select", category: "Procedural", inputs: &[], outputs: &[("out", F)],
-            params: vec![p!("colors", Colors, Value::Colors(vec![]), structural), p!("tolerance", float(0.0, 1.0), Value::Float(0.1))],
+            params: vec![p!("colors", Colors, Value::Colors(vec![])), p!("tolerance", float(0.0, 1.0), Value::Float(0.1))],
             non_local: false,
         },
         // Generators
@@ -683,7 +659,7 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         },
         NodeDef {
             ty: "ramp", title: "Ramp", category: "Adjust", inputs: &[("in", F)], outputs: &[("out", C)],
-            params: vec![p!("stops", Stops, Value::Stops(vec![(0.0, [0.0; 3]), (1.0, [1.0; 3])]), structural)],
+            params: vec![p!("stops", Stops, Value::Stops(vec![(0.0, [0.0; 3]), (1.0, [1.0; 3])]))],
             non_local: false,
         },
         NodeDef { ty: "invert", title: "Invert", category: "Adjust", inputs: &[("in", C)], outputs: &[("out", C), ("float", F)], params: vec![], non_local: false },
@@ -704,7 +680,7 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         NodeDef {
             ty: "math", title: "Math", category: "Adjust", inputs: &[("a", F), ("b", F)], outputs: &[("out", F)],
             params: vec![
-                p!("op", Enum(MATH_OPS), Value::Text("Multiply".into()), structural),
+                p!("op", Enum(MATH_OPS), Value::Text("Multiply".into())),
                 p!("b_value", float(-10.0, 10.0), Value::Float(1.0)),
             ],
             non_local: false,

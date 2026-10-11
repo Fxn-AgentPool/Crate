@@ -34,9 +34,7 @@ crate Crate.crate            # open a project
 crate --script setup.txt     # run a script, then continue in the window
 ```
 
-Projects are `.crate` folders. Projects and smart materials saved under the old name (`.painter`
-folders, `.psmat` files) still open, and settings in the old `Painter` settings folder are moved
-to `Crate` on first start.
+Projects are `.crate` folders.
 
 ## Command line
 

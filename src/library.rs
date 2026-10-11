@@ -27,7 +27,7 @@ impl Kind {
     pub fn accepts(self, path: &Path) -> bool {
         let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
         match self {
-            Kind::SmartMaterials => ext == crate::smartmat::EXT || ext == crate::smartmat::LEGACY_EXT,
+            Kind::SmartMaterials => ext == crate::smartmat::EXT,
             Kind::Reserved => true,
             Kind::Textures | Kind::Alphas | Kind::Stencils | Kind::Images => IMAGE_EXTS.contains(&ext.as_str()),
             Kind::Environments => ENVIRONMENT_EXTS.contains(&ext.as_str()),

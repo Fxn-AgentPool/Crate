@@ -191,20 +191,6 @@ pub fn duplicate(g: &mut Graph, l: LayerRef) -> Option<(LayerRef, Vec<(NodeId, N
     Some((at, pairs))
 }
 
-/// Moves a layer up (+1) or down (-1) within its stack.
-pub fn shift(g: &mut Graph, l: LayerRef, delta: i32) -> LayerRef {
-    let len = g.get(l.stack).map(|n| n.slots.len()).unwrap_or(0);
-    if l.index >= len {
-        return l;
-    }
-    let to = (l.index as i32 + delta).clamp(0, len as i32 - 1) as usize;
-    if to != l.index {
-        let s = g.node_mut(l.stack).slots.remove(l.index);
-        g.node_mut(l.stack).slots.insert(to, s);
-    }
-    LayerRef { stack: l.stack, index: to }
-}
-
 /// Moves layer `l` to directly below `target` (possibly in another stack).
 pub fn move_below(g: &mut Graph, l: LayerRef, target: LayerRef) -> LayerRef {
     move_to(g, l, target, 0)

@@ -96,20 +96,12 @@ impl Mesh {
         (self.bbox_max - self.bbox_min).length() * 0.5
     }
 
-    pub fn tile_index(&self, udim: u32) -> Option<usize> {
-        self.tiles.iter().position(|&t| t == udim)
-    }
-
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(|d| d.severity == Severity::Error)
     }
 }
 
 pub const MAX_TRIANGLES: usize = 10_000_000;
-
-pub fn udim_of(u: f32, v: f32) -> u32 {
-    (1001.0 + u.floor() + 10.0 * v.floor()) as u32
-}
 
 /// Loads, triangulates and validates a mesh. Errors in the returned diagnostics mean the
 /// import must be aborted; I/O and parse failures are returned as `Err`.
@@ -307,7 +299,7 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
                 Some(i) => i.into_u32().collect(),
                 None => (0..positions.len() as u32).collect(),
             };
-            for tri in idx.chunks_exact(3) {
+            for tri in idx.as_chunks::<3>().0 {
                 if flip {
                     out.indices.extend([base + tri[0], base + tri[2], base + tri[1]]);
                 } else {
@@ -419,7 +411,7 @@ fn compute_normals(vertices: &mut [Vertex], indices: &[u32]) {
     // OBJ/glTF vertices still produce smooth normals.
     let key = |p: [f32; 3]| (p[0].to_bits(), p[1].to_bits(), p[2].to_bits());
     let mut acc: HashMap<(u32, u32, u32), Vec3> = HashMap::new();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let [a, b, c] = [0, 1, 2].map(|k| Vec3::from(vertices[tri[k] as usize].pos));
         let n = (b - a).cross(c - a);
         for k in 0..3 {
@@ -488,7 +480,7 @@ fn check_uvs(vertices: &[Vertex], indices: &[u32], diags: &mut Vec<Diagnostic>) 
     let mut out_of_range = 0usize;
     let mut crossing = 0usize;
     let mut tiles = std::collections::BTreeSet::new();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let uv = [0, 1, 2].map(|k| Vec2::from(vertices[tri[k] as usize].uv));
         let min = uv[0].min(uv[1]).min(uv[2]);
         let max = uv[0].max(uv[1]).max(uv[2]);
@@ -543,7 +535,7 @@ fn check_uvs(vertices: &[Vertex], indices: &[u32], diags: &mut Vec<Diagnostic>) 
 fn overlap_texels(vertices: &[Vertex], indices: &[u32]) -> (usize, usize) {
     const RES: f32 = 256.0;
     let mut cells: HashMap<(i32, i32), u8> = HashMap::new();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let p = [0, 1, 2].map(|k| Vec2::from(vertices[tri[k] as usize].uv) * RES);
         let den = (p[1].y - p[2].y) * (p[0].x - p[2].x) + (p[2].x - p[1].x) * (p[0].y - p[2].y);
         if den.abs() < 1e-9 {
@@ -579,7 +571,7 @@ pub fn edge_list(indices: &[u32], vertices: &[Vertex]) -> Vec<u32> {
     };
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             let (ka, kb) = (key(a), key(b));
             let k = if ka < kb { (ka, kb) } else { (kb, ka) };

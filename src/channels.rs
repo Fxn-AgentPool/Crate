@@ -58,10 +58,6 @@ impl Channel {
         }
     }
 
-    pub fn is_color(self) -> bool {
-        matches!(self, Channel::BaseColor | Channel::Emissive)
-    }
-
     pub fn default_value(self) -> [f32; 3] {
         match self {
             Channel::BaseColor => [0.5, 0.5, 0.5],

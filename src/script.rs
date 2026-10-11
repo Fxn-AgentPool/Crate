@@ -1,4 +1,4 @@
-//! Headless script runner: `crate run <script.txt>` (and `crate --headless run`).
+//! Headless script runner: `crate run <script.txt>`.
 //!
 //! Each line is a command mirroring a user action, so the tutorials can be replayed and
 //! checked automatically, and pipelines can drive Crate. Lines starting with `#` are
@@ -811,7 +811,7 @@ impl Session {
             }
             "add-smart" => {
                 let name = rest.first().context("add-smart <name or path>")?;
-                let path = if name.ends_with(".smat") || name.ends_with(".psmat") {
+                let path = if name.ends_with(".smat") {
                     self.path(name)
                 } else {
                     crate::smartmat::library_dir().join(format!("{name}.{}", crate::smartmat::EXT))

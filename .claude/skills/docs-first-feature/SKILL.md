@@ -66,7 +66,7 @@ Run everything:
 
 ```
 cargo test --release
-for s in tests/scripts/*.txt; do target/release/crate.exe --headless run "$s" >/dev/null 2>&1; echo "$s $?"; done
+for s in tests/scripts/*.txt; do target/release/crate.exe run "$s" >/dev/null 2>&1; echo "$s $?"; done
 bash tests/cli.sh target/release/crate.exe     # expect 16+ PASS, 0 FAIL
 ```
 

@@ -37,3 +37,7 @@ tobj = "4.0.5"
 ureq = "3"
 wgpu = "30"
 zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
+
+[lints.clippy]
+# Nested ifs are the house style; collapsing them into let-chains reads worse here.
+collapsible_if = "allow"

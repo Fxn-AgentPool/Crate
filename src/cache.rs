@@ -64,18 +64,6 @@ impl Caches {
         self.entries.get(&id).filter(|e| e.signature.is_some()).map(|e| e.cache)
     }
 
-    /// GPU memory used by caches, in bytes.
-    pub fn memory(&self, res: u32, tiles: u32) -> u64 {
-        let per_tile = res as u64 * res as u64 * 8;
-        self.entries
-            .values()
-            .map(|e| match e.cache {
-                CacheRef::Value(_) => per_tile * tiles as u64,
-                CacheRef::Material(_) => per_tile * tiles as u64 * crate::scene::PAINT_PLANES as u64,
-            })
-            .sum()
-    }
-
     fn alloc_value_slot(&mut self) -> u32 {
         self.free_value_slots.pop().unwrap_or_else(|| {
             self.next_value_slot += 1;

@@ -216,6 +216,3 @@ the [user library](windows-and-panels.md#library)) are read from the user config
 directory: `%APPDATA%\Crate` on Windows, `$XDG_CONFIG_HOME/crate` (usually
 `~/.config/crate`) on Linux. Relative paths in commands and scripts are relative to the
 current directory.
-
-Settings saved before the rename to Crate, in a `Painter` (Linux: `painter`) folder, are moved
-to the new folder the first time Crate starts.

@@ -401,7 +401,7 @@ pub fn ungroup(g: &mut Graph, id: NodeId) -> Option<NodeId> {
     let n = g.node(id).clone();
     let f = |name: &str| n.param(name).as_f32();
     let pos = n.pos;
-    let mut place = |g: &mut Graph, ty: &str, dx: f32, dy: f32| {
+    let place = |g: &mut Graph, ty: &str, dx: f32, dy: f32| {
         let k = g.add(ty);
         g.node_mut(k).pos = [pos[0] + dx, pos[1] + dy];
         k

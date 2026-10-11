@@ -190,10 +190,6 @@ impl Project {
         self.scene.update(gpu, &self.maps, self.mesh.bbox_min, size);
     }
 
-    pub fn image_layer(&self, name: &str) -> i32 {
-        self.scene.image_layer(name)
-    }
-
     /// Recompiles the material after any change to the graph or channel settings.
     pub fn graph_changed(&mut self, gpu: &Gpu) {
         self.compile_material(gpu);
@@ -250,11 +246,7 @@ impl Project {
 
     /// Records the current graph so the next change can be undone.
     pub fn checkpoint(&mut self, label: &str) {
-        self.undo.push(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint: None });
-        if self.undo.len() > self.undo_limit {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
+        self.push_undo(label, None);
     }
 
     /// Applies an undoable edit to the graph.
@@ -270,12 +262,17 @@ impl Project {
     /// Records a paint step: `pages` hold the contents before the stroke.
     pub fn push_paint_undo(&mut self, label: &str, pages: crate::paint::PaintPages) {
         self.edit_version += 1;
-        self.undo.push(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint: Some(pages) });
-        // Keep at most UNDO_LIMIT steps and about 2 GB of paint pages.
-        let mut bytes: usize = self.undo.iter().filter_map(|s| s.paint.as_ref()).map(|p| p.data.iter().map(Vec::len).sum::<usize>()).sum();
+        self.push_undo(label, Some(pages));
+    }
+
+    /// Pushes an undo step, then drops the oldest steps beyond `undo_limit` steps or
+    /// `undo_bytes` of paint pages.
+    fn push_undo(&mut self, label: &str, paint: Option<crate::paint::PaintPages>) {
+        self.undo.push(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint });
+        let size = |s: &UndoStep| s.paint.as_ref().map_or(0, |p| p.data.iter().map(Vec::len).sum::<usize>());
+        let mut bytes: usize = self.undo.iter().map(size).sum();
         while self.undo.len() > self.undo_limit || (bytes > self.undo_bytes && self.undo.len() > 1) {
-            let s = self.undo.remove(0);
-            bytes -= s.paint.map(|p| p.data.iter().map(Vec::len).sum::<usize>()).unwrap_or(0);
+            bytes -= size(&self.undo.remove(0));
         }
         self.redo.clear();
     }

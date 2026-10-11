@@ -37,18 +37,7 @@ impl Default for Preferences {
 
 /// Per-user directory for preferences, export presets and the library.
 pub fn dir() -> PathBuf {
-    let dir = base_dir(if cfg!(any(windows, target_os = "macos")) { "Crate" } else { "crate" });
-    // Moves settings over from before the rename, once.
-    static MIGRATE: std::sync::Once = std::sync::Once::new();
-    MIGRATE.call_once(|| {
-        let old = base_dir(if cfg!(any(windows, target_os = "macos")) { "Painter" } else { "painter" });
-        if !dir.exists() && old.is_dir() {
-            if let Err(e) = std::fs::rename(&old, &dir) {
-                log::warn!("could not move settings from {} to {}: {e}", old.display(), dir.display());
-            }
-        }
-    });
-    dir
+    base_dir(if cfg!(any(windows, target_os = "macos")) { "Crate" } else { "crate" })
 }
 
 fn base_dir(name: &str) -> PathBuf {

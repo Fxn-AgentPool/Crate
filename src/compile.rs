@@ -118,14 +118,20 @@ fn layout(g: &Graph, ch: &ChannelSettings, image_layer: &dyn Fn(&str) -> i32) ->
     l
 }
 
-/// Computes only the parameter buffer (for parameter-only edits).
-pub fn params(g: &Graph, ch: &ChannelSettings, image_layer: &dyn Fn(&str) -> i32) -> Vec<[f32; 4]> {
-    layout(g, ch, image_layer).params
-}
-
+#[derive(Default)]
 struct Func {
     lines: Vec<String>,
     emitted: HashSet<NodeId>,
+}
+
+/// A WGSL function with `header` (its signature) and `lines` as its body.
+fn function(header: &str, lines: &[String]) -> String {
+    let mut code = format!("{header} {{\n");
+    for line in lines {
+        let _ = writeln!(code, "    {line}");
+    }
+    code.push_str("}\n");
+    code
 }
 
 struct Ctx<'a> {
@@ -170,19 +176,8 @@ pub enum Target {
 
 /// Compiles the material. Paint nodes read their pool slot; cached nodes read their cache.
 pub fn compile(g: &Graph, ch: &ChannelSettings, env: &Env) -> Compiled {
-    let l = layout(g, ch, env.image_layer);
-    let mut cx = Ctx {
-        g,
-        ch,
-        l,
-        funcs: Vec::new(),
-        func_done: HashSet::new(),
-        errors: Vec::new(),
-        paint_slot: env.paint_slot,
-        cache: env.cache,
-        exclude: None,
-    };
-    let mut f = Func { lines: Vec::new(), emitted: HashSet::new() };
+    let mut cx = Ctx::new(g, ch, env, None);
+    let mut f = Func::default();
     let body = match env.preview.filter(|l| g.get(l.node).is_some()) {
         Some(link) => match g.output_type(link) {
             Some(SocketType::Material) => cx.input_expr(&mut f, link, SocketType::Material),
@@ -193,39 +188,20 @@ pub fn compile(g: &Graph, ch: &ChannelSettings, env: &Env) -> Compiled {
             None => "mat_defaults()".to_string(),
         },
     };
-    let mut code = String::new();
-    for func in &cx.funcs {
-        code.push_str(func);
-        code.push('\n');
-    }
-    code.push_str("fn eval_material(s: Surface) -> Material {\n");
-    for line in &f.lines {
-        let _ = writeln!(code, "    {line}");
-    }
-    let _ = writeln!(code, "    return apply_baked_normal(s, mat_to_material({body}));\n}}");
+    f.lines.push(format!("return apply_baked_normal(s, mat_to_material({body}));"));
+    let code = cx.finish("fn eval_material(s: Surface) -> Material", &f);
     Compiled { code, params: cx.l.params, errors: cx.errors }
 }
 
 /// Compiles `fn eval_target(s) -> CacheOut` computing `target`, for filling a cache.
 /// The target node itself is evaluated, not read from its cache.
 pub fn compile_target(g: &Graph, ch: &ChannelSettings, env: &Env, target: &Target) -> String {
-    let l = layout(g, ch, env.image_layer);
     let exclude = match target {
         Target::Node(n) => Some(*n),
         Target::Link(..) => None,
     };
-    let mut cx = Ctx {
-        g,
-        ch,
-        l,
-        funcs: Vec::new(),
-        func_done: HashSet::new(),
-        errors: Vec::new(),
-        paint_slot: env.paint_slot,
-        cache: env.cache,
-        exclude,
-    };
-    let mut f = Func { lines: Vec::new(), emitted: HashSet::new() };
+    let mut cx = Ctx::new(g, ch, env, exclude);
+    let mut f = Func::default();
     let (value, mat) = match target {
         Target::Node(n) => {
             cx.emit(&mut f, *n);
@@ -250,17 +226,8 @@ pub fn compile_target(g: &Graph, ch: &ChannelSettings, env: &Env, target: &Targe
             }
         }
     };
-    let mut code = String::new();
-    for func in &cx.funcs {
-        code.push_str(func);
-        code.push('\n');
-    }
-    code.push_str("fn eval_target(s: Surface) -> CacheOut {\n");
-    for line in &f.lines {
-        let _ = writeln!(code, "    {line}");
-    }
-    let _ = writeln!(code, "    return CacheOut({value}, {mat});\n}}");
-    code
+    f.lines.push(format!("return CacheOut({value}, {mat});"));
+    cx.finish("fn eval_target(s: Surface) -> CacheOut", &f)
 }
 
 /// Whether a node's outputs fit a cache (at most one Color and one Float, or one Material).
@@ -300,6 +267,27 @@ fn default_for(t: SocketType) -> &'static str {
 }
 
 impl<'a> Ctx<'a> {
+    fn new(g: &'a Graph, ch: &'a ChannelSettings, env: &Env<'a>, exclude: Option<NodeId>) -> Self {
+        Ctx {
+            g,
+            ch,
+            l: layout(g, ch, env.image_layer),
+            funcs: Vec::new(),
+            func_done: HashSet::new(),
+            errors: Vec::new(),
+            paint_slot: env.paint_slot,
+            cache: env.cache,
+            exclude,
+        }
+    }
+
+    /// The generated stack functions followed by the entry point `header` with body `f`.
+    fn finish(&self, header: &str, f: &Func) -> String {
+        let mut code: String = self.funcs.iter().map(|func| format!("{func}\n")).collect();
+        code.push_str(&function(header, &f.lines));
+        code
+    }
+
     fn p(&self, n: &Node, name: &str) -> String {
         let def = n.def().params.iter().find(|p| p.name == name);
         let Some(def) = def else { return "0.0".into() };
@@ -691,7 +679,7 @@ impl<'a> Ctx<'a> {
         }
         let g = self.g;
         let n = g.node(id);
-        let mut f = Func { lines: Vec::new(), emitted: HashSet::new() };
+        let mut f = Func::default();
         f.lines.push("var acc = below;".into());
         for (i, slot) in n.slots.iter().enumerate() {
             let Some(content) = slot.content else { continue };
@@ -738,12 +726,7 @@ impl<'a> Ctx<'a> {
             }
         }
         f.lines.push("return acc;".into());
-        let mut code = format!("fn stack_{id}(s: Surface, below: Mat) -> Mat {{\n");
-        for line in &f.lines {
-            let _ = writeln!(code, "    {line}");
-        }
-        code.push_str("}\n");
-        self.funcs.push(code);
+        self.funcs.push(function(&format!("fn stack_{id}(s: Surface, below: Mat) -> Mat"), &f.lines));
     }
 
     fn mask_function(&mut self, id: NodeId) {
@@ -752,7 +735,7 @@ impl<'a> Ctx<'a> {
         }
         let g = self.g;
         let n = g.node(id);
-        let mut f = Func { lines: Vec::new(), emitted: HashSet::new() };
+        let mut f = Func::default();
         f.lines.push("var m = 0.0;".into());
         for (i, slot) in n.mask_slots.iter().enumerate() {
             if !slot.visible {
@@ -797,11 +780,6 @@ impl<'a> Ctx<'a> {
             f.lines.push("m = clamp(m, 0.0, 1.0);".into());
         }
         f.lines.push("return m;".into());
-        let mut code = format!("fn mstack_{id}(s: Surface) -> f32 {{\n");
-        for line in &f.lines {
-            let _ = writeln!(code, "    {line}");
-        }
-        code.push_str("}\n");
-        self.funcs.push(code);
+        self.funcs.push(function(&format!("fn mstack_{id}(s: Surface) -> f32"), &f.lines));
     }
 }
