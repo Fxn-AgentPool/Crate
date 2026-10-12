@@ -3,7 +3,9 @@
 This guide shows you how to update a Crate project when you change its model in Blender,
 keeping all layers and paint.
 
-Paint follows the UVs, so reimporting works as long as the UVs of painted areas stay the same.
+Paint is kept when you change UVs in Blender: Crate transfers it to the new UVs by matching
+the surface, as long as the shape of painted areas stays about the same. See [what happens on
+reimport](../reference/mesh-and-udims.md#reimport).
 
 ## Once: reimport from the command line
 
@@ -18,7 +20,9 @@ Paint follows the UVs, so reimporting works as long as the UVs of painted areas 
    Crate replaces the mesh, rebakes mesh maps that are out of date, and saves the project.
 3. To export textures in the same step, add `--export textures` (and `--preset` if you need one).
 
-If you don't want mesh maps rebaked yet, add `--no-bake`; they stay marked out of date.
+If you don't want mesh maps rebaked yet, add `--no-bake`; they stay marked out of date. If the
+output says that part of the UV area found no old surface, check those areas: the shape changed
+there and the paint wasn't carried over.
 
 ## Every time you export: watch the file
 

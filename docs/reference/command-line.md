@@ -52,7 +52,7 @@ Replaces a project's mesh, keeping layers and paint, rebakes mesh maps that beca
 and saves. See [Mesh import and UDIM tiles](mesh-and-udims.md#reimport).
 
 ```
-crate reimport <PROJECT> <MESH> [--no-bake] [--export DIR] [EXPORT OPTIONS]
+crate reimport <PROJECT> <MESH> [--no-bake] [--no-transfer] [--export DIR] [EXPORT OPTIONS]
 ```
 
 | Argument / option | Description |
@@ -60,6 +60,10 @@ crate reimport <PROJECT> <MESH> [--no-bake] [--export DIR] [EXPORT OPTIONS]
 | `PROJECT` | The `.crate` project. |
 | `MESH` | The new mesh. Its file name becomes `{mesh}` in exported file names. |
 | `--no-bake` | Leave out-of-date mesh maps out of date. |
+| `--no-transfer` | Keep paint texels where they are in UV space, even if the UVs changed. See [Reimport](mesh-and-udims.md#reimport). |
+
+Without `--json`, a reimport that transferred paint prints `paint transferred to the new UVs`,
+followed by `(N% of the UV area found no old surface)` when N is above 0.
 | `--export` | Export textures to this directory afterwards. |
 
 ### `export`
@@ -124,12 +128,13 @@ Watches a mesh file. When it changes, Crate reimports it, rebakes out-of-date me
 saves, and optionally exports. Runs until interrupted (`Ctrl+C`) or until `--count` reimports.
 
 ```
-crate watch <PROJECT> --mesh <FILE> [--export DIR] [EXPORT OPTIONS] [--interval MS] [--count N]
+crate watch <PROJECT> --mesh <FILE> [--no-transfer] [--export DIR] [EXPORT OPTIONS] [--interval MS] [--count N]
 ```
 
 | Option | Default | Description |
 |---|---|---|
 | `--mesh` | — | The mesh file to watch. |
+| `--no-transfer` | off | As for `reimport`. |
 | `--export` | none | Export textures here after each reimport. |
 | `--interval` | `500` | Polling interval in milliseconds. A change is processed once the file's size and modification time are stable for one interval. |
 | `--count` | `0` | Stop after this many reimports; `0` runs until interrupted. |
@@ -186,6 +191,7 @@ With `--json`, every command except `watch` prints one JSON object on stdout:
 | `warnings` | array of string | Import and export warnings. |
 | `seconds` | number | Wall-clock time. |
 | `project` | object | `new`, `reimport`, `run`, `info`: the project summary (as `info` prints it). |
+| `transfer` | object | `reimport`: `transferred` (boolean: whether paint was transferred to new UVs) and `missed` (number: percent of the new UV area that found no old surface, 0 when nothing was transferred). |
 | `projects` | array of object | `batch`: per project, `project` (path), `ok`, `error`, `seconds`. |
 | `failed` | number | `batch`: number of failed projects. |
 | `installed` | string | `update`: the running version, e.g. `0.1.0 (build 5)`. |
@@ -206,7 +212,7 @@ Example:
 | `event` | Other fields |
 |---|---|
 | `watching` | `mesh` |
-| `reimported` | `mesh`, `files`, `warnings`, `seconds` |
+| `reimported` | `mesh`, `files`, `warnings`, `seconds`, `transfer` (as for `reimport`) |
 | `error` | `error` |
 
 ## Files

@@ -91,6 +91,7 @@ Background, design decisions and context. Read these away from the application.
 - [About the paint buffer](explanation/about-the-paint-buffer.md)
 - [About realtime evaluation and caching](explanation/about-realtime-evaluation.md)
 - [About UDIM tiles and paint storage](explanation/about-tile-storage.md)
+- [About keeping paint when UVs change](explanation/about-paint-transfer.md)
 - [About high-poly baking](explanation/about-high-poly-baking.md)
 - [About the MVP scope](explanation/about-mvp-scope.md)
 - [About automation](explanation/about-automation.md)

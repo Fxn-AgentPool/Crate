@@ -46,6 +46,25 @@ udim = 1001 + floor(u) + 10 * floor(v)
 
 **File → Reimport Mesh** replaces the mesh while keeping layers and paint.
 
-- Paint is stored in UV space, so it follows the new mesh as long as UVs are unchanged.
-- If the set of used tiles changes, paint in removed tiles is kept on disk but not displayed.
+- If every UV is unchanged (same triangles, same UVs to within 0.000001), paint texels are kept
+  as they are.
+- Otherwise the paint of every Paint and Paint Mask layer is **transferred** to the new UVs:
+  - For each texel the new UVs cover, Crate takes its point on the new surface (from the
+    Position and World Normal maps, which a reimport bakes first) and looks along the surface
+    normal, in front and behind, for the nearest point of the old mesh within 1 % of the new
+    mesh's bounding-box diagonal.
+  - The texel gets the old paint at that point's UV (the nearest old texel, all channels and
+    coverage). Where nothing is found, the texel is left unpainted.
+  - Paint in tiles the new mesh no longer uses is transferred like the rest, and their pages are
+    deleted from the project on the next save.
+  - When done, the status bar (or the command line) reports **Paint transferred to the new UVs**
+    and, if any texels found no old surface, the share of the new UV area they make up, as
+    **N % of the UV area found no old surface**.
+- With `--no-transfer` ([command line](command-line.md#reimport), [script](script-commands.md)),
+  paint texels are kept where they are in UV space even when UVs changed. Paint in tiles the new
+  mesh no longer uses is then kept on disk but not displayed.
 - Mesh maps are marked out of date and must be rebaked.
+- The undo history is cleared.
+
+See [About keeping paint when UVs change](../explanation/about-paint-transfer.md) for why paint
+is transferred rather than repainted, and what that costs.

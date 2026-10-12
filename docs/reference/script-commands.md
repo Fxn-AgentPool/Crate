@@ -56,7 +56,7 @@ full file name is used. An argument with an extension is a file path, relative t
 | `new <mesh> [resolution]` | New project from a mesh. Resolution `1024`, `2048` (default) or `4096`. |
 | `open <project>` | Open a `.crate` project. |
 | `save [project]` | Save. Without a path, saves to where the project was opened or last saved. |
-| `reimport <mesh>` | Replace the mesh, keeping layers and paint. Mesh maps become out of date. |
+| `reimport <mesh> [--no-transfer]` | Replace the mesh, keeping layers and paint; paint is transferred if the UVs changed, unless `--no-transfer` is given (see [Reimport](mesh-and-udims.md#reimport)). Mesh maps become out of date. |
 | `bake [maps]` | Bake mesh maps: `all` (AO, curvature, thickness, ID, and Normal and Height when a high poly is set), `outdated`, or names: `ao`, `curvature`, `thickness`, `id`, `normal` (or `normal-map`), `height` (or `height-map`), `position`, `worldnormal`. |
 | `high-poly <mesh>` | Set the high-poly mesh to bake from. `high-poly off` removes it. |
 | `bake-settings key=value...` | Change [bake settings](mesh-maps.md#bake-settings): `resolution` (0 = tile resolution), `samples`, `max_distance`, `spread_angle`, `ignore_backfaces`, `curvature_radius`, `padding`, and for the high poly `auto_cage`, `frontal`, `rear`, `match_by_name`, `apply_normal` (`on`/`off` for `auto_cage`, `match_by_name` and `apply_normal`). |
@@ -157,4 +157,5 @@ For tests; each fails the script when its condition does not hold.
 | `expect-error <command...>` | The command fails. |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
 | `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |
+| `expect-transfer <true\|false> [max percent]` | Whether the last reimport transferred paint, and, if given, that at most this percent of the new UV area found no old surface. |
 | `expect-library <folder> <name>...` | The Library lists exactly these items, in this order, for that library folder (e.g. `environments`). |
