@@ -15,8 +15,8 @@ one click each.
 
 ## Fill
 
-1. Hover over the mesh. The element a click would fill is named next to the pointer and, in the
-   3D view, highlighted.
+1. Hover over the mesh. Red outlines show the borders between the elements you can fill, and
+   the element a click would fill is tinted red and named next to the pointer.
 2. Click to fill it. Each click is one undo step (`Ctrl+Z`).
 3. To fill from the UV layout instead, switch to the UV view (`F3`) and click inside an island.
    With **UDIM tile**, click anywhere in the tile.

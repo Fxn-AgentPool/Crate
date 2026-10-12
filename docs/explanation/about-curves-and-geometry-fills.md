@@ -69,11 +69,10 @@ Geo Fill's elements come from the mesh as imported. Parts, materials and tiles a
 directly. UV islands are found by following edges that are shared in UV space, which is exactly
 what an island is.
 
-Faces are harder, because triangulation erases them. OBJ files keep their polygons, so Crate
-remembers which triangles came from which face. glTF files only contain triangles, so Crate
-pairs each triangle with the neighbor across its longest edge when that edge is the neighbor's
-longest too. That recovers the quads of a triangulated quad mesh, which is what modeling tools
-export, but not larger polygons.
+A face is a single triangle. Polygons can't be recovered reliably: glTF files contain only
+triangles, and guessing which triangles once formed a quad works for clean quad meshes but not
+for n-gons or meshes triangulated differently. Triangles behave the same for every file, and the
+outlines show exactly what a click fills.
 
 ## Related
 

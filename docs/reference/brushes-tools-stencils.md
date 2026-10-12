@@ -83,7 +83,7 @@ Fill is the current tool.
 
 | Fill by | Element |
 |---|---|
-| Face | One polygon. For OBJ files, the face as written in the file. glTF files store only triangles: a face is the triangle and the neighbor it was split from, which shares its longest edge, when that edge is also the neighbor's longest. |
+| Face | One triangle. Polygons are split into triangles on import, so a quad is two faces. |
 | UV island | The triangles connected to it by shared edges in UV space: edges whose two ends have the same position and UV in both triangles. Default. |
 | Part | Every triangle of the same part: glTF node or OBJ object, named as in [Match by name](mesh-maps.md#match-by-name). |
 | Material | Every triangle with the same material. |
@@ -106,10 +106,18 @@ tip, flow, spacing, jitter and pressure aren't used.
 Each click is one undo step. The fill becomes ordinary paint: it can be painted over or erased,
 but not changed as a fill afterwards.
 
-While the pointer is over the mesh, the element under it is named next to the pointer: **Face**
-with its number of sides, **UV island** with its number of triangles, **Part:** and
-**Material:** with their names, or **Tile** with its number. In the 3D view, elements of up to
-50 000 triangles are also highlighted (their triangles that face the camera).
+### Outlines and highlight
+
+While Geo Fill is the current tool, both views show what a click can fill:
+
+| Item | Shown as |
+|---|---|
+| Outlines | Red lines along the borders between elements of the current **Fill by** kind, and along the mesh's open edges. Face: every triangle edge. UV island: the UV seams. Part, Material, UDIM tile: the edges where two parts, materials or tiles meet. |
+| Element under the pointer | Its triangles tinted red, and its name next to the pointer: **Face**, **UV island** with its number of triangles, **Part:** and **Material:** with their names, or **Tile** with its number. |
+
+In the 3D view, the mesh hides the outlines and highlight behind it, as it hides the
+[wireframe](keyboard-shortcuts.md#display). In the UV view, an edge that is a border is outlined
+on both sides of a seam.
 
 ## Stencils
 
