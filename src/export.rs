@@ -294,8 +294,10 @@ struct FinishParams {
 /// GPU evaluation of the material in UV space, shared by export and caches.
 pub struct UvEvaluator {
     layout: wgpu::BindGroupLayout,
-    pipeline: Option<(u64, wgpu::RenderPipeline)>,
+    /// The raster pass and the pass over texels between islands with 2D paint (`fs_gap`).
+    pipeline: Option<(u64, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     height_normal: wgpu::ComputePipeline,
+    overlay: wgpu::ComputePipeline,
     seed_init: wgpu::ComputePipeline,
     seed_step: wgpu::ComputePipeline,
     gather: wgpu::ComputePipeline,
@@ -326,11 +328,12 @@ impl UvEvaluator {
             seed_init: compute("seed_init"),
             seed_step: compute("seed_step"),
             gather: compute("gather"),
+            overlay: compute("overlay"),
         }
     }
 
-    fn pipeline(&mut self, gpu: &Gpu, p: &Project) -> Result<&wgpu::RenderPipeline> {
-        if self.pipeline.as_ref().is_none_or(|(v, _)| *v != p.material_version) {
+    fn pipeline(&mut self, gpu: &Gpu, p: &Project) -> Result<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)> {
+        if self.pipeline.as_ref().is_none_or(|(v, _, _)| *v != p.material_version) {
             let src = include_str!("shaders/export.wgsl")
                 .replace("//{{SURFACE}}", crate::viewport::SURFACE_WGSL)
                 .replace("//{{SCENE}}", crate::scene::WGSL)
@@ -364,12 +367,29 @@ impl UvEvaluator {
                 multiview_mask: None,
                 cache: None,
             });
+            let gap = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("uv eval between islands"),
+                layout: Some(&pl),
+                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_full"), compilation_options: Default::default(), buffers: &[] },
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_gap"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(EVAL_FORMAT.into()), Some(EVAL_FORMAT.into()), Some(EVAL_FORMAT.into()), Some(EVAL_FORMAT.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
             if let Some(e) = pollster::block_on(scope.pop()) {
                 bail!("UV evaluation shader failed to compile: {e}");
             }
-            self.pipeline = Some((p.material_version, pipeline));
+            self.pipeline = Some((p.material_version, pipeline, gap));
         }
-        Ok(&self.pipeline.as_ref().unwrap().1)
+        let (_, raster, gap) = self.pipeline.as_ref().unwrap();
+        Ok((raster, gap))
     }
 
     /// Evaluates one tile and returns the four padded planes as textures.
@@ -398,7 +418,7 @@ impl UvEvaluator {
         let udim = p.mesh.tiles[layer as usize] - 1001;
         let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("uv eval params"),
-            contents: bytemuck::bytes_of(&EvalParams { tile: [(udim % 10) as f32, (udim / 10) as f32, layer as f32, 0.0] }),
+            contents: bytemuck::bytes_of(&EvalParams { tile: [(udim % 10) as f32, (udim / 10) as f32, layer as f32, res as f32] }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -406,9 +426,38 @@ impl UvEvaluator {
             layout: &self.layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() }],
         });
-        let pipeline = self.pipeline(gpu, p)?.clone();
+        let (pipeline, gap_pipeline) = self.pipeline(gpu, p)?;
+        let (pipeline, gap_pipeline) = (pipeline.clone(), gap_pipeline.clone());
         let raw_views: Vec<_> = raw.iter().map(v).collect();
+        // Texels between islands covered by 2D paint, evaluated only when there is 2D paint.
+        let gap = crate::compile::has_2d(&p.graph).then(|| (0..4).map(|_| tex("uv eval gap", EVAL_FORMAT, false)).collect::<Vec<_>>());
+        let gap_views: Option<Vec<_>> = gap.as_ref().map(|g| g.iter().map(v).collect());
         let mut enc = d.create_command_encoder(&Default::default());
+        if let Some(views) = &gap_views {
+            let attachments: Vec<_> = views
+                .iter()
+                .map(|view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })
+                })
+                .collect();
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("uv eval between islands"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&gap_pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.set_bind_group(1, p.scene.bind_group.as_ref().unwrap(), &[]);
+            pass.draw(0..3, 0..1);
+        }
         {
             let attachments: Vec<_> = raw_views
                 .iter()
@@ -519,6 +568,19 @@ impl UvEvaluator {
             wgpu::BindGroupEntry { binding: 13, resource: tv(&out_views[2]) },
             wgpu::BindGroupEntry { binding: 14, resource: tv(&out_views[3]) },
         ]);
+        if let Some(g) = &gap_views {
+            run(&mut enc, &self.overlay, &[
+                wgpu::BindGroupEntry { binding: 0, resource: fp.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 11, resource: tv(&out_views[0]) },
+                wgpu::BindGroupEntry { binding: 12, resource: tv(&out_views[1]) },
+                wgpu::BindGroupEntry { binding: 13, resource: tv(&out_views[2]) },
+                wgpu::BindGroupEntry { binding: 14, resource: tv(&out_views[3]) },
+                wgpu::BindGroupEntry { binding: 15, resource: tv(&g[0]) },
+                wgpu::BindGroupEntry { binding: 16, resource: tv(&g[1]) },
+                wgpu::BindGroupEntry { binding: 17, resource: tv(&g[2]) },
+                wgpu::BindGroupEntry { binding: 18, resource: tv(&g[3]) },
+            ]);
+        }
         gpu.queue.submit([enc.finish()]);
         Ok(out)
     }

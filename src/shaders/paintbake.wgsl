@@ -16,8 +16,8 @@ struct Params {
     inv_row1: vec4f,
     // x: cos(falloff start), y: cos(falloff end), z: backface culling, w: project through
     proj: vec4f,
-    // x: tile layer in mesh maps, y: target base layer (slot * tiles + tile), z: 1 = mask target,
-    // w: pages per row
+    // x: tile layer in mesh maps, y: target base layer (slot * tiles + tile), z: bit 0 = mask
+    // target, bit 1 = 2D paint target (docs/reference/2d-paint.md), w: pages per row
     dest: vec4u,
     // UV view (docs/reference/uv-view.md#painting): x = screen px per UV unit, y, z = UDIM
     // coordinate at the screen's center, w = 1 in the UV view.
@@ -72,7 +72,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var b2: vec4f;
     var b3: vec4f;
     var b4: vec4f;
-    let mask_target = params.dest.z == 1u;
+    let mask_target = (params.dest.z & 1u) == 1u;
+    // Ordinary paint reaches islands and padding (alpha 1 / 0.5); 2D paint in the UV view also
+    // the texels between islands (0.25). See docs/reference/mesh-maps.md#padding.
+    let two_d = (params.dest.z & 2u) == 2u;
+    let reach = select(0.3, 0.1, two_d);
     if !mask_target {
         b1 = textureLoad(base1, xy, tl, 0);
         b2 = textureLoad(base2, xy, tl, 0);
@@ -83,7 +87,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var strength = 0.0;
     let pos = textureLoad(mm_pos, mxy, tl, 0);
     var suv = vec2f(0.0);
-    if pos.a > 0.0 && params.uv.w > 0.5 {
+    if pos.a > reach && params.uv.w > 0.5 {
         // The texel's UDIM coordinate (row 0 is the top of the tile, V up), placed by the view.
         let res_f = f32(res);
         let uv = params.uv_tile.xy + vec2f((f32(xy.x) + 0.5) / res_f, 1.0 - (f32(xy.y) + 0.5) / res_f);
@@ -95,7 +99,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if inside {
             strength = 1.0;
         }
-    } else if pos.a > 0.0 {
+    } else if pos.a > 0.3 {
         let clip = params.view_proj * vec4f(pos.xyz, 1.0);
         if clip.w > 0.0 {
             let ndc = clip.xyz / clip.w;

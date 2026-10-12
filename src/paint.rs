@@ -75,6 +75,17 @@ pub struct Brush {
     pub pressure_size: bool,
     pub pressure_flow: bool,
     pub pressure_opacity: bool,
+    /// UV view only: a hard square of whole texels, snapped to the texel grid
+    /// (docs/reference/2d-paint.md#pixel-brush).
+    #[serde(default)]
+    pub pixel: bool,
+    /// The square's side in texels while `pixel` is on.
+    #[serde(default = "one")]
+    pub pixel_size: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 impl Default for Brush {
@@ -96,6 +107,8 @@ impl Default for Brush {
             pressure_size: true,
             pressure_flow: false,
             pressure_opacity: false,
+            pixel: false,
+            pixel_size: 1,
         }
     }
 }
@@ -233,6 +246,39 @@ pub struct Target {
     pub node: NodeId,
     pub mask: bool,
     pub slot: u32,
+    /// 2D paint: reaches every texel from the UV view (docs/reference/2d-paint.md).
+    pub two_d: bool,
+}
+
+/// The texel grid of a Pixel-brush stroke in the UV view.
+#[derive(Clone, Copy)]
+struct PixelGrid {
+    view: crate::camera::UvView,
+    screen: Vec2,
+    /// Tile resolution: texels per UV unit.
+    res: f32,
+    /// The texel (or corner, for even sizes) of the last dab, to place one dab per texel.
+    last: Option<(i32, i32)>,
+}
+
+impl PixelGrid {
+    fn texel_px(&self) -> f32 {
+        self.view.scale(self.screen) / self.res
+    }
+
+    /// The dab center for the pointer at `pos`: the texel's center, or for even sizes the
+    /// texel corner nearest the pointer; and its grid cell.
+    fn snap(&self, pos: Vec2, size: u32) -> (Vec2, (i32, i32)) {
+        let t = self.view.to_uv(pos, self.screen) * self.res;
+        let (cell, center) = if size % 2 == 1 {
+            let c = t.floor();
+            (c, c + Vec2::splat(0.5))
+        } else {
+            let c = t.round();
+            (c, c)
+        };
+        (self.view.to_screen(center / self.res, self.screen), (cell.x as i32, cell.y as i32))
+    }
 }
 
 /// Saved page contents for undo: one entry per (pool layer, page x, page y), with the data
@@ -252,6 +298,8 @@ struct Stroke {
     pending: Vec<Dab>,
     rng: u64,
     pressure_opacity: f32,
+    /// Set for a Pixel-brush stroke in the UV view.
+    grid: Option<PixelGrid>,
 }
 
 struct Buffers {
@@ -614,9 +662,10 @@ impl PaintEngine {
     pub fn target(&self, gpu: &Gpu, p: &mut Project) -> Result<Target, String> {
         let sel = p.selection.ok_or("No layer selected.")?;
         let node = ops::paint_target(&p.graph, sel).ok_or("Select a paint layer or paint mask to paint.")?;
-        let mask = p.graph.node(node).ty == "paint_mask";
+        let ty = &p.graph.node(node).ty;
+        let (mask, two_d) = (crate::graph::is_paint_mask(ty), crate::graph::is_2d(ty));
         let slot = p.paint_slot(gpu, node);
-        Ok(Target { node, mask, slot })
+        Ok(Target { node, mask, slot, two_d })
     }
 
     /// Starts a stroke at `pos` (screen pixels). In Manual mode with unbaked paint the
@@ -641,6 +690,12 @@ impl PaintEngine {
             self.prepare_bake(gpu, p, target);
         }
         let pressure_opacity = if self.brush.pressure_opacity { pressure } else { 1.0 };
+        let grid = match view {
+            View::Uv(v) if self.brush.pixel => {
+                Some(PixelGrid { view: *v, screen: Vec2::new(screen.0 as f32, screen.1 as f32), res: p.tile_resolution() as f32, last: None })
+            }
+            _ => None,
+        };
         self.stroke = Some(Stroke {
             target,
             last: pos,
@@ -648,6 +703,7 @@ impl PaintEngine {
             pending: Vec::new(),
             rng: 0x9E3779B97F4A7C15 ^ (pos.x.to_bits() as u64) << 32 ^ pos.y.to_bits() as u64,
             pressure_opacity,
+            grid,
         });
         self.push_dab(gpu, pos, pressure, 0.0);
         Ok(())
@@ -682,6 +738,30 @@ impl PaintEngine {
     }
 
     fn push_dab(&mut self, gpu: &Gpu, pos: Vec2, pressure: f32, direction: f32) {
+        // Pixel brush: a hard square of whole texels on the texel grid, once per texel.
+        let size = self.brush.pixel_size.clamp(1, 64);
+        let scale = self.buffer_scale;
+        let (flow, pressure_flow, pressure_opacity) = (self.brush.flow, self.brush.pressure_flow, self.brush.pressure_opacity);
+        if let Some(stroke) = self.stroke.as_mut() {
+            if let Some(grid) = stroke.grid.as_mut() {
+                let (center, cell) = grid.snap(pos, size);
+                if grid.last == Some(cell) {
+                    return;
+                }
+                grid.last = Some(cell);
+                let half = size as f32 * 0.5 * grid.texel_px();
+                let mut alpha = flow;
+                if pressure_flow {
+                    alpha *= pressure;
+                }
+                if pressure_opacity {
+                    alpha *= pressure;
+                }
+                let c = center * scale;
+                stroke.pending.push(Dab { geom: [c.x, c.y, half * scale, 0.0], params: [alpha, 1.0, 1.0, 1.0] });
+                return;
+            }
+        }
         let radius = self.radius_px(gpu, pos, pressure);
         let scale = self.buffer_scale;
         let brush = self.brush.clone();
@@ -712,7 +792,10 @@ impl PaintEngine {
     /// Extends the stroke to `pos`, placing dabs at the brush spacing.
     pub fn stroke_to(&mut self, gpu: &Gpu, pos: Vec2, pressure: f32) {
         let Some((last, carry)) = self.stroke.as_ref().map(|s| (s.last, s.carry)) else { return };
-        let spacing = (self.radius_px(gpu, pos, pressure) * 2.0 * self.brush.spacing / 100.0).max(0.75);
+        // The Pixel brush visits every texel the pointer crosses (half-texel steps; repeats of a
+        // texel are skipped).
+        let pixel_spacing = self.stroke.as_ref().and_then(|s| s.grid).map(|g| (g.texel_px() * 0.5).max(0.25));
+        let spacing = pixel_spacing.unwrap_or_else(|| (self.radius_px(gpu, pos, pressure) * 2.0 * self.brush.spacing / 100.0).max(0.75));
         let delta = pos - last;
         let len = delta.length();
         if len < 1e-3 {
@@ -940,7 +1023,7 @@ impl PaintEngine {
                     pr.backface_culling as u8 as f32,
                     pr.project_through as u8 as f32,
                 ],
-                target: [tile, target.slot * tiles + tile, target.mask as u32, res / PAGE],
+                target: [tile, target.slot * tiles + tile, target.mask as u32 | (target.two_d as u32) << 1, res / PAGE],
                 uv,
                 uv_tile: {
                     let k = p.mesh.tiles[tile as usize].saturating_sub(1001);

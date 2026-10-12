@@ -89,11 +89,18 @@ pub struct UvView {
     pub center: Vec2,
     /// Height of one tile in view heights.
     pub zoom: f32,
+    /// Show the final texture between islands (docs/reference/2d-paint.md#display).
+    #[serde(default = "yes")]
+    pub gaps: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for UvView {
     fn default() -> Self {
-        Self { center: Vec2::splat(0.5), zoom: 0.9 }
+        Self { center: Vec2::splat(0.5), zoom: 0.9, gaps: true }
     }
 }
 
@@ -207,7 +214,7 @@ mod tests {
     #[test]
     fn uv_view_maps_both_ways() {
         let size = Vec2::new(800.0, 400.0);
-        let mut v = UvView { center: Vec2::new(1.5, 0.5), zoom: 1.0 };
+        let mut v = UvView { center: Vec2::new(1.5, 0.5), zoom: 1.0, gaps: true };
         // The center is in the middle; one tile is the view's height; V points up.
         assert_eq!(v.to_screen(Vec2::new(1.5, 0.5), size), Vec2::new(400.0, 200.0));
         assert_eq!(v.to_screen(Vec2::new(1.0, 1.0), size), Vec2::new(200.0, 0.0));

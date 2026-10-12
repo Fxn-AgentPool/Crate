@@ -137,7 +137,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let layer = params.layer;
     let pos = textureLoad(pos_map, xy, layer, 0);
     let flat_n = vec4f(0.5, 0.5, 1.0, 1.0);
-    if pos.a == 0.0 {
+    // Islands and padding only (docs/reference/mesh-maps.md#padding).
+    if pos.a < 0.3 {
         textureStore(out_hpos, xy, 0, vec4f(0.0));
         textureStore(out_hnrm, xy, 0, vec4f(0.5, 0.5, 1.0, 0.0));
         if (params.flags & 1u) != 0u { textureStore(out_tnrm, xy, layer, flat_n); }

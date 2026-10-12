@@ -1,0 +1,55 @@
+# 2D paint (docs/reference/2d-paint.md) on tests/data/transfer_a.obj, a cube whose six faces are
+# 0.3-wide UV islands in tile 1001. UV (0.5, 0.5) lies between the island rows (V 0.33..0.53),
+# 30 texels from the nearest island at 1024: beyond the 8-texel padding.
+new tests/data/transfer_a.obj 1024
+size 400x400
+add-fill
+set base_color=#808080 roughness=0.6
+view base_color
+uv-view 0.5 0.5 3
+render target/tests/paint_2d/a_before.png
+# Between islands, the UV view shows the nearest island texel: the fill.
+expect-color target/tests/paint_2d/a_before.png 128,128,128 2
+export target/tests/paint_2d/export_before padding=none
+# Ordinary paint doesn't reach texels between islands...
+add-paint
+tool paint
+brush-values base_color=#C03020 roughness=0.3
+brush size=40 hardness=1 flow=1
+stroke 0.5,0.5
+render target/tests/paint_2d/b_ordinary.png
+expect-same target/tests/paint_2d/a_before.png target/tests/paint_2d/b_ordinary.png 0
+delete
+# ...2D paint does.
+add-paint-2d
+stroke 0.5,0.5
+render target/tests/paint_2d/c_2d.png
+expect-color target/tests/paint_2d/c_2d.png 192,48,32 2
+# Gaps off: the background between islands, not the paint.
+uv-gaps off
+render target/tests/paint_2d/d_gaps_off.png
+expect-different target/tests/paint_2d/c_2d.png target/tests/paint_2d/d_gaps_off.png
+uv-gaps on
+# Exported even with Padding None (the tile's center texel is at UV (0.5, 0.5)).
+export target/tests/paint_2d/export padding=none
+expect-color target/tests/paint_2d/export/transfer_a_BaseColor.1001.png 192,48,32 2
+expect-different target/tests/paint_2d/export_before/transfer_a_BaseColor.1001.png target/tests/paint_2d/export/transfer_a_BaseColor.1001.png
+# The Pixel brush: one hard texel. Texel (600, 600) of tile 1001 has its center at
+# UV (600.5 / 1024, 1 - 600.5 / 1024); one texel is 40 pixels at zoom 40.
+brush-values base_color=#2040C0
+brush pixel=on pixel_size=1
+uv-view 0.58642578125 0.41357421875 40
+stroke 0.5,0.5
+render target/tests/paint_2d/e_pixel.png
+expect-color target/tests/paint_2d/e_pixel.png 32,64,192 2
+# The next texel to the right is untouched (still the fill).
+uv-view 0.58740234375 0.41357421875 40
+render target/tests/paint_2d/f_next_texel.png
+expect-color target/tests/paint_2d/f_next_texel.png 128,128,128 2
+# A reimport with new UVs keeps 2D paint where it is in UV space: (0.5, 0.5) is between
+# islands in transfer_b.obj too.
+reimport tests/data/transfer_b.obj
+expect-transfer true 0.1
+uv-view 0.5 0.5 3
+render target/tests/paint_2d/g_reimported.png
+expect-color target/tests/paint_2d/g_reimported.png 192,48,32 2

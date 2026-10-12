@@ -324,7 +324,7 @@ impl Project {
 
     /// Pool slot of a Paint / Paint Mask node, allocated (and the pool grown) on first use.
     pub fn paint_slot(&mut self, gpu: &Gpu, node: crate::graph::NodeId) -> u32 {
-        let mask = self.graph.get(node).is_some_and(|n| n.ty == "paint_mask");
+        let mask = self.graph.get(node).is_some_and(|n| crate::graph::is_paint_mask(&n.ty));
         let map = if mask { &self.mask_slots } else { &self.paint_slots };
         if let Some(&s) = map.get(&node) {
             return s;
@@ -394,19 +394,56 @@ impl Project {
             let slots = if self.scene.paint[0].res == res { self.next_paint_slot } else { 0 };
             let mslots = if self.scene.mask.res == res { self.mask_slots.len() as u32 } else { 0 };
             let paint: Vec<crate::scene::Pool> = (0..self.scene.paint.len()).map(|_| fresh(slots)).collect();
-            let mask = fresh(mslots);
+            let mask_pool = fresh(mslots);
             let (pos, _) = maps.texture(MeshMap::Position);
             let (nrm, _) = maps.texture(MeshMap::WorldNormal);
             let planes = [
                 crate::transfer::Planes { src: self.scene.paint.iter().collect(), dst: paint.iter().collect(), slots },
-                crate::transfer::Planes { src: vec![&self.scene.mask], dst: vec![&mask], slots: mslots },
+                crate::transfer::Planes { src: vec![&self.scene.mask], dst: vec![&mask_pool], slots: mslots },
             ];
             report = crate::transfer::run(gpu, &self.mesh, &mesh, res, pos, nrm, &planes);
+            // 2D paint stays in UV space: copied tile by tile instead (docs/reference/2d-paint.md#reimport).
+            let two_d: Vec<(u32, bool)> = self
+                .paint_slots
+                .iter()
+                .map(|(n, s)| (*n, *s, false))
+                .chain(self.mask_slots.iter().map(|(n, s)| (*n, *s, true)))
+                .filter(|(n, _, _)| self.graph.get(*n).is_some_and(|n| crate::graph::is_2d(&n.ty)))
+                .map(|(_, s, m)| (s, m))
+                .collect();
+            let (ot, nt) = (old_tiles.len() as u32, new_tiles.len() as u32);
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            for &(slot, mask) in &two_d {
+                if slot >= if mask { mslots } else { slots } {
+                    continue;
+                }
+                let pairs: Vec<(&crate::scene::Pool, &crate::scene::Pool)> =
+                    if mask { vec![(&self.scene.mask, &mask_pool)] } else { self.scene.paint.iter().zip(paint.iter()).collect() };
+                for (src, dst) in pairs {
+                    for (ni, udim) in new_tiles.iter().enumerate() {
+                        // A tile the old mesh didn't use starts empty, not with transferred paint.
+                        let Some(oi) = old_tiles.iter().position(|u| u == udim) else {
+                            enc.clear_texture(
+                                &dst.texture,
+                                &wgpu::ImageSubresourceRange { base_array_layer: slot * nt + ni as u32, array_layer_count: Some(1), ..Default::default() },
+                            );
+                            continue;
+                        };
+                        enc.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo { texture: &src.texture, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: slot * ot + oi as u32 }, aspect: wgpu::TextureAspect::All },
+                            wgpu::TexelCopyTextureInfo { texture: &dst.texture, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: slot * nt + ni as u32 }, aspect: wgpu::TextureAspect::All },
+                            wgpu::Extent3d { width: res, height: res, depth_or_array_layers: 1 },
+                        );
+                    }
+                }
+            }
+            gpu.queue.submit([enc.finish()]);
+            report.kept_2d = two_d.len();
             if slots > 0 {
                 self.scene.paint = paint;
             }
             if mslots > 0 {
-                self.scene.mask = mask;
+                self.scene.mask = mask_pool;
             }
             self.scene.mark_dirty();
             self.caches = Default::default();

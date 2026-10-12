@@ -111,6 +111,25 @@ fn seed_step(@builtin(global_invocation_id) gid: vec3u) {
 @group(0) @binding(13) var dst2: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(14) var dst3: texture_storage_2d<rgba16float, write>;
 
+// 2D paint between islands, written over the padded result whatever the padding limit
+// (docs/reference/2d-paint.md#export). gap* are the planes of the pass over texels between
+// islands; alpha 0.4 marks a texel it wrote.
+@group(0) @binding(15) var gap0: texture_2d<f32>;
+@group(0) @binding(16) var gap1: texture_2d<f32>;
+@group(0) @binding(17) var gap2: texture_2d<f32>;
+@group(0) @binding(18) var gap3: texture_2d<f32>;
+
+@compute @workgroup_size(8, 8)
+fn overlay(@builtin(global_invocation_id) gid: vec3u) {
+    if gid.x >= params.res || gid.y >= params.res { return; }
+    let g1 = textureLoad(gap1, gid.xy, 0);
+    if g1.a < 0.3 || g1.a > 0.5 { return; }
+    textureStore(dst0, gid.xy, textureLoad(gap0, gid.xy, 0));
+    textureStore(dst1, gid.xy, vec4f(g1.rgb, 1.0));
+    textureStore(dst2, gid.xy, textureLoad(gap2, gid.xy, 0));
+    textureStore(dst3, gid.xy, textureLoad(gap3, gid.xy, 0));
+}
+
 @compute @workgroup_size(8, 8)
 fn gather(@builtin(global_invocation_id) gid: vec3u) {
     if gid.x >= params.res || gid.y >= params.res { return; }

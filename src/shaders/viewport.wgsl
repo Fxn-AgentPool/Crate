@@ -246,30 +246,17 @@ fn tile_tint(layer: i32) -> vec3f {
     return mix(vec3f(1.0), clamp(p - 1.0, vec3f(0.0), vec3f(1.0)), 0.55);
 }
 
-@fragment
-fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-    var s: Surface;
-    s.pos = in.pos;
-    s.pos_norm = (in.pos - frame.bbox_min.xyz) / max(frame.bbox_size.xyz, vec3f(1e-6));
-    var ng = normalize(in.normal);
-    // Mirrored islands face away in the UV view; their surface doesn't.
-    if !front && !uv_view() { ng = -ng; }
-    s.normal = ng;
-    s.uv = in.uv;
-    s.tile_uv = fract(in.uv);
-    s.layer = tile_layer(in.uv);
-    s.material = in.material;
-
+// Shades a surface point with the display mode: shared by the mesh and the space between islands.
+fn display(s: Surface, ng: vec3f, tangent: vec4f, pos: vec3f) -> vec3f {
     let m = eval_material(s);
-
     // Tangent frame for the Normal channel.
-    let t = normalize(in.tangent.xyz - ng * dot(in.tangent.xyz, ng));
-    let b = cross(ng, t) * in.tangent.w;
+    let t = normalize(tangent.xyz - ng * dot(tangent.xyz, ng));
+    let b = cross(ng, t) * tangent.w;
     var n = normalize(t * m.normal.x + b * m.normal.y + ng * m.normal.z);
     let height_scale = bitcast<f32>(frame.mode.w);
-    n = bump(n, in.pos, m.height * height_scale);
+    n = bump(n, pos, m.height * height_scale);
 
-    var v = normalize(frame.eye.xyz - in.pos);
+    var v = normalize(frame.eye.xyz - pos);
     if uv_view() { v = ng; }
     var c: vec3f;
     switch frame.mode.x {
@@ -288,7 +275,60 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f 
     if (frame.mode.z & FLAG_TILES) != 0u {
         c *= tile_tint(s.layer);
     }
-    return vec4f(c, 1.0);
+    return c;
+}
+
+// ---------------------------------------------------------------- UV view: between islands
+// With Gaps on, a full-screen pass drawn behind the mesh shows every texel of the used tiles
+// that the mesh doesn't cover, evaluated at the nearest island texel's surface (docs/reference/
+// 2d-paint.md#display). That includes the uncovered parts of texels on an island's edge.
+
+struct GapOut {
+    @builtin(position) clip: vec4f,
+};
+
+@vertex
+fn vs_gaps(@builtin(vertex_index) i: u32) -> GapOut {
+    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    var o: GapOut;
+    o.clip = vec4f(p * 2.0 - 1.0, 0.99, 1.0);
+    return o;
+}
+
+@fragment
+fn fs_gaps(in: GapOut) -> @location(0) vec4f {
+    // Screen to UDIM coordinates: the inverse of the UV view's view_proj (a scale and offset).
+    let ndc = vec2f(in.clip.x / frame.viewport.x * 2.0 - 1.0, 1.0 - in.clip.y / frame.viewport.y * 2.0);
+    let vp = frame.view_proj;
+    let uv = (ndc - vec2f(vp[3][0], vp[3][1])) / vec2f(vp[0][0], vp[1][1]);
+    let layer = tile_layer(uv);
+    if layer < 0 { discard; }
+    let tile = floor(uv);
+    // The texel itself, so 2D paint shows as sharp texels.
+    let res = f32(textureDimensions(paint0).x);
+    let texel_uv = (floor((uv - tile) * res) + 0.5) / res;
+    var s: Surface;
+    let a = gap_surface(texel_uv, tile, layer, &s);
+    if a <= 0.0 { discard; }
+    let t = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), abs(s.normal.x) > 0.9);
+    return vec4f(display(s, s.normal, vec4f(t, 1.0), s.pos), 1.0);
+}
+
+@fragment
+fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    var s: Surface;
+    s.pos = in.pos;
+    s.pos_norm = (in.pos - frame.bbox_min.xyz) / max(frame.bbox_size.xyz, vec3f(1e-6));
+    var ng = normalize(in.normal);
+    // Mirrored islands face away in the UV view; their surface doesn't.
+    if !front && !uv_view() { ng = -ng; }
+    s.normal = ng;
+    s.uv = in.uv;
+    s.tile_uv = fract(in.uv);
+    s.texel_uv = s.tile_uv;
+    s.layer = tile_layer(in.uv);
+    s.material = in.material;
+    return vec4f(display(s, ng, in.tangent, in.pos), 1.0);
 }
 
 // Raw channel values, without lighting. Colors are shown as-is (linear), scalars as gray.

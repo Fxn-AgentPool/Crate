@@ -200,6 +200,11 @@ pub fn brush_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut Pa
     });
     ui.add(Field::new(&mut b.angle, 0.0..=360.0).label("Angle").decimals(0).suffix("°"));
     w::setting(ui, "Follow stroke", |ui| ui.add(Toggle(&mut b.follow_stroke)));
+    // UV view only: whole texels (docs/reference/2d-paint.md#pixel-brush).
+    w::setting(ui, "Pixel", |ui| ui.add(Toggle(&mut b.pixel)).on_hover_text("In the UV view: a hard square of whole texels"));
+    if b.pixel {
+        ui.add(Field::new(&mut b.pixel_size, 1..=64).label("Pixel size").suffix(" texels").speed(0.1).no_fill());
+    }
     Section::new("Jitter").id_salt("brush jitter").default_open(false).show(ui, |ui| {
         ui.add(Field::new(&mut b.jitter_size, 0.0..=1.0).label("Size").decimals(2));
         ui.add(Field::new(&mut b.jitter_angle, 0.0..=1.0).label("Angle").decimals(2));

@@ -13,7 +13,7 @@ something in the unused parts of a tile.
 
 | Item | Where | Node | Description |
 |---|---|---|---|
-| 2D paint layer | Layers panel **+** menu, **Add 2D paint layer**; `add-paint-2d [name]` | **2D Paint** (Material) | A layer like a paint layer, painted with the same tools and brush values. |
+| 2D paint layer | Layers panel toolbar: the brush button with "2D" (**Add 2D paint layer**); `add-paint-2d [name]` | **2D Paint** (Material) | A layer like a paint layer, painted with the same tools and brush values. |
 | 2D paint mask effect | Mask context menu, **Add 2D paint**; `add-mask-paint-2d` | **2D Paint Mask** (Float) | A mask effect like a paint mask effect. |
 
 Both can be used wherever their ordinary counterparts can: in any stack or group, at any
@@ -96,7 +96,9 @@ reading one passes its input through.
 
 On a [reimport](mesh-and-udims.md#reimport) that transfers paint to new UVs, 2D paint isn't
 transferred: its texels stay where they are in UV space, in the tiles the new mesh still uses.
-The report adds **N 2D paint layers kept in UV space** when there are any.
+The report adds **; N 2D paint layers kept in UV space** (**layer** when N is 1) when there are
+any; 2D paint mask effects count as layers here. Tiles the old mesh didn't use start without 2D
+paint.
 
 ## Saving
 

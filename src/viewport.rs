@@ -209,6 +209,8 @@ pub struct Viewport {
     tonemap_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: Option<wgpu::RenderPipeline>,
     line_pipeline: Option<wgpu::RenderPipeline>,
+    /// UV view: the space between islands (docs/reference/2d-paint.md#display).
+    gaps_pipeline: Option<wgpu::RenderPipeline>,
     frame_bind: Option<wgpu::BindGroup>,
     targets: Option<Targets>,
     /// Generated material code currently compiled into `mesh_pipeline`.
@@ -320,6 +322,7 @@ impl Viewport {
             tonemap_pipeline,
             mesh_pipeline: None,
             line_pipeline: None,
+            gaps_pipeline: None,
             frame_bind: None,
             targets: None,
             material_code: String::new(),
@@ -486,11 +489,28 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
+        let gaps_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewport between islands"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_gaps"), compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: depth(true, wgpu::CompareFunction::Less),
+            multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_gaps"),
+                compilation_options: Default::default(),
+                targets: &[Some(HDR_FORMAT.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         if let Some(err) = pollster::block_on(scope.pop()) {
             return Err(err.to_string());
         }
         self.mesh_pipeline = Some(mesh_pipeline);
         self.line_pipeline = Some(line_pipeline);
+        self.gaps_pipeline = Some(gaps_pipeline);
         self.material_code = code.to_owned();
         Ok(true)
     }
@@ -628,6 +648,12 @@ impl Viewport {
                 pass.set_pipeline(self.mesh_pipeline.as_ref().unwrap());
                 pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+                // Then whatever the mesh left uncovered: the depth test skips the islands, so
+                // the material is only evaluated between them.
+                if matches!(view_of, crate::camera::View::Uv(v) if v.gaps) {
+                    pass.set_pipeline(self.gaps_pipeline.as_ref().unwrap());
+                    pass.draw(0..3, 0..1);
+                }
                 // The UV view always shows its edges.
                 if view.wireframe || uv {
                     pass.set_pipeline(self.line_pipeline.as_ref().unwrap());

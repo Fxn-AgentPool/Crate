@@ -148,7 +148,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let xy = vec2u(gid.x, gid.y + params.row_start);
     if xy.x >= params.res || gid.y >= params.row_count || xy.y >= params.res { return; }
     let pos = textureLoad(pos_map, xy, params.in_layer, 0);
-    if pos.a == 0.0 {
+    // Islands and padding only (docs/reference/mesh-maps.md#padding).
+    if pos.a < 0.3 {
         textureStore(out_map, xy, params.layer, vec4f(select(1.0, 0.5, params.mode == 1u)));
         return;
     }

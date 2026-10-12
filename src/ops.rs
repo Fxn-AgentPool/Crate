@@ -38,6 +38,7 @@ pub fn slot_mut(g: &mut Graph, l: LayerRef) -> Option<&mut Slot> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     Paint,
+    Paint2d,
     Fill,
     Group,
     Graph,
@@ -48,6 +49,7 @@ impl LayerKind {
     pub fn name(self) -> &'static str {
         match self {
             LayerKind::Paint => "Paint layer",
+            LayerKind::Paint2d => "2D paint layer",
             LayerKind::Fill => "Fill layer",
             LayerKind::Group => "Group",
             LayerKind::Graph => "Graph layer",
@@ -62,6 +64,7 @@ pub fn layer_kind(g: &Graph, s: &Slot) -> LayerKind {
     }
     match s.content.and_then(|c| g.get(c)).map(|n| n.ty.as_str()) {
         Some("paint") => LayerKind::Paint,
+        Some("paint_2d") => LayerKind::Paint2d,
         Some("fill") => LayerKind::Fill,
         Some("stack") => LayerKind::Group,
         _ => LayerKind::Graph,
@@ -94,6 +97,14 @@ pub fn add_paint_layer(g: &mut Graph, above: Option<LayerRef>) -> LayerRef {
     let at = insert_point(g, above);
     let node = g.add("paint");
     let name = unique_name(g, at.stack, "Paint");
+    insert(g, at, Slot::new(name, node))
+}
+
+/// A 2D paint layer (docs/reference/2d-paint.md).
+pub fn add_paint_2d_layer(g: &mut Graph, above: Option<LayerRef>) -> LayerRef {
+    let at = insert_point(g, above);
+    let node = g.add("paint_2d");
+    let name = unique_name(g, at.stack, "2D Paint");
     insert(g, at, Slot::new(name, node))
 }
 
@@ -298,6 +309,11 @@ pub fn add_mask_paint(g: &mut Graph, l: LayerRef) -> Selection {
     push_mask_slot(g, l, "Paint", MaskSource::Node(node))
 }
 
+pub fn add_mask_paint_2d(g: &mut Graph, l: LayerRef) -> Selection {
+    let node = g.add("paint_mask_2d");
+    push_mask_slot(g, l, "2D Paint", MaskSource::Node(node))
+}
+
 pub fn add_mask_fill(g: &mut Graph, l: LayerRef) -> Selection {
     let node = g.add("value");
     g.set(node, "type", Value::Text("Factor".into()));
@@ -348,7 +364,7 @@ pub fn selected_node(g: &Graph, sel: Selection) -> Option<NodeId> {
 pub fn paint_target(g: &Graph, sel: Selection) -> Option<NodeId> {
     let n = selected_node(g, sel)?;
     match g.get(n)?.ty.as_str() {
-        "paint" | "paint_mask" => Some(n),
+        ty if crate::graph::is_paint(ty) || crate::graph::is_paint_mask(ty) => Some(n),
         _ => None,
     }
 }

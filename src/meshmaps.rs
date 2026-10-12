@@ -245,7 +245,8 @@ struct RasterParams {
 struct DilateParams {
     res: u32,
     layer: u32,
-    _pad: [u32; 2],
+    step: u32,
+    padding: u32,
 }
 
 #[repr(C)]
@@ -942,7 +943,7 @@ impl MeshMaps {
             wgpu::Extent3d { width: res, height: res, depth_or_array_layers: 1 },
         );
 
-        // Padding: nearest covered texel, grown one texel per step.
+        // Nearest covered texel for every texel, by jump flooding (docs/reference/mesh-maps.md#padding).
         let src_tex = |label| {
             d.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -957,11 +958,14 @@ impl MeshMaps {
             .create_view(&Default::default())
         };
         let src = [src_tex("src a"), src_tex("src b")];
-        let dparams = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("dilate params"),
-            contents: bytemuck::bytes_of(&DilateParams { res, layer, _pad: [0; 2] }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let dparams_step = |step: u32| {
+            d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dilate params"),
+                contents: bytemuck::bytes_of(&DilateParams { res, layer, step, padding }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
+        };
+        let dparams = dparams_step(0);
         let groups = res.div_ceil(8);
         let layer_view = |tex: &MapTexture| {
             tex.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -985,12 +989,21 @@ impl MeshMaps {
             pass.dispatch_workgroups(groups, groups, 1);
         }
         let mut cur = 0;
-        for _ in 0..padding {
+        // Halving offsets, then one more 1-texel step to fix the few misses of plain jump flooding.
+        let mut steps = Vec::new();
+        let mut k = res.next_power_of_two() / 2;
+        while k >= 1 {
+            steps.push(k);
+            k /= 2;
+        }
+        steps.push(1);
+        for k in steps {
+            let sp = dparams_step(k);
             let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("dilate step"),
                 layout: &self.dilate_step.get_bind_group_layout(0),
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: dparams.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 0, resource: sp.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: tex_res(&src[1 - cur]) },
                     wgpu::BindGroupEntry { binding: 3, resource: tex_res(&src[cur]) },
                 ],

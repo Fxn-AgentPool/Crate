@@ -162,6 +162,53 @@ fn paint_sample(slot: u32, s: Surface) -> Mat {
     return m;
 }
 
+// 2D paint (docs/reference/2d-paint.md): the texel itself, unfiltered, so a painted texel stays
+// a sharp square and texels between islands read their own paint.
+fn texel_of(s: Surface, res: u32) -> vec2i {
+    let t = tile_tex(s.texel_uv) * f32(res);
+    return clamp(vec2i(floor(t)), vec2i(0), vec2i(i32(res) - 1));
+}
+
+fn paint_sample_2d(slot: u32, s: Surface) -> Mat {
+    var m = mat_defaults();
+    let l = paint_layer(slot, s);
+    if l < 0 { return m; }
+    let xy = texel_of(s, textureDimensions(paint0).x);
+    let p0 = textureLoad(paint0, xy, l, 0);
+    let p1 = textureLoad(paint1, xy, l, 0);
+    let p2 = textureLoad(paint2, xy, l, 0);
+    let p3 = textureLoad(paint3, xy, l, 0);
+    let p4 = textureLoad(paint4, xy, l, 0);
+    let e = 1e-5;
+    m.v[0] = p0.rgb / max(p0.a, e); m.a[0] = p0.a;
+    m.v[5] = p1.rgb / max(p1.a, e); m.a[5] = p1.a;
+    m.v[4] = select(vec3f(0.0, 0.0, 1.0), normalize(p2.rgb), dot(p2.rgb, p2.rgb) > 1e-10); m.a[4] = p2.a;
+    m.v[1] = vec3f(p3.x / max(p4.x, e)); m.a[1] = p4.x;
+    m.v[2] = vec3f(p3.y / max(p4.y, e)); m.a[2] = p4.y;
+    m.v[3] = vec3f(p3.z / max(p4.z, e)); m.a[3] = p4.z;
+    m.v[6] = vec3f(p3.w / max(p4.w, e)); m.a[6] = p4.w;
+    return m;
+}
+
+fn paint_mask_sample_2d(slot: u32, s: Surface) -> vec2f {
+    let l = paint_layer(slot, s);
+    if l < 0 { return vec2f(0.0); }
+    return textureLoad(mask_paint, texel_of(s, textureDimensions(mask_paint).x), l, 0).ra;
+}
+
+// Coverage of a 2D paint texel: the largest channel coverage (planes as in paint_sample).
+fn paint_coverage_2d(slot: u32, s: Surface) -> f32 {
+    let l = paint_layer(slot, s);
+    if l < 0 { return 0.0; }
+    let xy = texel_of(s, textureDimensions(paint0).x);
+    let p4 = textureLoad(paint4, xy, l, 0);
+    return max(max(max(textureLoad(paint0, xy, l, 0).a, textureLoad(paint1, xy, l, 0).a), max(textureLoad(paint2, xy, l, 0).a, p4.x)), max(max(p4.y, p4.z), p4.w));
+}
+
+fn paint_mask_coverage_2d(slot: u32, s: Surface) -> f32 {
+    return paint_mask_sample_2d(slot, s).y;
+}
+
 // Cached Float/Color node results: rgb = color output, a = float output.
 fn cache_sample(slot: u32, s: Surface) -> vec4f {
     let l = paint_layer(slot, s);

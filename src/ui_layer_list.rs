@@ -182,6 +182,13 @@ fn toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         if icon_button(ui, Icon::Brush, "Add paint layer (Ctrl+Shift+N)", true).clicked() {
             ui_layers::add_paint(gpu, p);
         }
+        let r = icon_button(ui, Icon::Brush, "Add 2D paint layer: paints every texel from the UV view", true);
+        two_d_badge(ui.painter(), r.rect.shrink(4.0));
+        if r.clicked() {
+            let above = sel;
+            let l = p.edit(gpu, "New 2D paint layer", |g| ops::add_paint_2d_layer(g, above));
+            p.selection = Some(Selection::Layer(l));
+        }
         if icon_button(ui, Icon::Fill, "Add fill layer (Ctrl+Shift+F)", true).clicked() {
             ui_layers::add_fill(gpu, p);
         }
@@ -239,6 +246,13 @@ fn stack_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, stack: NodeId, dept
     }
 }
 
+/// A small "2D" in the lower right of an icon: 2D paint (docs/reference/2d-paint.md).
+fn two_d_badge(painter: &egui::Painter, icon: Rect) {
+    let at = icon.right_bottom() + vec2(3.0, 2.0);
+    let font = egui::FontId::new(8.0, egui::FontFamily::Name(t::SEMIBOLD.into()));
+    painter.text(at, egui::Align2::RIGHT_BOTTOM, "2D", font, t::ACCENT);
+}
+
 /// Paints a content thumbnail for a layer.
 fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content: Option<NodeId>, r: Rect) {
     painter.rect(r, 4.0, t::BG_APP, Stroke::new(1.0, t::BORDER_STRONG), StrokeKind::Inside);
@@ -268,7 +282,7 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
                 icons::paint(painter, Icon::Fill, r.shrink(5.0), t::TEXT_2);
             }
         }
-        LayerKind::Paint => {
+        LayerKind::Paint | LayerKind::Paint2d => {
             // Checker background with a brush mark.
             let k = r.width() / 4.0;
             for y in 0..4 {
@@ -307,7 +321,7 @@ fn mask_thumb(painter: &egui::Painter, p: &Project, mask: NodeId, r: Rect) {
         let icon = match &top.source {
             MaskSource::Levels { .. } => Some(Icon::Levels),
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
-                Some("paint_mask") => Some(Icon::Brush),
+                Some(ty) if crate::graph::is_paint_mask(ty) => Some(Icon::Brush),
                 Some("value") => None,
                 Some(_) => Some(Icon::Generator),
                 None => None,
@@ -381,7 +395,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     // Content thumbnail.
     let content_rect = Rect::from_min_size(pos2(x, rect.center().y - THUMB / 2.0), vec2(THUMB, THUMB));
     let paint_thumb = match (kind, slot.content) {
-        (LayerKind::Paint, Some(c)) => thumbs.get(ui.ctx(), gpu, p, c),
+        (LayerKind::Paint | LayerKind::Paint2d, Some(c)) => thumbs.get(ui.ctx(), gpu, p, c),
         _ => None,
     };
     match paint_thumb {
@@ -399,7 +413,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     if let Some(mask) = slot.mask {
         let mask_rect = Rect::from_min_size(pos2(x, rect.center().y - THUMB / 2.0), vec2(THUMB, THUMB));
         let top_paint = p.graph.get(mask).and_then(|m| m.mask_slots.iter().rev().find(|s| s.visible)).and_then(|s| match s.source {
-            MaskSource::Node(n) if p.graph.get(n).is_some_and(|n| n.ty == "paint_mask") => Some(n),
+            MaskSource::Node(n) if p.graph.get(n).is_some_and(|n| crate::graph::is_paint_mask(&n.ty)) => Some(n),
             _ => None,
         });
         match top_paint.and_then(|n| thumbs.get(ui.ctx(), gpu, p, n)) {
@@ -426,7 +440,7 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     }
     // Type icon: the kind is an icon, not a subtitle.
     let icon = match kind {
-        LayerKind::Paint => Icon::Brush,
+        LayerKind::Paint | LayerKind::Paint2d => Icon::Brush,
         LayerKind::Fill => Icon::Fill,
         LayerKind::Group => Icon::Folder,
         LayerKind::Graph => Icon::Nodes,
@@ -434,6 +448,9 @@ fn layer_row(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, depth: 
     };
     let icon_rect = Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(13.0, 13.0));
     icons::paint(&painter, icon, icon_rect, TEXT_DIM);
+    if kind == LayerKind::Paint2d {
+        two_d_badge(&painter, icon_rect);
+    }
     let kind_tip = ui.interact(icon_rect, ui.id().with(("kind", l.stack, l.index)), Sense::hover());
     kind_tip.on_hover_text(match kind {
         LayerKind::Group => format!("Folder · {} layers", p.graph.get(slot.content.unwrap_or(0)).map(|n| n.slots.len()).unwrap_or(0)),
@@ -547,7 +564,7 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
         let icon = match &m.source {
             MaskSource::Levels { .. } => Icon::Levels,
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
-                Some("paint_mask") => Icon::Brush,
+                Some(ty) if crate::graph::is_paint_mask(ty) => Icon::Brush,
                 Some("value") | Some("image") => Icon::Fill,
                 _ => Icon::Generator,
             },

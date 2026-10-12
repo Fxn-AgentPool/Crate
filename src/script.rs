@@ -336,11 +336,13 @@ impl Session {
                 }
                 say!("  missed {got:.2}% (at most {max}%)");
             }
-            "add-fill" | "add-paint" => {
+            "add-fill" | "add-paint" | "add-paint-2d" => {
                 let p = self.project()?;
                 let above = p.selection.map(|s| s.layer());
-                let l = p.edit(&gpu, cmd, |g| {
-                    if cmd == "add-fill" { ops::add_fill_layer(g, above) } else { ops::add_paint_layer(g, above) }
+                let l = p.edit(&gpu, cmd, |g| match cmd {
+                    "add-fill" => ops::add_fill_layer(g, above),
+                    "add-paint-2d" => ops::add_paint_2d_layer(g, above),
+                    _ => ops::add_paint_layer(g, above),
                 });
                 if let Some(name) = rest.first() {
                     let name = name.clone();
@@ -387,11 +389,12 @@ impl Session {
                 let sel = p.edit(&gpu, cmd, |g| ops::add_mask_generator(g, l, &ty));
                 p.selection = Some(sel);
             }
-            "add-mask-paint" | "add-mask-fill" | "add-mask-levels" => {
+            "add-mask-paint" | "add-mask-paint-2d" | "add-mask-fill" | "add-mask-levels" => {
                 let p = self.project()?;
                 let l = p.selection.context("no selection")?.layer();
                 let sel = p.edit(&gpu, cmd, |g| match cmd {
                     "add-mask-paint" => ops::add_mask_paint(g, l),
+                    "add-mask-paint-2d" => ops::add_mask_paint_2d(g, l),
                     "add-mask-fill" => ops::add_mask_fill(g, l),
                     _ => ops::add_mask_levels(g, l),
                 });
@@ -473,6 +476,14 @@ impl Session {
                 self.camera.distance /= zoom;
                 self.uv = None;
             }
+            "uv-gaps" => {
+                let on = match rest.first().map(String::as_str) {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => bail!("uv-gaps on|off"),
+                };
+                self.uv.as_mut().context("uv-gaps needs the UV view: uv-view first")?.gaps = on;
+            }
             "uv-view" => {
                 let p = self.project.as_mut().context("no project")?;
                 if !self.paint.camera_moving(&gpu, p) {
@@ -530,6 +541,8 @@ impl Session {
                         "jitter_angle" => b.jitter_angle = v.parse()?,
                         "jitter_position" => b.jitter_position = v.parse()?,
                         "jitter_flow" => b.jitter_flow = v.parse()?,
+                        "pixel" => b.pixel = v == "on",
+                        "pixel_size" => b.pixel_size = v.parse::<u32>()?.clamp(1, 64),
                         "alpha" if v == "round" => b.alpha.clear(),
                         "alpha" => {
                             let path = crate::library::resolve(v, "alphas", |s| self.path(s))?;

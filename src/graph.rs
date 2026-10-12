@@ -943,6 +943,9 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
         // Layer
         def("paint", "Paint", K::Layer, &[], &[("out", M)], vec![]),
         def("paint_mask", "Paint Mask", K::Layer, &[], &[("out", F)], vec![]),
+        // Read at their own texel between UV islands (docs/reference/2d-paint.md).
+        def("paint_2d", "2D Paint", K::Layer, &[], &[("out", M)], vec![]),
+        def("paint_mask_2d", "2D Paint Mask", K::Layer, &[], &[("out", F)], vec![]),
         def("fill", "Fill", K::Layer, &[], &[("out", M)], fill_params()),
         def("stack", "Stack", K::Layer, &[], &[("out", M)], vec![]),
         def("mask_stack", "Mask Stack", K::Layer, &[], &[("out", F)], vec![]),
@@ -959,6 +962,29 @@ pub fn defs() -> &'static [NodeDef] {
 
 pub fn def(ty: &str) -> Option<&'static NodeDef> {
     DEFS.iter().find(|d| d.ty == ty)
+}
+
+/// Paint and 2D Paint: material paint nodes, painted into the material pools.
+pub fn is_paint(ty: &str) -> bool {
+    matches!(ty, "paint" | "paint_2d")
+}
+
+/// Paint Mask and 2D Paint Mask: single-channel paint nodes (mask pool).
+pub fn is_paint_mask(ty: &str) -> bool {
+    matches!(ty, "paint_mask" | "paint_mask_2d")
+}
+
+/// 2D Paint and 2D Paint Mask (docs/reference/2d-paint.md).
+pub fn is_2d(ty: &str) -> bool {
+    matches!(ty, "paint_2d" | "paint_mask_2d")
+}
+
+impl Graph {
+    /// Whether `id` reads a 2D paint node, itself included. Such nodes aren't cached
+    /// (docs/reference/2d-paint.md#caching).
+    pub fn reads_2d(&self, id: NodeId) -> bool {
+        self.subgraph(id).iter().any(|n| self.get(*n).is_some_and(|n| is_2d(&n.ty)))
+    }
 }
 
 /// Node types offered by the "Add generator" menu.

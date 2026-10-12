@@ -57,6 +57,7 @@ fn surface(in: VsOut) -> Surface {
     s.normal = normalize(in.normal);
     s.uv = in.uv;
     s.tile_uv = clamp(in.uv - eval_params.tile.xy, vec2f(0.0), vec2f(0.99999));
+    s.texel_uv = s.tile_uv;
     s.layer = i32(eval_params.tile.z);
     s.material = in.material;
     return s;

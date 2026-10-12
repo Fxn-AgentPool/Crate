@@ -98,8 +98,8 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
     let ppr = p.tile_resolution() / PAGE;
     for n in &nodes {
         let (slot_i, mask) = match (p.paint_slots.get(&n.id), p.mask_slots.get(&n.id)) {
-            (Some(s), _) if n.ty == "paint" => (*s, false),
-            (_, Some(s)) if n.ty == "paint_mask" => (*s, true),
+            (Some(s), _) if crate::graph::is_paint(&n.ty) => (*s, false),
+            (_, Some(s)) if crate::graph::is_paint_mask(&n.ty) => (*s, true),
             _ => continue,
         };
         let planes = crate::paint::pool_textures(p, mask);
@@ -208,7 +208,7 @@ pub fn insert(gpu: &Gpu, p: &mut Project, path: &Path, above: Option<LayerRef>) 
         let Some((px, py)) = page.trim_end_matches(".page").split_once('_') else { continue };
         let (px, py): (u32, u32) = (px.parse()?, py.parse()?);
         let new = remap(old);
-        let mask = p.graph.get(new).is_some_and(|n| n.ty == "paint_mask");
+        let mask = p.graph.get(new).is_some_and(|n| crate::graph::is_paint_mask(&n.ty));
         let slot_i = p.paint_slot(gpu, new);
         let mut bytes = Vec::new();
         z.by_name(name)?.read_to_end(&mut bytes)?;

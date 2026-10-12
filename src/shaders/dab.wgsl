@@ -44,6 +44,10 @@ struct Params {
 fn tip(d: Dab, p: vec2f) -> f32 {
     let r = max(d.geom.z, 0.5);
     let rel = p - d.geom.xy;
+    // Pixel brush (params.w = 1): a hard, unrotated square of half-side r, no antialiasing.
+    if d.params.w > 0.5 {
+        return select(0.0, 1.0, all(abs(rel) <= vec2f(d.geom.z)));
+    }
     let c = cos(-d.geom.w);
     let s = sin(-d.geom.w);
     let q = vec2f(c * rel.x - s * rel.y, s * rel.x + c * rel.y) / r;

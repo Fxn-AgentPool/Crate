@@ -109,6 +109,12 @@ pub(crate) fn mask_add_menu(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: La
         expand(p, l);
         ui.close();
     }
+    if ui.button("Add 2D paint").clicked() {
+        let sel = p.edit(gpu, "Add mask 2D paint", |g| ops::add_mask_paint_2d(g, l));
+        p.selection = Some(sel);
+        expand(p, l);
+        ui.close();
+    }
     if ui.button("Add fill").clicked() {
         let sel = p.edit(gpu, "Add mask fill", |g| ops::add_mask_fill(g, l));
         p.selection = Some(sel);
@@ -276,6 +282,9 @@ fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) 
         LayerKind::Paint => {
             crate::ui_widgets::hint(ui, "Paint with the Paint tool (B).");
         }
+        LayerKind::Paint2d => {
+            crate::ui_widgets::hint(ui, "Paint with the Paint tool (B). In the UV view this reaches every texel; it stays in UV space on reimport.");
+        }
         LayerKind::Graph | LayerKind::SmartMaterial | LayerKind::Group => {
             exposed_parameters(ui, gpu, p, content);
         }
@@ -419,7 +428,7 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
         }
         MaskSource::Node(node) => {
             let n = p.graph.node(node).clone();
-            if n.ty == "paint_mask" {
+            if crate::graph::is_paint_mask(&n.ty) {
                 ui.label(RichText::new("Paint with the Paint tool (B).").weak());
             }
             // Settings that apply, and value inputs nothing is connected to.

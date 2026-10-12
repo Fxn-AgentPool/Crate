@@ -78,6 +78,13 @@ pub fn layout(gpu: &Gpu) -> wgpu::BindGroupLayout {
     for b in 18..=19 {
         entries.push(gpu::texture_entry(b, fs, arr, true));
     }
+    // 20: the nearest island texel of every texel (mesh-map padding source).
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 20,
+        visibility: fs,
+        ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: arr, multisampled: false },
+        count: None,
+    });
     entries.push(wgpu::BindGroupLayoutEntry {
         binding: 17,
         visibility: fs,
@@ -122,10 +129,37 @@ struct Scene {
 @group(1) @binding(17) var<storage, read> params: array<vec4f>;
 @group(1) @binding(18) var mm_tnrm: texture_2d_array<f32>;
 @group(1) @binding(19) var mm_height: texture_2d_array<f32>;
+@group(1) @binding(20) var mm_src: texture_2d_array<u32>;
 
 // Texture coordinate of a point within its tile (row 0 is the top of the tile).
 fn tile_tex(tile_uv: vec2f) -> vec2f {
     return vec2f(tile_uv.x, 1.0 - tile_uv.y);
+}
+
+// A texel's surface, for evaluating the material at any texel of a tile: the surface of the
+// nearest island texel, with `texel_uv` the texel itself (docs/reference/2d-paint.md, "The space
+// between islands"). `tile` is the tile's UDIM offset. Returns the texel's mesh-map alpha:
+// 1 island, 0.5 padding, 0.25 between islands, 0 a tile without geometry.
+fn gap_surface(texel_uv: vec2f, tile: vec2f, layer: i32, s: ptr<function, Surface>) -> f32 {
+    let mres = textureDimensions(mm_pos).x;
+    let q = clamp(vec2i(floor(tile_tex(texel_uv) * f32(mres))), vec2i(0), vec2i(i32(mres) - 1));
+    let p = textureLoad(mm_pos, q, layer, 0);
+    let src = textureLoad(mm_src, q, layer, 0).r;
+    var sq = q;
+    if src != 0xffffffffu {
+        sq = vec2i(i32(src % mres), i32(src / mres));
+    }
+    let src_uv = vec2f((f32(sq.x) + 0.5) / f32(mres), 1.0 - (f32(sq.y) + 0.5) / f32(mres));
+    (*s).pos = p.xyz;
+    (*s).pos_norm = (p.xyz - scene.bbox_min.xyz) / scene.bbox_size.xyz;
+    let n = textureLoad(mm_nrm, q, layer, 0).xyz * 2.0 - 1.0;
+    (*s).normal = select(vec3f(0.0, 0.0, 1.0), normalize(n), dot(n, n) > 1e-8);
+    (*s).uv = tile + src_uv;
+    (*s).tile_uv = src_uv;
+    (*s).texel_uv = texel_uv;
+    (*s).layer = layer;
+    (*s).material = 0u;
+    return p.a;
 }
 
 fn map_baked(i: u32) -> bool {
@@ -380,6 +414,7 @@ impl SceneResources {
         entries.push(wgpu::BindGroupEntry { binding: 17, resource: self.params.as_entire_binding() });
         entries.push(wgpu::BindGroupEntry { binding: 18, resource: tv(&maps.tnormal.view) });
         entries.push(wgpu::BindGroupEntry { binding: 19, resource: tv(&maps.height.view) });
+        entries.push(wgpu::BindGroupEntry { binding: 20, resource: tv(&maps.source.view) });
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene"),
             layout: &self.layout,

@@ -87,7 +87,7 @@ fn signature(p: &crate::project::Project, node: NodeId) -> u64 {
             }
         }
         serde_json::to_string(n).unwrap_or_default().hash(&mut h);
-        has_paint |= matches!(n.ty.as_str(), "paint" | "paint_mask");
+        has_paint |= crate::graph::is_paint(&n.ty) || crate::graph::is_paint_mask(&n.ty);
     }
     if has_paint {
         p.paint_epoch.hash(&mut h);
@@ -109,7 +109,7 @@ pub fn update(gpu: &Gpu, p: &mut crate::project::Project) -> anyhow::Result<bool
         .copied()
         .filter(|id| {
             let n = p.graph.node(*id);
-            (n.def().non_local || n.cached) && compile::cacheable(n)
+            (n.def().non_local || n.cached) && compile::cacheable(n) && !p.graph.reads_2d(n.id)
         })
         .collect();
     wanted.sort_by_key(|id| p.graph.subgraph(*id).len());

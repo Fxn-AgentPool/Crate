@@ -192,8 +192,33 @@ pub fn compile(g: &Graph, ch: &ChannelSettings, env: &Env) -> Compiled {
         },
     };
     f.lines.push(format!("return apply_baked_normal(s, mat_to_material({body}));"));
-    let code = cx.finish("fn eval_material(s: Surface) -> Material", &f);
+    let mut code = cx.finish("fn eval_material(s: Surface) -> Material", &f);
+    code.push_str(&twod_coverage(g, env));
     Compiled { code, params: cx.l.params, errors: cx.errors }
+}
+
+/// `fn twod_coverage(s) -> f32`: how much 2D paint of the material covers the texel `s.texel_uv`
+/// (the largest coverage of any 2D Paint or 2D Paint Mask node feeding the output). Between
+/// islands only those texels need evaluating (docs/explanation/about-painting-between-islands.md).
+fn twod_coverage(g: &Graph, env: &Env) -> String {
+    let live = g.output_node().map(|o| g.subgraph(o)).unwrap_or_default();
+    let mut terms = Vec::new();
+    for n in g.nodes.values().filter(|n| live.contains(&n.id)) {
+        let Some(slot) = (env.paint_slot)(n.id) else { continue };
+        match n.ty.as_str() {
+            "paint_2d" => terms.push(format!("paint_coverage_2d({slot}u, s)")),
+            "paint_mask_2d" => terms.push(format!("paint_mask_coverage_2d({slot}u, s)")),
+            _ => {}
+        }
+    }
+    let expr = terms.into_iter().fold("0.0".to_string(), |acc, t| format!("max({acc}, {t})"));
+    function("fn twod_coverage(s: Surface) -> f32", &[format!("return {expr};")])
+}
+
+/// Whether the graph has 2D paint feeding the output, so texels between islands need a pass.
+pub fn has_2d(g: &Graph) -> bool {
+    let live = g.output_node().map(|o| g.subgraph(o)).unwrap_or_default();
+    live.iter().any(|n| g.get(*n).is_some_and(|n| graph::is_2d(&n.ty)))
 }
 
 /// Compiles `fn eval_target(s) -> CacheOut` computing `target`, for filling a cache.
@@ -239,7 +264,9 @@ pub fn cacheable(n: &Node) -> bool {
     let count = |t| outs.iter().filter(|(_, x)| *x == t).count();
     !outs.is_empty()
         && count(SocketType::Vector) == 0
-        && !matches!(n.ty.as_str(), "material_output" | "paint" | "paint_mask" | "reroute")
+        && !matches!(n.ty.as_str(), "material_output" | "reroute")
+        && !graph::is_paint(&n.ty)
+        && !graph::is_paint_mask(&n.ty)
         && ((count(SocketType::Material) == 1 && outs.len() == 1)
             || (count(SocketType::Color) <= 1 && count(SocketType::Float) <= 1 && count(SocketType::Material) == 0))
 }
@@ -373,6 +400,14 @@ impl<'a> Ctx<'a> {
             "paint" => match (self.paint_slot)(id) {
                 Some(slot) => lines.push(format!("let {} = paint_sample({slot}u, s);", o("out"))),
                 None => lines.push(format!("let {} = mat_uncovered(mat_defaults());", o("out"))),
+            },
+            "paint_2d" => match (self.paint_slot)(id) {
+                Some(slot) => lines.push(format!("let {} = paint_sample_2d({slot}u, s);", o("out"))),
+                None => lines.push(format!("let {} = mat_uncovered(mat_defaults());", o("out"))),
+            },
+            "paint_mask_2d" => match (self.paint_slot)(id) {
+                Some(slot) => lines.push(format!("let {} = paint_mask_sample_2d({slot}u, s).x;", o("out"))),
+                None => lines.push(format!("let {} = 0.0;", o("out"))),
             },
             "paint_mask" => match (self.paint_slot)(id) {
                 Some(slot) => lines.push(format!("let {} = paint_mask_sample({slot}u, s).x;", o("out"))),
@@ -851,10 +886,11 @@ impl<'a> Ctx<'a> {
             match &slot.source {
                 MaskSource::Node(src) => {
                     let Some(src_node) = g.get(*src) else { continue };
-                    if src_node.ty == "paint_mask" {
+                    if graph::is_paint_mask(&src_node.ty) {
+                        let sample = if graph::is_2d(&src_node.ty) { "paint_mask_sample_2d" } else { "paint_mask_sample" };
                         match (self.paint_slot)(*src) {
                             Some(ps) => {
-                                f.lines.push(format!("let pm{i} = paint_mask_sample({ps}u, s);"));
+                                f.lines.push(format!("let pm{i} = {sample}({ps}u, s);"));
                                 f.lines.push(format!("let v{i} = pm{i}.x / max(pm{i}.y, 1e-5);"));
                                 f.lines.push(format!("let a{i} = pm{i}.y;"));
                             }

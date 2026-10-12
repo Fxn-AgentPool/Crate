@@ -993,7 +993,15 @@ impl CrateApp {
         ui.painter().image(tex_id, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
         match pane {
             Pane::ThreeD if self.view.show_tiles => self.tile_overlay(ui, rect),
-            Pane::Uv => self.uv_grid(ui, rect, size / ppp),
+            Pane::Uv => {
+                self.uv_grid(ui, rect, size / ppp);
+                // Gaps: the final texture between islands, or the background.
+                let at = egui::Rect::from_min_size(rect.right_top() + egui::vec2(-92.0, 8.0), egui::vec2(84.0, crate::ui_theme::H_CONTROL));
+                let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                let uv = self.uv_view.as_mut().unwrap();
+                ui.label(egui::RichText::new("Gaps").color(crate::ui_theme::TEXT_2));
+                ui.add(crate::ui_widgets::Toggle(&mut uv.gaps)).on_hover_text("Show the final texture between UV islands (costs a material evaluation per pixel)");
+            }
             _ => {}
         }
         if self.paint.unbaked && owns_buffer {
@@ -1053,6 +1061,33 @@ impl CrateApp {
         }
         for k in 0..=max_v {
             p.line_segment([at(0.0, k as f32), at(max_u as f32, k as f32)], faint);
+        }
+        // The texel grid, once a texel is 8 points wide (docs/reference/2d-paint.md#texel-grid).
+        let res = doc.tile_resolution() as f32;
+        let texel = v.scale(size_pt) / res;
+        if texel >= 8.0 {
+            let lo = v.to_uv(Vec2::new(0.0, size_pt.y), size_pt);
+            let hi = v.to_uv(Vec2::new(size_pt.x, 0.0), size_pt);
+            let line = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(10));
+            for t in tiles {
+                let k = t - 1001;
+                let (u0, w0) = ((k % 10) as f32, (k / 10) as f32);
+                let (ua, ub) = (lo.x.max(u0), hi.x.min(u0 + 1.0));
+                let (wa, wb) = (lo.y.max(w0), hi.y.min(w0 + 1.0));
+                if ua >= ub || wa >= wb {
+                    continue;
+                }
+                let mut x = (ua * res).ceil();
+                while x <= ub * res {
+                    p.line_segment([at(x / res, wa), at(x / res, wb)], line);
+                    x += 1.0;
+                }
+                let mut y = (wa * res).ceil();
+                while y <= wb * res {
+                    p.line_segment([at(ua, y / res), at(ub, y / res)], line);
+                    y += 1.0;
+                }
+            }
         }
         for t in tiles {
             let k = t - 1001;

@@ -91,7 +91,7 @@ composited result; this is an approximation of fully isolated group compositing.
 |---|---|---|
 | Add paint layer | `Ctrl+Shift+N` | Inserts above the selected layer. |
 | Add fill layer | `Ctrl+Shift+F` | Inserts above the selected layer. |
-| Add 2D paint layer | **+** menu | Inserts a [2D paint](2d-paint.md) layer above the selected layer. |
+| Add 2D paint layer | toolbar (brush with "2D") | Inserts a [2D paint](2d-paint.md) layer above the selected layer. |
 | Group selected | `Ctrl+G` | Moves the selected layers into a new Group. `Ctrl`+click selects several layers of the same stack. |
 | Add mask | context menu | Adds an empty mask (white = fully visible). |
 | Add black mask | context menu | Adds a mask with value 0. |

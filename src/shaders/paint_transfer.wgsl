@@ -107,7 +107,8 @@ fn locate(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= lp.res || id.y >= lp.row_count || y >= lp.res { return; }
     let xy = vec2i(i32(id.x), i32(y));
     let pos = textureLoad(pos_map, xy, i32(lp.layer), 0);
-    if pos.a <= 0.0 {
+    // Islands and padding only (alpha 1 / 0.5, docs/reference/mesh-maps.md#padding).
+    if pos.a < 0.3 {
         textureStore(hits, xy, vec4f(0.0));
         return;
     }

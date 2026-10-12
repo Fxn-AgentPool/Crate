@@ -435,7 +435,8 @@ fn save_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<usize> {
     let mut keep_dirs = Vec::new();
     let mut saved = std::mem::take(&mut p.saved_pages);
     for (node, slot, mask) in nodes {
-        if !live.contains(&node) || !matches!(p.graph.node(node).ty.as_str(), "paint" | "paint_mask") {
+        let ty = p.graph.node(node).ty.clone();
+        if !live.contains(&node) || !(crate::graph::is_paint(&ty) || crate::graph::is_paint_mask(&ty)) {
             continue;
         }
         let node_dir = dir.join(id_str(node));
@@ -502,7 +503,7 @@ fn load_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<()> {
     for e in entries.flatten() {
         let Ok(node) = parse_id(&e.file_name().to_string_lossy()) else { continue };
         let Some(n) = p.graph.get(node) else { continue };
-        let mask = n.ty == "paint_mask";
+        let mask = crate::graph::is_paint_mask(&n.ty);
         let slot = p.paint_slot(gpu, node);
         let planes_n = if mask { 1 } else { crate::scene::PAINT_PLANES };
         for t in std::fs::read_dir(e.path())?.flatten() {

@@ -60,7 +60,7 @@ impl Thumbnails {
 
     /// Thumbnail of a Paint / Paint Mask node, or None if it has never been painted.
     pub fn get(&mut self, ctx: &egui::Context, gpu: &Gpu, p: &Project, node: NodeId) -> Option<egui::TextureId> {
-        let mask = p.graph.get(node).is_some_and(|n| n.ty == "paint_mask");
+        let mask = p.graph.get(node).is_some_and(|n| crate::graph::is_paint_mask(&n.ty));
         let slot = if mask { p.mask_slots.get(&node) } else { p.paint_slots.get(&node) }.copied()?;
         let now = ctx.input(|i| i.time);
         let entry = self.cache.get(&node);
