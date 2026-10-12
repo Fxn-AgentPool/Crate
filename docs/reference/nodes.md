@@ -23,6 +23,24 @@ Implicit conversions:
 | Float/Color/Vector → Material | Not implicit. Use **Material Combine**. |
 | Material → Float/Color/Vector | Not implicit. Use **Material Split**. |
 
+## Inputs and settings
+
+A node has inputs (sockets on its left edge), outputs (on its right edge) and settings.
+
+- A **value input** has a value of its own, used while nothing is connected to it. In the Node
+  Editor its field is on the input's row; connecting a link hides the field and the link's value
+  is used instead. Every number, color or vector a node reads per texel is a value input.
+- A **setting** is the same for the whole node and has no socket: choices (like Math's
+  operation), on/off settings, whole numbers (like octaves and seeds), images, ramp stops, ID
+  colors, the radius of filters, and every setting of the Layer nodes.
+
+In the catalog below, value inputs are in *italics* with their range and default value, like
+*Scale* (0.01–1000, 4). Ranges are hard limits: typed values are clamped to them. A connected
+link's value is not clamped.
+
+Settings marked "(Float only)", "(Custom only)" and the like are shown only while the setting
+they depend on has that value.
+
 ## Node properties
 
 Every node has:
@@ -32,7 +50,7 @@ Every node has:
 | Id | Unique, read-only. |
 | Label | Optional display name. |
 | Cached | If on, the node's output is evaluated in UV space and stored per tile. See [About realtime evaluation](../explanation/about-realtime-evaluation.md). Available for nodes with one Material output, or at most one Color and one Float output and no Vector output. A Stack used as a Group layer is not read from its cache. |
-| Exposed parameters | Parameters marked **Expose** appear on the owning layer in the Layers panel and on smart materials. |
+| Exposed parameters | Settings and value inputs marked **Expose** appear on the owning layer in the Layers panel and on smart materials. An exposed value input that is connected has no effect. |
 
 ## Categories
 
@@ -41,7 +59,7 @@ Node Editor and where the node is listed in the add menu, in this order:
 
 | Category | Header color | Nodes |
 |---|---|---|
-| Input | rose `#83314A` | Value, Color, Vector, UV, Geometry, Mesh Map, ID Select |
+| Input | rose `#83314A` | Value, Vector, UV, Geometry, Mesh Map, ID Select |
 | Texture | brown `#79461D` | Image, Noise, Cellular, Gradient |
 | Generator | green `#1F7050` | Edge Wear, Dirt, Curvature Mask, Position Gradient |
 | Color | olive `#6C6C00` | Levels, Invert, HSV Adjust, Merge |
@@ -49,69 +67,71 @@ Node Editor and where the node is listed in the add menu, in this order:
 | Converter | blue `#246283` | Math, Clamp, Ramp, Combine XYZ, Separate XYZ, Material Combine, Material Split |
 | Filter | purple `#6C3B75` | Blur, Dilate, Height to Normal |
 | Layer | dark green `#2D6A2D` | Paint, Paint Mask, Fill, Stack, Mask Stack |
+| Layout | gray `#4A4D55` | Reroute |
 | Output | dark red `#4D0017` | Material Output (not in the add menu) |
 
-Layer groups and the Layer node of the Node Editor have their own header colors; see
-[Node Editor](node-editor.md#layer-groups).
+The add menu also lists **Factor** (a Value node of type Factor) and **Color** (a Vector node of
+type Color) under Input. Layer groups, frames and the Layer node of the Node Editor have their
+own looks; see [Node Editor](node-editor.md#layer-groups).
 
 ## Node catalog
 
-An input listed with a parameter in parentheses, like **B** (*b value*), uses that parameter
-while nothing is connected to it. In the Node Editor the parameter's field is shown on the
-input's row, and disappears while a link is connected.
-
 ### Input
 
-| Node | Outputs | Parameters |
-|---|---|---|
-| Value | Value (Float) | Value, 0–1, default 1. |
-| Color | Color (Color) | Color, default `(0.5, 0.5, 0.5)` (linear). |
-| Vector | Vector (Vector) | Vector: X, Y, Z, default `(0, 0, 0)`. |
-| UV | UV (Vector) | — . The texel's UV within its UDIM tile: X = U, from 0 at the tile's left edge to 1 at its right edge; Y = V, from 0 at the bottom to 1 at the top; Z = 0. This is the coordinate the Image node's UV projection uses. |
-| Geometry | Position, Generated, Normal (Vector) | — . Position: the object-space position. Generated: the position normalized to the mesh's bounding box, 0–1 on each axis (what Noise, Cellular and Gradient use by default). Normal: the object-space normal. |
-| Mesh Map | Float or Color | Map: AO, Curvature, Thickness, World Normal, Position, ID, Normal, Height. Normal outputs the tangent-space normal as a color (`n * 0.5 + 0.5`). |
-| ID Select | Float | Selected ID colors, tolerance. Reads the ID mesh map. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Value | — | Value (Float) | Type: Float or Factor (default Float). Value (Float only): −1 000 000–1 000 000, default 0.5. Factor (Factor only): 0–1, default 1, shown as a slider. The node's title is **Value** or **Factor**, after its type. |
+| Vector | — | Vector (Vector, or Color while the type is Color) | Type: Vector or Color (default Vector). Vector (Vector only): X, Y, Z, default `(0, 0, 0)`. Color (Color only): a color, default `(0.5, 0.5, 0.5)` (linear). The node's title is **Vector** or **Color**, after its type. |
+| UV | — | UV (Vector) | — . The texel's UV within its UDIM tile: X = U, from 0 at the tile's left edge to 1 at its right edge; Y = V, from 0 at the bottom to 1 at the top; Z = 0. This is the coordinate the Image node's UV projection uses. |
+| Geometry | — | Position, Generated, Normal (Vector) | — . Position: the object-space position. Generated: the position normalized to the mesh's bounding box, 0–1 on each axis (what Noise, Cellular and Gradient use by default). Normal: the object-space normal. |
+| Mesh Map | — | Float, Color | Map: AO, Curvature, Thickness, World Normal, Position, ID, Normal, Height. Normal outputs the tangent-space normal as a color (`n * 0.5 + 0.5`). |
+| ID Select | *Tolerance* (0–1, 0.1) | Out (Float) | Selected ID colors. Reads the ID mesh map. |
 
 ### Texture
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| Image | Vector → Color, Alpha (Float) | Image file, sRGB, projection (UV / Triplanar), scale, rotation, offset, triplanar blend. With **Vector** connected, the image is sampled at the vector's X and Y as a UV, after its scale, rotation and offset; the projection is not used. A **UV** node connected to **Vector** gives the same result as the UV projection. |
-| Noise | Vector → Float | Type (Perlin, Simplex, Value), scale, octaves, lacunarity, gain, seed. Evaluated at **Vector** × scale; unconnected, at the Generated position (object space normalized to the bounding box). |
-| Cellular | Vector → Float | Scale, jitter, distance metric (Euclidean, Manhattan), output (F1, F2, F2−F1), seed. Coordinates as for Noise. |
-| Gradient | Vector → Float | Axis (X, Y, Z, custom), start, end, space (Object, World). With **Vector** connected, the gradient runs along the axis through the vector, and space is not used. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Image | Vector, *Scale* (0.001–1000, 1), *Rotation* (−360–360, 0), *Offset* (Vector, `(0, 0, 0)`), *Triplanar blend* (0–1, 0.25) | Color, Alpha (Float) | Image file, sRGB, projection (UV / Triplanar). With **Vector** connected, the image is sampled at the vector's X and Y as a UV, after its scale, rotation and offset; the projection is not used. A **UV** node connected to **Vector** gives the same result as the UV projection. |
+| Noise | Vector, *Scale* (0.01–1000, 4), *Lacunarity* (1–4, 2), *Gain* (0–1, 0.5) | Out (Float) | Type (Perlin, Simplex, Value), octaves (1–10, 5), seed (0–9999, 0). Evaluated at **Vector** × scale; with **Vector** unconnected, at the Generated position. |
+| Cellular | Vector, *Scale* (0.01–1000, 4), *Jitter* (0–1, 1) | Out (Float) | Distance metric (Euclidean, Manhattan), output (F1, F2, F2−F1), seed (0–9999, 0). Coordinates as for Noise. |
+| Gradient | Vector, *Start* (−1–2, 0), *End* (−1–2, 1) | Out (Float) | Axis (X, Y, Z, Custom; default Y), custom axis (Custom only; X, Y, Z, default `(0, 1, 0)`), space (Object, World). With **Vector** connected, the gradient runs along the axis through the vector, and space is not used. |
 
 ### Generator
 
 Generators are built-in subgraphs. **Ungroup** (Node Editor, Properties) turns a generator into
 its component nodes (Mesh Map, Noise, Levels, Math, Invert, Gradient), with its current
-parameter values baked into them. The result closely matches the generator.
+input values baked into them; links into the generator's value inputs are dropped. The result
+closely matches the generator.
 
-| Node | Outputs | Parameters |
-|---|---|---|
-| Edge Wear | Float | Amount, sharpness, noise scale, noise amount, seed. Uses Curvature. |
-| Dirt | Float | Amount, contrast, noise scale, seed. Uses AO. |
-| Curvature Mask | Float | Convex/concave selection, threshold, softness. |
-| Position Gradient | Float | Axis, falloff, noise amount. Uses Position. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Edge Wear | *Amount* (0–1, 0.2), *Sharpness* (0–1, 0.6), *Noise scale* (0.1–200, 30), *Noise amount* (0–1, 0.7) | Out (Float) | Seed. Uses Curvature. |
+| Dirt | *Amount* (0–1, 0.5), *Contrast* (0–1, 0.5), *Noise scale* (0.1–200, 8) | Out (Float) | Seed. Uses AO. |
+| Curvature Mask | *Threshold* (0–1, 0.1), *Softness* (0–1, 0.2) | Out (Float) | Convex/concave selection. |
+| Position Gradient | *Falloff* (0–1, 0.5), *Noise amount* (0–1, 0.2) | Out (Float) | Axis (X, Y, Z). Uses Position. |
 
 ### Color
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| Levels | Color → Color, Float | In black, in white, gamma, out black, out white. |
-| Invert | Color → Color, Float | — |
-| HSV Adjust | Color → Color | Hue shift, saturation, value. |
-| Merge | A, B, Mask → Color, Float | Blend mode, opacity. See [Blend modes](blend-modes.md). |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Levels | In, *In black* (0–1, 0), *In white* (0–1, 1), *Gamma* (0.01–10, 1), *Out black* (0–1, 0), *Out white* (0–1, 1) | Out (Color), Float | — |
+| Invert | In | Out (Color), Float | — |
+| HSV Adjust | In, *Hue* (−0.5–0.5, 0), *Saturation* (0–2, 1), *Value* (0–2, 1) | Out (Color) | — |
+| Merge | A, B, Mask, *Opacity* (0–1, 1) | Out (Color), Float | Blend mode. See [Blend modes](blend-modes.md). |
+
+An unconnected **In**, **A** or **B** is black, and an unconnected **Mask** is 1.
 
 ### Vector
 
 An unconnected **Vector** input of these nodes reads the UV, as the **UV** node outputs it.
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| UV Transform | Vector → Vector | Tile U, tile V (repeats, 0–1000, default 1), rotation (degrees, −360–360, default 0), offset U, offset V (−1000–1000, default 0). Repeats, rotates and moves UVs about the tile's center: `out.xy = rotate(in.xy − 0.5, rotation) × (tile U, tile V) + 0.5 + (offset U, offset V)`. Z passes through. |
-| Mapping | Vector → Vector | Location, rotation (degrees, applied about X, then Y, then Z) and scale, each X, Y, Z; defaults `(0, 0, 0)`, `(0, 0, 0)` and `(1, 1, 1)`. `out = rotate(in × scale) + location`, like Blender's Mapping node of type Point. |
-| Vector Math | A, B (*b value*) → Vector, Value (Float) | Operation (default Add), *b value* (X, Y, Z, default `(0, 0, 0)`), scale (−1000–1000, default 1). See below. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| UV Transform | Vector, *Tile U*, *Tile V* (0–1000, 1), *Rotation* (degrees, −360–360, 0), *Offset U*, *Offset V* (−1000–1000, 0) | Vector | — . Repeats, rotates and moves UVs about the tile's center: `out.xy = rotate(in.xy − 0.5, rotation) × (tile U, tile V) + 0.5 + (offset U, offset V)`. Z passes through. |
+| Mapping | Vector, *Location* (Vector, `(0, 0, 0)`), *Rotation* (Vector, degrees, applied about X, then Y, then Z, `(0, 0, 0)`), *Scale* (Vector, `(1, 1, 1)`) | Vector | — . `out = rotate(in × scale) + location`, like Blender's Mapping node of type Point. |
+| Vector Math | A, *B* (Vector, `(0, 0, 0)`), *Scale* (−1 000 000–1 000 000, 1) | Vector, Value (Float) | Operation (default Add). See below. |
+
+Vector inputs' components range from −1 000 000 to 1 000 000.
 
 Vector Math operations. An unconnected **A** is `(0, 0, 0)`; the output an operation doesn't
 compute is 0.
@@ -130,40 +150,46 @@ compute is 0.
 
 ### Converter
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| Math | A, B (*b value*) → Float | Operation: Add, Subtract, Multiply, Divide, Power, Min, Max, Abs, Smoothstep; *b value*, −10–10, default 1. |
-| Clamp | Color → Color, Float | Min, max. |
-| Ramp | Float → Color | Color stops. |
-| Combine XYZ | X (*x*), Y (*y*), Z (*z*) → Vector | X, Y, Z, −1000–1000, default 0. |
-| Separate XYZ | Vector → X, Y, Z (Float) | — . An unconnected **Vector** is `(0, 0, 0)`. |
-| Material Combine | Float/Color per channel → Material | — |
-| Material Split | Material → Float/Color per channel | — |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Math | A, *B* (−1 000 000–1 000 000, 1) | Out (Float) | Operation: Add, Subtract, Multiply, Divide, Power, Min, Max, Abs, Smoothstep (default Multiply). An unconnected **A** is 0. |
+| Clamp | In, *Min* (−1 000 000–1 000 000, 0), *Max* (−1 000 000–1 000 000, 1) | Out (Color), Float | — |
+| Ramp | In (Float) | Out (Color) | Color stops. |
+| Combine XYZ | *X*, *Y*, *Z* (−1 000 000–1 000 000, 0) | Vector | — |
+| Separate XYZ | Vector | X, Y, Z (Float) | — . An unconnected **Vector** is `(0, 0, 0)`. |
+| Material Combine | Float/Color per channel | Out (Material) | — |
+| Material Split | In (Material) | Float/Color per channel | — |
 
 ### Filter
 
 Filters read neighboring texels (they are non-local). They are always **Cached**; the property
-cannot be turned off.
+cannot be turned off. Their radius and strength are settings, the same for the whole node.
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| Blur | Color → Color, Float | Radius (texels at tile resolution). |
-| Dilate | Float → Float | Radius. |
-| Height to Normal | Float → Color | Strength. Used internally for export. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Blur | In | Out (Color), Float | Radius (texels at tile resolution, 0–64, 4). |
+| Dilate | In (Float) | Out (Float) | Radius (0–64, 2). |
+| Height to Normal | In (Float) | Out (Color) | Strength (0–10, 1). Used internally for export. |
 
 ### Layer
 
-| Node | Inputs → Outputs | Parameters |
-|---|---|---|
-| Paint | — → Material | Channels painted. Holds paint pages. |
-| Paint Mask | — → Float | Holds single-channel paint pages. |
-| Fill | — → Material | Same as [Fill layer properties](layers.md#fill-layer-properties). |
-| Stack | Material slots → Material | Ordered layer slots. Displayed by the Layers panel. |
-| Mask Stack | Float slots → Float | Ordered mask layer slots. |
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Paint | — | Out (Material) | Channels painted. Holds paint pages. |
+| Paint Mask | — | Out (Float) | Holds single-channel paint pages. |
+| Fill | — | Out (Material) | Same as [Fill layer properties](layers.md#fill-layer-properties). |
+| Stack | Material slots | Out (Material) | Ordered layer slots. Displayed by the Layers panel. |
+| Mask Stack | Float slots | Out (Float) | Ordered mask layer slots. |
 
 In the Node Editor, a Stack shows two inputs per layer (the layer's content, and its mask) and a
 **+ New layer** input: connecting a material there adds a layer. A Mask Stack shows one input
 per node-based mask effect and a **+ New effect** input that adds one.
+
+### Layout
+
+| Node | Inputs | Outputs | Settings |
+|---|---|---|---|
+| Reroute | In (any type) | Out (the type of what's connected to **In**; Float while nothing is) | — . Passes its input on unchanged, to route links. See [Reroutes](node-editor.md#reroutes). |
 
 ### Output
 

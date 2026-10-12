@@ -41,18 +41,18 @@ Nodes are 200 points wide. From top to bottom, a node shows:
 |---|---|
 | Header | Filled with the node's [category color](nodes.md#categories). Collapse arrow (▾ expanded, ▸ collapsed), the node's title, and **cached** when the node is cached. |
 | Outputs | One row per output socket, on the right edge. |
-| Parameters | The parameters that don't belong to an input, edited in place (see below). |
-| Inputs | One row per input socket, on the left edge. An input with a value of its own (like Math's **B**) shows that value's field on its row while nothing is connected to it. |
+| Settings | The node's [settings](nodes.md#inputs-and-settings), edited in place (see below). Settings that depend on another one's value are shown only while they apply. |
+| Inputs | One row per input socket, on the left edge. A [value input](nodes.md#inputs-and-settings) shows its field while nothing is connected to it. |
 
 Every row is 26 points high at 100 % zoom, and its controls are the ones of the Properties panel
 (see [Controls](windows-and-panels.md#controls)), 24 points high, scaled with the zoom. A Vector
-parameter takes four rows; every other parameter takes one.
+setting, and an unconnected Vector value input, take four rows; everything else takes one.
 
-The **Layer** node has no parameters and can't be collapsed. Its header uses the Output color.
+The **Layer** node has no settings and can't be collapsed. Its header uses the Output color.
 
-### Parameters
+### Settings and values
 
-| Parameter kind | On the node |
+| Kind | On the node |
 |---|---|
 | Number | A field with the name inside on the left and the value on the right. Drag sideways to change it, or click to type a value. Values are clamped to the parameter's range; a field whose range spans at most 2 shows how far into its range the value is as a blue fill. |
 | Color | The name, and a swatch filling the right half of the row; click the swatch to pick a color (see [Color picker](windows-and-panels.md#color-picker)). |
@@ -63,9 +63,11 @@ The **Layer** node has no parameters and can't be collapsed. Its header uses the
 | Ramp stops | A bar showing the gradient; click it to edit the stops (position, color, **×** to remove, **+ Stop** to add, up to 8). |
 | ID colors | A button showing how many IDs are selected; click it for the list of IDs, each with a checkbox. |
 
-An input's own value takes the input's rows: a number field after the socket on the same row, or
-for a Vector value, the input's name on its row and the X, Y and Z fields on the three rows below.
-While a link is connected, the field isn't shown and only the name remains.
+A value input's field takes the input's rows: a number field with the input's name inside, on
+the socket's row; a color as the name and a swatch; for a Vector, the input's name on the
+socket's row and the X, Y and Z fields on the three rows below. While a link is connected, the
+field isn't shown and the input takes one row with its name. A number field's drag speed is a
+500th of its range per point, or 0.01 per point for ranges wider than 2000.
 
 Each change is one undo step; dragging a field is one step from press to release. Clicking a
 parameter selects its node and makes it the active node, but doesn't move the node or start a
@@ -88,6 +90,46 @@ of a collapsed node, or pick one up from its input end, expand it first.
 
 Collapsing changes nothing but the node's size. It's saved with the project (see
 [Project format](project-format.md#graph)) and is one undo step.
+
+## Frames
+
+A frame is a labeled box around some nodes, to keep related nodes together. It's drawn behind
+the nodes: a translucent gray box with its label (**Frame** until renamed) in the top 26 points.
+The box fits its nodes with 16 points around them and grows and shrinks as they move.
+
+| Input | Result |
+|---|---|
+| `F` | Puts the selected nodes in a new frame and selects the frame. Nodes already in another frame move to the new one; frames left empty are deleted. Layer groups and the Layer node aren't framed. |
+| `Alt+P` | Takes the selected nodes out of their frames. Frames left empty are deleted. |
+| Left-click a frame (where no node is) | Selects the frame; `Shift` adds it to or removes it from the selection. |
+| Left-drag a frame | Moves the frame with all its nodes, and the rest of the selection. |
+| Box select | Selects the frames entirely inside the box, and the nodes it touches. |
+| `Delete` or `Ctrl+X` with a frame selected | Deletes the frame; its nodes stay. |
+
+The frame's label is edited in the [Properties sidebar](#properties-sidebar) while the frame is
+the active item. Moving a node doesn't add it to a frame or take it out: use `F` and `Alt+P`.
+A frame is shown while at least one of its nodes is, and fits the nodes shown. Every change to
+frames is one undo step. Frames are saved with the project (see
+[Project format](project-format.md#graph)), aren't copied with their nodes, and are dropped
+when their last node is deleted.
+
+## Reroutes
+
+A reroute is a small node that passes its input on unchanged, to route links around other
+nodes. It's drawn as a 32 × 18 point pill in the panel color with its input socket at its left
+end and its output socket at its right end, both in the color of the type it carries. It has
+no header and can't be collapsed.
+
+| Input | Result |
+|---|---|
+| `Shift` + right-drag across links | Draws a dashed stroke; on release, puts a reroute on every link the stroke crosses, centered where it crosses. Links that come from the same output share one reroute, placed at the average of their crossings. One undo step. |
+| Left-drag the middle of a reroute | Moves it. |
+| Drag from its sockets | Connects, like any node's sockets. |
+| **Reroute** in the add menu (Layout) | Adds an unconnected reroute. |
+
+A reroute accepts any type, Material included; its output has the type of what's connected to
+its input. Links into the Layer node, a Stack's layer inputs and a Mask Stack's effect inputs
+aren't rerouted, so that layers keep their kind in the Layers panel.
 
 ## Layer groups
 
@@ -134,6 +176,7 @@ inputs fed by a group can't be picked up: change layers in the Layers panel, or 
 | `Alt` + right-drag from node to node | Lazy connect: the best matching output and input. |
 | `Shift+Alt` + right-drag from node to node | Lazy connect with a menu of every compatible output → input pair. |
 | `Ctrl` + right-drag | Cut: removes every link the stroke crosses. |
+| `Shift` + right-drag | Adds [reroutes](#reroutes) on the links the stroke crosses. |
 | Drop a mesh map from the Library | Adds a **Mesh Map** node set to that map. |
 
 Lazy connect ranks pairs by exact type match first, then by free inputs. It refuses connections
@@ -145,7 +188,7 @@ red when not.
 | Input | Operation |
 |---|---|
 | `Tab` | Add menu at the pointer, also right after clicking or dragging a field on a node. Only while typing in a text field does `Tab` go to the text field instead. Over the Node Editor, `Tab` never moves the keyboard focus between controls. |
-| `Delete` | Delete the selected nodes. |
+| `Delete` | Delete the selected nodes (a selected frame: only the frame). |
 | `Ctrl+X` | Dissolve the selected nodes. |
 | `Alt+X` | Delete unused nodes. |
 | `Ctrl+C` | Copy the selected nodes. |
@@ -156,6 +199,8 @@ red when not.
 | `Shift+D` | Align right edges. |
 | `Shift+=` | Align in a row or column. |
 | `H` | Collapse or expand the selected nodes. |
+| `F` | Put the selected nodes in a [frame](#frames). |
+| `Alt+P` | Take the selected nodes out of their frames. |
 | `Alt+S` | Swap. |
 | `K` | Link active to selected. |
 | `Shift+C` | Copy settings to selected. |
@@ -180,7 +225,9 @@ A search field, then the node catalog by [category](nodes.md#categories), in the
 categories table: each category's name in small capitals after a square of its color, and its
 nodes below. Typing filters by name; `Enter` adds the first match; `Esc` or a click outside
 closes the menu. The new node is placed with its header's top-left corner at the point where
-the menu was opened, selected, and stays visible until connected.
+the menu was opened, selected, and stays visible until connected. Besides the node types, the
+Input category lists **Factor** (a Value node of type Factor) and **Color** (a Vector node of
+type Color).
 
 ## Preview
 
@@ -258,7 +305,8 @@ copied nodes, `Ctrl+V` does nothing.
 
 Shows the active node's settings, laid out like the Properties panel: the node's title, then
 **Label** (a text field), **Cached** (a toggle), **Ungroup** for generators, and the list of its
-parameters with a pin each. Click a pin to expose the parameter on the layer (see
+settings and value inputs with a pin each (only those shown on the node). Click a pin to expose
+it on the layer (see
 [How to edit a layer as a node graph](../how-to/edit-a-layer-as-a-graph.md#expose-parameters-on-the-layer)).
-Parameter values are edited on the node. With several nodes selected, it shows the count and
-the active node.
+Values are edited on the node. With several nodes selected, it shows the count and the active
+node. While a frame is the active item, it shows **Frame** and its **Label**.

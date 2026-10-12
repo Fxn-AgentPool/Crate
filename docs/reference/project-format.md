@@ -62,6 +62,13 @@ Node Editor; it's left out when `false`. Stack nodes also carry their `slots`
 settings, and `node_pos`, the position of the layer's [group](node-editor.md#layer-groups) in
 the Node Editor, `[0, 0]` until it's first placed) and Mask Stack nodes their `mask_slots`.
 
+`frames` lists the Node Editor's [frames](node-editor.md#frames), each with its `label` and the
+ids of its `nodes`; it's left out when there are none:
+
+```json
+"frames": [ { "label": "Rust", "nodes": ["n7", "n9"] } ]
+```
+
 ## Paint pages
 
 Paint data is stored sparsely in **pages** of 128 × 128 texels. A page file exists only if at

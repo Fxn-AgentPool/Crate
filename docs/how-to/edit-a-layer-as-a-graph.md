@@ -41,6 +41,14 @@ layer** is on, the editor follows the layer you select in the Layers panel.
   their top, left, bottom or right edges.
 - To make room, collapse nodes you're not editing: click the arrow in a node's header, or select
   several and press `H`. Their links stay connected.
+- To keep related nodes together, select them and press `F`: they get a frame, which moves them
+  all at once. Rename it in the sidebar's **Label**. `Alt+P` takes nodes out of their frame.
+- To route a link around other nodes, hold `Shift` and right-drag across it: a reroute appears
+  on it, which you can drag where the link should bend.
+- To drive a node's value from another node (for example Noise's **Scale** from a Value node),
+  connect to its input: the field on the node disappears while the link is connected.
+- For a number above 1, use a **Value** node of type **Float**; type **Factor** is a 0–1
+  slider. For a color constant, add **Color** (a Vector node of type Color).
 
 New nodes, including those added from the Layers panel, are placed next to the node that reads
 them.

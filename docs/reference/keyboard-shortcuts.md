@@ -91,6 +91,8 @@ gestures and what each operation does, is in [Node Editor](node-editor.md).
 |---|---|
 | Add node | `Tab`, or right-click empty space |
 | Open a layer group | Double-click it |
+| Frame selected nodes / take them out of their frames | `F` / `Alt+P` |
+| Add reroutes on the links crossed | `Shift` + right-drag |
 | Node menu | Right-click a node |
 | Box select / pan | Left-drag empty space / right-drag or `Alt` + left-drag |
 | Preview node output | `Ctrl+Shift` + click |
