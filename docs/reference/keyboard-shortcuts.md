@@ -48,6 +48,7 @@ See [Controls](windows-and-panels.md#fields).
 | Paint Through | `P` |
 | Geo Fill | `L` |
 | Curve | `K` |
+| Bake Exclude | `X` |
 | Smaller / larger brush | `[` / `]` |
 | Softer / harder brush | `Shift+[` / `Shift+]` |
 | Interactive size / flow | `Ctrl` + right-drag |
@@ -68,6 +69,16 @@ With the [Curve](curves.md) tool:
 | Move a point | Drag it |
 | Insert / delete a point | `Ctrl` + click the line / the point |
 | Delete the selected curve | `Delete` |
+
+## Bake Exclude
+
+With the [Bake Exclude](bake-exclusion.md#bake-exclude-tool) tool:
+
+| Action | Input |
+|---|---|
+| Select | Click, Brush stroke or Box |
+| Add to the selection | `Shift` + click, stroke or Box |
+| Clear the selection | `Esc`, or click on nothing |
 
 ## Paint buffer
 

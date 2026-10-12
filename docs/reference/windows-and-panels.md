@@ -10,13 +10,13 @@ the viewport.
 | Layers | right | The root stack, or the selected group. The channel menu in its header chooses the channel whose blend mode and opacity the rows show. See [Layers and masks](layers.md). |
 | Properties | right, below Layers | Parameters of the selected layer, mask layer or node, and the [curves](curves.md#curves-in-the-properties-panel) of a paint layer or effect. Its header shows the selected layer's or mask layer's name. |
 | Node Editor | bottom (hidden) | The graph of the selected layer, or of the whole project. `Ctrl+Space` toggles it. See [Node Editor](node-editor.md). |
-| Tools | left edge | A column of icons: Paint, Erase, Paint Through, Geo Fill and Curve. The current tool is highlighted; hover shows its name and shortcut. |
+| Tools | left edge | A column of icons: Paint, Erase, Paint Through, Geo Fill, Curve and Bake Exclude. The current tool is highlighted; hover shows its name and shortcut. |
 | Brush | left | Tool and brush properties. See [Brushes, tools and stencils](brushes-tools-stencils.md). |
 | Brush Values | left, below Brush | Per-channel values painted by the brush, laid out like a Fill layer's **Values**: a check that turns the channel on, its name, then its value. |
 | Paint Buffer | left | Bake mode, buffer and projection settings. See [Paint buffer](paint-buffer.md). |
 | Stencils | left | Loaded stencils, the active stencil and its properties. |
 | Library | left, bottom | Project resources and the user library, by category. See [Library](#library). |
-| Mesh Maps | **Bake Mesh Maps** in the viewport toolbar, or the Window menu | Mesh map status and bake settings, with the [bake preview](mesh-maps.md#bake-preview) on the right. See [Mesh maps](mesh-maps.md). |
+| Mesh Maps | **Bake Mesh Maps** in the viewport toolbar, or the Window menu | Mesh map status and bake settings, with the [bake preview](mesh-maps.md#bake-preview) on the right, and what is [excluded from baking](bake-exclusion.md#mesh-maps-window). See [Mesh maps](mesh-maps.md). |
 | Import Log | Window menu | Diagnostics from the last mesh import. |
 | Performance | Window menu | Frame time, shader length, GPU memory use and per-node cache cost. |
 | Channels | Project menu | Enabled channels, default values and height scale. See [Channels](channels.md). |
@@ -148,7 +148,7 @@ The Library is shown only while a project is open.
 
 | Part | Where | Contents |
 |---|---|---|
-| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. While Geo Fill is the current tool, two rows of icons take their place: **Select** (Click, Brush, Box) and **Fill by** (Face, UV island, Part, Material, UDIM tile); hovering an icon shows its name. With Brush, **Size** follows them. See [Geo Fill](brushes-tools-stencils.md#geo-fill). On the right, the **3D · Split · UV** layout control (see [UV view](uv-view.md#layouts)), then **Bake Mesh Maps** opens or closes the [Mesh Maps](mesh-maps.md) window; it is highlighted while the window is open, and an amber dot shows while a map that can be baked is missing or out of date. The bake mode is in the [Paint Buffer](paint-buffer.md) section and the status bar; `Ctrl+Shift+B` switches it. |
+| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. While Geo Fill is the current tool, two rows of icons take their place: **Select** (Click, Brush, Box) and **Fill by** (Face, UV island, Part, Material, UDIM tile); hovering an icon shows its name. With Brush, **Size** follows them. See [Geo Fill](brushes-tools-stencils.md#geo-fill). Bake Exclude shows the same, then **Exclude**, **Include**, **Make bake source** and the number of excluded triangles; see [Bake exclusion](bake-exclusion.md#bake-exclude-tool). On the right, the **3D · Split · UV** layout control (see [UV view](uv-view.md#layouts)), then **Bake Mesh Maps** opens or closes the [Mesh Maps](mesh-maps.md) window; it is highlighted while the window is open, and an amber dot shows while a map that can be baked is missing or out of date. The bake mode is in the [Paint Buffer](paint-buffer.md) section and the status bar; `Ctrl+Shift+B` switches it. |
 | Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. Hidden while the viewport is too narrow for it. |
 
 ## Menus

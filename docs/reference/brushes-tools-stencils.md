@@ -9,9 +9,10 @@
 | Paint Through | `P` | Paints pixels sampled from the active stencil into the buffer. |
 | Geo Fill | `L` | Fills a face, UV island, part, material or UDIM tile with the brush values. See [Geo Fill](#geo-fill). |
 | Curve | `K` | Draws editable strokes along smooth paths on the surface. See [Curves](curves.md). |
+| Bake Exclude | `X` | Selects geometry to leave out of mesh map baking, and the copy of stacked UV islands that bakes. See [Bake exclusion](bake-exclusion.md). It doesn't paint. |
 | Color picker | hold `Alt+Shift`, click | Samples the current channel display at the cursor. |
 
-Paint, Erase, Paint Through, Geo Fill and Curve are also chosen in the tool rail at the left edge
+Paint, Erase, Paint Through, Geo Fill, Curve and Bake Exclude are also chosen in the tool rail at the left edge
 of the window.
 
 The **target** of all tools is the selected Paint layer, or the selected Paint mask layer.

@@ -20,7 +20,8 @@ separate [high-poly mesh](#high-poly-mesh) when one is set.
 | Height | 1 | `[0, 1]`, 0.5 = on the low-poly surface, 1 = Frontal distance above it, 0 = Rear distance below (see [How texels are baked](#how-texels-are-baked)) | only | Mesh Map node |
 
 Position and World Normal always describe the low-poly surface, because that's the surface
-painting projects onto. **Normal** and **Height** need a high-poly mesh; without one they stay
+painting projects onto. Low-poly triangles [excluded from baking](bake-exclusion.md) are left out
+of every map, so stacked UV islands are baked from one copy. **Normal** and **Height** need a high-poly mesh; without one they stay
 **Missing**.
 
 ## Bake settings

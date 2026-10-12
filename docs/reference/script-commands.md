@@ -131,6 +131,21 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `geo-fill-brush <point> <point>...` | Fill every element the brush circle touches along the points, as a Geo Fill Brush stroke does. |
 | `geo-fill-box <point> <point>` | Fill every element inside the rectangle between two corners, as a Geo Fill Box does. |
 
+### Bake exclusion
+
+[Bake exclusion](bake-exclusion.md). Points are screen points, as for `stroke`, in the 3D or the
+UV view; what a pick selects follows `fill-by`. `add` adds to the selection instead of replacing
+it.
+
+| Command | Description |
+|---|---|
+| `bake-select [add] <point>` | Select the element under a point. |
+| `bake-select-brush [add] <point> <point>...` | Select every element the brush circle touches along the points. |
+| `bake-select-box [add] <point> <point>` | Select every element inside the rectangle between two corners. |
+| `bake-exclude`, `bake-include` | Exclude or include the selected triangles. |
+| `bake-source` | Make the selected islands the bake sources of their stacks. Fails if none is stacked. |
+| `bake-clear` | Include every triangle and clear the bake sources. |
+
 ### Curves
 
 [Curves](curves.md) of the selected layer or mask layer. Curve indices count from 0 at the bottom
@@ -181,6 +196,8 @@ For tests; each fails the script when its condition does not hold.
 | `expect-error <command...>` | The command fails. |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
 | `expect-curves <count>` | The selected layer or mask layer holds this many curves. |
+| `expect-excluded <count>` | This many triangles are excluded from baking. |
+| `expect-stacks <count>` | The mesh has this many [stacks](bake-exclusion.md#stacks). |
 | `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |
 | `expect-transfer <true\|false> [max percent]` | Whether the last reimport transferred paint, and, if given, that at most this percent of the new UV area found no old surface. |
 | `expect-library <folder> <name>...` | The Library lists exactly these items, in this order, for that library folder (e.g. `environments`). |

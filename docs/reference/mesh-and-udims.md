@@ -70,6 +70,8 @@ udim = 1001 + floor(u) + 10 * floor(v)
   paint texels are kept where they are in UV space even when UVs changed. Paint in tiles the new
   mesh no longer uses is then kept on disk but not displayed.
 - Mesh maps are marked out of date and must be rebaked.
+- [Bake exclusion](bake-exclusion.md#saving-and-reimport) is kept if the triangles and UVs are
+  unchanged, and cleared otherwise.
 - The undo history is cleared.
 
 See [About keeping paint when UVs change](../explanation/about-paint-transfer.md) for why paint
