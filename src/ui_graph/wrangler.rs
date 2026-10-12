@@ -167,11 +167,25 @@ pub fn merge(g: &mut Graph, layer: Option<LayerRef>, nodes: &[NodeId], op: Merge
         return None;
     }
     let all_float = types.iter().all(|t| *t == SocketType::Float);
+    // Vectors (with floats) are coordinates, not colors: Vector Math, and no mix.
+    let vector = types.contains(&SocketType::Vector) && !types.contains(&SocketType::Color);
+    if vector && op == MergeOp::Mix {
+        return None;
+    }
     let use_math = (all_float && op != MergeOp::Mix) || op.blend().is_none();
     let mut prev = SocketRef { node: nodes[0], name: main(g, nodes[0]).0 };
     let mut last = None;
     for (i, n) in nodes.iter().enumerate().skip(1) {
-        let m = if use_math {
+        let m = if vector {
+            let m = g.add("vector_math");
+            let name = match op {
+                MergeOp::Min => "Minimum",
+                MergeOp::Max => "Maximum",
+                _ => op.math().unwrap_or("Add"),
+            };
+            g.set(m, "op", Value::Text(name.into()));
+            m
+        } else if use_math {
             let m = g.add("math");
             g.set(m, "op", Value::Text(op.math().unwrap_or("Add").into()));
             m
@@ -184,7 +198,13 @@ pub fn merge(g: &mut Graph, layer: Option<LayerRef>, nodes: &[NodeId], op: Merge
         connect(g, layer, &prev, &SocketRef { node: m, name: "a".into() });
         connect(g, layer, &SocketRef { node: *n, name: main(g, *n).0 }, &SocketRef { node: m, name: "b".into() });
         // Float merges continue from the Merge node's float output.
-        let out = if !use_math && all_float { "float" } else { "out" };
+        let out = if vector {
+            "vector"
+        } else if !use_math && all_float {
+            "float"
+        } else {
+            "out"
+        };
         prev = SocketRef { node: m, name: out.into() };
         last = Some(m);
     }
@@ -564,6 +584,18 @@ mod tests {
         assert_eq!(g.node(first).ty, "merge");
         assert_eq!(out, "float");
         assert_eq!(link(&g, last, "b"), Some((ns[2], "out".into())));
+    }
+
+    #[test]
+    fn merge_vectors_uses_vector_math() {
+        let mut g = Graph::new();
+        let (a, b) = (g.add("uv_transform"), g.add("uv_transform"));
+        g.node_mut(b).pos = [0.0, 100.0];
+        let m = merge(&mut g, None, &[a, b], MergeOp::Max).unwrap();
+        assert_eq!((g.node(m).ty.as_str(), g.node(m).param("op").as_str()), ("vector_math", "Maximum"));
+        assert_eq!(link(&g, m, "a"), Some((a, "vector".into())));
+        assert_eq!(link(&g, m, "b"), Some((b, "vector".into())));
+        assert!(merge(&mut g, None, &[a, b], MergeOp::Mix).is_none(), "no mix for coordinates");
     }
 
     #[test]

@@ -256,7 +256,8 @@ result. Needs at least two nodes.
 | Selected outputs | Mix | Add, Subtract, Multiply, Min, Max | Divide |
 |---|---|---|---|
 | All Float | Merge nodes (Normal), chained through their Float output | Math nodes | Math nodes |
-| Any Color or Vector | Merge nodes (Normal) | Merge nodes (Add, Subtract, Multiply, Darken, Lighten) | Math nodes |
+| Any Color | Merge nodes (Normal) | Merge nodes (Add, Subtract, Multiply, Darken, Lighten) | Math nodes |
+| Vector, or Vector and Float (no Color) | — | Vector Math nodes (Add, Subtract, Multiply, Minimum, Maximum) | Vector Math nodes (Divide) |
 | All Material | A new Stack with each as a layer; the topmost node is the top layer | — | — |
 | Material and others | — | — | — |
 

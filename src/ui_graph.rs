@@ -165,6 +165,9 @@ pub struct NodeEditor {
     tab_pressed: bool,
     /// Screen area of the canvas last frame.
     canvas_rect: Rect,
+    /// The frames' members at the end of last frame: when they change elsewhere (undo, nodes
+    /// deleted), frame ids in the selection may point at other frames and are dropped.
+    frames_seen: Vec<BTreeSet<NodeId>>,
 }
 
 impl Default for NodeEditor {
@@ -189,6 +192,7 @@ impl Default for NodeEditor {
             frame_needed: false,
             tab_pressed: false,
             canvas_rect: Rect::NOTHING,
+            frames_seen: Vec::new(),
         }
     }
 }
@@ -480,6 +484,15 @@ fn shown_from(g: &Graph, start: NodeId, out: &mut BTreeSet<NodeId>) {
             }
         }
     }
+}
+
+/// Deletes frames by index (not their nodes).
+fn remove_frames(g: &mut Graph, frames: &BTreeSet<usize>) {
+    let mut i = 0;
+    g.frames.retain(|_| {
+        i += 1;
+        !frames.contains(&(i - 1))
+    });
 }
 
 /// Moves a node or a layer group (the sink isn't stored).
@@ -782,7 +795,10 @@ impl NodeEditor {
         if !self.open || ctx.text_edit_focused() || self.has_popup() {
             return;
         }
-        let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| self.canvas_rect.contains(p));
+        // Not under a dropdown, menu or window over the canvas: those keep their keys.
+        let pos = ctx.input(|i| i.pointer.hover_pos());
+        let covered = pos.and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.order != egui::Order::Background);
+        let over = pos.is_some_and(|p| self.canvas_rect.contains(p)) && !covered && !egui::Popup::is_any_open(ctx);
         if over && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
             ctx.memory_mut(|m| {
                 m.move_focus(egui::FocusDirection::None);
@@ -1145,6 +1161,15 @@ impl NodeEditor {
     fn canvas(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         let rect = ui.available_rect_before_wrap();
         self.canvas_rect = rect;
+        if !p.graph.frames.iter().map(|f| &f.nodes).eq(self.frames_seen.iter()) {
+            self.selected.retain(|n| frame_of(*n).is_none());
+            self.primary = self.primary.filter(|n| frame_of(*n).is_none());
+        }
+        self.canvas_inner(ui, gpu, p, rect);
+        self.frames_seen = p.graph.frames.iter().map(|f| f.nodes.clone()).collect();
+    }
+
+    fn canvas_inner(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, rect: Rect) {
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, crate::ui_theme::BG_CANVAS);
@@ -1477,7 +1502,7 @@ impl NodeEditor {
                         let mut moving: BTreeSet<NodeId> = self.selected.iter().copied().filter(|n| *n != SINK && frame_of(*n).is_none()).collect();
                         for i in self.selected.iter().filter_map(|n| frame_of(*n)) {
                             if let Some(f) = p.graph.frames.get(i) {
-                                moving.extend(f.nodes.iter().copied());
+                                moving.extend(f.nodes.iter().copied().filter(|n| all.contains(n)));
                             }
                         }
                         for n in moving {
@@ -1607,7 +1632,6 @@ impl NodeEditor {
             self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
         }
         if keys && del {
-            self.delete_frames(p);
             let root = p.graph.root;
             let doomed: Vec<NodeId> = self
                 .selected
@@ -1615,8 +1639,10 @@ impl NodeEditor {
                 .copied()
                 .filter(|n| !is_virtual(*n) && *n != root && p.graph.get(*n).is_some_and(|x| x.ty != "material_output"))
                 .collect();
-            if !doomed.is_empty() {
+            let frames = self.take_selected_frames();
+            if !doomed.is_empty() || !frames.is_empty() {
                 p.edit(gpu, "Delete nodes", |g| {
+                    remove_frames(g, &frames);
                     for n in &doomed {
                         g.remove(*n);
                     }
@@ -1928,12 +1954,13 @@ impl NodeEditor {
                 }
             }
             Op::Dissolve => {
-                self.delete_frames(p);
                 let root = p.graph.root;
                 let doomed: Vec<NodeId> =
                     sel.into_iter().filter(|n| *n != root && p.graph.node(*n).ty != "material_output").collect();
-                if !doomed.is_empty() {
+                let frames = self.take_selected_frames();
+                if !doomed.is_empty() || !frames.is_empty() {
                     p.edit(gpu, "Dissolve nodes", |g| {
+                        remove_frames(g, &frames);
                         for n in &doomed {
                             wrangler::dissolve(g, layer, *n);
                         }
@@ -2031,24 +2058,26 @@ impl NodeEditor {
             Op::Frame => {
                 let nodes: BTreeSet<NodeId> = sel.iter().copied().filter(|n| p.graph.get(*n).is_some()).collect();
                 if !nodes.is_empty() {
-                    p.checkpoint("Frame nodes");
-                    for f in &mut p.graph.frames {
-                        f.nodes.retain(|n| !nodes.contains(n));
-                    }
-                    p.graph.frames.retain(|f| !f.nodes.is_empty());
-                    p.graph.frames.push(graph::Frame { label: "Frame".into(), nodes });
-                    let f = frame_id(p.graph.frames.len() - 1);
+                    let f = p.edit(gpu, "Frame nodes", |g| {
+                        for f in &mut g.frames {
+                            f.nodes.retain(|n| !nodes.contains(n));
+                        }
+                        g.prune_frames();
+                        g.frames.push(graph::Frame { label: "Frame".into(), nodes });
+                        frame_id(g.frames.len() - 1)
+                    });
                     self.selected = BTreeSet::from([f]);
                     self.primary = Some(f);
                 }
             }
             Op::Unframe => {
                 if p.graph.frames.iter().any(|f| sel.iter().any(|n| f.nodes.contains(n))) {
-                    p.checkpoint("Remove from frame");
-                    for f in &mut p.graph.frames {
-                        f.nodes.retain(|n| !sel.contains(n));
-                    }
-                    p.graph.frames.retain(|f| !f.nodes.is_empty());
+                    p.edit(gpu, "Remove from frame", |g| {
+                        for f in &mut g.frames {
+                            f.nodes.retain(|n| !sel.contains(n));
+                        }
+                        g.prune_frames();
+                    });
                     // Frame indices changed.
                     self.selected.retain(|n| frame_of(*n).is_none());
                     self.primary = self.primary.filter(|n| frame_of(*n).is_none());
@@ -2089,20 +2118,12 @@ impl NodeEditor {
         out
     }
 
-    /// Deletes the selected frames (not their nodes).
-    fn delete_frames(&mut self, p: &mut Project) {
-        let doomed: BTreeSet<usize> = self.selected.iter().filter_map(|n| frame_of(*n)).filter(|i| *i < p.graph.frames.len()).collect();
-        if doomed.is_empty() {
-            return;
-        }
-        p.checkpoint("Delete frames");
-        let mut i = 0;
-        p.graph.frames.retain(|_| {
-            i += 1;
-            !doomed.contains(&(i - 1))
-        });
+    /// Takes the selected frames out of the selection, for deleting them with `remove_frames`.
+    fn take_selected_frames(&mut self) -> BTreeSet<usize> {
+        let frames: BTreeSet<usize> = self.selected.iter().filter_map(|n| frame_of(*n)).collect();
         self.selected.retain(|n| frame_of(*n).is_none());
         self.primary = self.primary.filter(|n| frame_of(*n).is_none());
+        frames
     }
 
     /// Puts reroutes on the links crossed by a Shift+right-drag stroke: one per output, at the
@@ -2429,8 +2450,7 @@ impl NodeEditor {
                 let mut label = old.clone();
                 let edit = egui::TextEdit::singleline(&mut label).desired_width(f32::INFINITY).min_size(Vec2::new(0.0, t::H_CONTROL)).vertical_align(egui::Align::Center);
                 if ui.add(edit).lost_focus() && label != old {
-                    p.checkpoint("Rename frame");
-                    p.graph.frames[i].label = label;
+                    p.edit(gpu, "Rename frame", |g| g.frames[i].label = label);
                 }
             });
             return;
@@ -2652,15 +2672,7 @@ fn segment_intersection(p1: Pos2, p2: Pos2, q1: Pos2, q2: Pos2) -> Option<Pos2> 
 
 /// Whether segments p1-p2 and q1-q2 intersect.
 fn segments_cross(p1: Pos2, p2: Pos2, q1: Pos2, q2: Pos2) -> bool {
-    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
-    let (r, s) = (p2 - p1, q2 - q1);
-    let d = cross(r, s);
-    if d.abs() < 1e-6 {
-        return false;
-    }
-    let t = cross(q1 - p1, s) / d;
-    let u = cross(q1 - p1, r) / d;
-    (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
+    segment_intersection(p1, p2, q1, q2).is_some()
 }
 
 fn draw_link(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) {
