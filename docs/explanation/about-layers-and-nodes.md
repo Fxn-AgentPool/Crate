@@ -37,6 +37,23 @@ visible, and pressing `G` opens what's inside.
 This keeps the Layers panel trustworthy. What you see in it is the whole truth about the stack,
 even if some rows are summaries.
 
+## Why the Node Editor shows layers as groups
+
+The whole graph of a real project is mostly layer contents and masks, each a small island of
+nodes feeding the root Stack. Drawn node by node, the islands overlap, and arranging one layer's
+nodes means moving another's out of the way. Showing only the selected layer avoids the mess but
+hides how the layers relate.
+
+So in the Node Editor every layer of a Stack is one **layer group**: a single node with the
+layer's content and mask as outputs, much like a node group in Blender. The whole graph then
+shows exactly the stack's structure, which can be arranged freely, and double-clicking a group
+opens the layer to edit its nodes.
+
+Unlike Blender's node groups, a layer group isn't something stored in the graph: it's how the
+editor draws a Stack slot. The data model stays the one described above, a Stack node with
+slots, so the Layers panel, the Node Editor and the file format can't disagree. Only the group's
+position is saved, with the slot.
+
 ## Why layers are multi-channel
 
 In Crate, as in Substance Painter, one layer carries every channel at once: color, roughness,

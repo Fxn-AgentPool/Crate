@@ -14,8 +14,13 @@ the nodes themselves, see [Nodes](nodes.md).
 
 | View | Shows |
 |---|---|
-| Layer | The selected layer's content and mask subgraphs, plus a **Layer** node whose **Content** and **Mask** inputs are the layer's. Header: **NODE EDITOR / <layer>**, with a **Whole graph** button. |
-| Whole project | Everything that feeds the Material Output. Header: **NODE EDITOR / Whole project**, with a **Selected layer** button when a layer is selected. Shown when no layer is selected, and when the viewed layer is deleted. |
+| Whole graph | Everything that feeds the Material Output, with each layer of a Stack shown as one [layer group](#layer-groups). Shown when no layer is selected, and when the viewed layer is deleted. |
+| Selected layer | The selected layer's content and mask subgraphs, plus a **Layer** node whose **Content** and **Mask** inputs are the layer's. The layers of a Stack in it (a Group layer's layers) are shown as layer groups. Follows the selection in the Layers panel: selecting another layer shows that layer; clearing the selection switches to **Whole graph**. |
+
+The header shows **NODE EDITOR**, then a segmented control with the two views, **Whole graph**
+and **Selected layer**; the current view is lighter. Click the other one to switch. **Selected
+layer** is disabled while no layer is selected. In the Selected layer view, the layer's name
+follows the control.
 
 The right end of the header shows the most used inputs as keycaps: `Tab` **Add**,
 `Ctrl+Shift+Click` **Preview**, `Ctrl+RMB` **Cut links**. **?** **All shortcuts** lists every
@@ -30,31 +35,37 @@ shortcuts. `Ctrl+Space`, undo, redo, save, new, open and export still work.
 
 ## Nodes
 
-From top to bottom, a node shows:
+Nodes are 200 points wide. From top to bottom, a node shows:
 
 | Part | Contents |
 |---|---|
-| Header | Collapse arrow (▾ expanded, ▸ collapsed), the node's title, and **cached** when the node is cached. |
+| Header | Filled with the node's [category color](nodes.md#categories). Collapse arrow (▾ expanded, ▸ collapsed), the node's title, and **cached** when the node is cached. |
 | Outputs | One row per output socket, on the right edge. |
-| Parameters | One row per parameter, edited in place (see below). |
-| Inputs | One row per input socket, on the left edge. |
+| Parameters | The parameters that don't belong to an input, edited in place (see below). |
+| Inputs | One row per input socket, on the left edge. An input with a value of its own (like Math's **B**) shows that value's field on its row while nothing is connected to it. |
 
-The **Layer** node has no parameters and can't be collapsed.
+Every row is 26 points high at 100 % zoom, and its controls are the ones of the Properties panel
+(see [Controls](windows-and-panels.md#controls)), 24 points high, scaled with the zoom. A Vector
+parameter takes four rows; every other parameter takes one.
+
+The **Layer** node has no parameters and can't be collapsed. Its header uses the Output color.
 
 ### Parameters
 
-Every parameter takes one row:
-
 | Parameter kind | On the node |
 |---|---|
-| Number | A field showing the name and the value. Drag sideways to change it, or click to type a value. Values are clamped to the parameter's range. |
-| Color | The name and a swatch; click the swatch to pick a color (see [Color picker](windows-and-panels.md#color-picker)). |
-| Vector | The name and three number fields. |
+| Number | A field with the name inside on the left and the value on the right. Drag sideways to change it, or click to type a value. Values are clamped to the parameter's range; a field whose range spans at most 2 shows how far into its range the value is as a blue fill. |
+| Color | The name, and a swatch filling the right half of the row; click the swatch to pick a color (see [Color picker](windows-and-panels.md#color-picker)). |
+| Vector | The name on a row of its own, then one number field per row for **X**, **Y** and **Z**. |
 | On/off | A checkbox with the name. |
-| Choice | A dropdown showing the current option. |
-| Image | A button with the image name, or **(none)**; click to choose a file. |
+| Choice | A dropdown across the row, showing the current option. |
+| Image | A button across the row with the image name, or **(none)**; click to choose a file. |
 | Ramp stops | A bar showing the gradient; click it to edit the stops (position, color, **×** to remove, **+ Stop** to add, up to 8). |
 | ID colors | A button showing how many IDs are selected; click it for the list of IDs, each with a checkbox. |
+
+An input's own value takes the input's rows: a number field after the socket on the same row, or
+for a Vector value, the input's name on its row and the X, Y and Z fields on the three rows below.
+While a link is connected, the field isn't shown and only the name remains.
 
 Each change is one undo step; dragging a field is one step from press to release. Clicking a
 parameter selects its node and makes it the active node, but doesn't move the node or start a
@@ -77,6 +88,32 @@ of a collapsed node, or pick one up from its input end, expand it first.
 
 Collapsing changes nothing but the node's size. It's saved with the project (see
 [Project format](project-format.md#graph)) and is one undo step.
+
+## Layer groups
+
+In both views, each layer of a Stack is drawn as one **layer group** node instead of the nodes
+behind it, so the whole graph shows the layer structure and nothing else:
+
+| Part | Contents |
+|---|---|
+| Header | Filled with the group color, slate `#3B5959`. The layer's name, and an open button on the right. |
+| Outputs | **Content** (Material) when the layer has content, and **Mask** (Float) when it has a mask, linked to the Stack's inputs for that layer. |
+
+The nodes of a layer's content and mask are inside its group, including nodes another layer
+reads too. Links between nodes of different layers show only while one of the layers is open.
+
+| Input | Result |
+|---|---|
+| Double-click a group, or click its open button | Selects the layer in the Layers panel and shows it in the **Selected layer** view. |
+| Left-drag a group | Moves it, with the rest of the selection. |
+| Click, `Shift`+click, box select, `A` | Select groups like nodes. |
+
+Groups are placed like new nodes the first time they're shown; after that they stay where they
+were moved. Their positions are saved with the project (see
+[Project format](project-format.md#graph)), and moving them is one undo step. Groups can't be
+collapsed, previewed, copied, duplicated, dissolved or deleted in the editor; the operations below
+and the alignments skip them. Links can't be dragged out of a group's outputs, and the Stack
+inputs fed by a group can't be picked up: change layers in the Layers panel, or open the layer.
 
 ## Mouse
 
@@ -107,7 +144,7 @@ red when not.
 
 | Input | Operation |
 |---|---|
-| `Tab` | Add menu at the pointer. |
+| `Tab` | Add menu at the pointer, also right after clicking or dragging a field on a node. Only while typing in a text field does `Tab` go to the text field instead. Over the Node Editor, `Tab` never moves the keyboard focus between controls. |
 | `Delete` | Delete the selected nodes. |
 | `Ctrl+X` | Dissolve the selected nodes. |
 | `Alt+X` | Delete unused nodes. |
@@ -139,8 +176,11 @@ node menu.
 
 ## Add menu
 
-A search field and the node catalog by category. Typing filters by name; `Enter` adds the first
-match; `Esc` or a click outside closes the menu.
+A search field, then the node catalog by [category](nodes.md#categories), in the order of the
+categories table: each category's name in small capitals after a square of its color, and its
+nodes below. Typing filters by name; `Enter` adds the first match; `Esc` or a click outside
+closes the menu. The new node is placed with its header's top-left corner at the point where
+the menu was opened, selected, and stays visible until connected.
 
 ## Preview
 
@@ -216,8 +256,9 @@ copied nodes, `Ctrl+V` does nothing.
 
 ## Properties sidebar
 
-Shows the active node's settings: label, **Cached**, **Ungroup** for generators, and the list of
-its parameters with a pin each. Click a pin to expose the parameter on the layer (see
+Shows the active node's settings, laid out like the Properties panel: the node's title, then
+**Label** (a text field), **Cached** (a toggle), **Ungroup** for generators, and the list of its
+parameters with a pin each. Click a pin to expose the parameter on the layer (see
 [How to edit a layer as a node graph](../how-to/edit-a-layer-as-a-graph.md#expose-parameters-on-the-layer)).
 Parameter values are edited on the node. With several nodes selected, it shows the count and
 the active node.

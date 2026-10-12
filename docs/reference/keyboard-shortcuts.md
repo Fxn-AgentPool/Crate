@@ -90,6 +90,7 @@ gestures and what each operation does, is in [Node Editor](node-editor.md).
 | Action | Input |
 |---|---|
 | Add node | `Tab`, or right-click empty space |
+| Open a layer group | Double-click it |
 | Node menu | Right-click a node |
 | Box select / pan | Left-drag empty space / right-drag or `Alt` + left-drag |
 | Preview node output | `Ctrl+Shift` + click |

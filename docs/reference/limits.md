@@ -31,6 +31,7 @@ longer to scan and thumbnail.
 | Channels | The 7 built-in channels. Custom channels are not supported. |
 | Stencils | 8 per project |
 | Layers | No fixed limit. Bounded by memory. |
+| Layer groups in the Node Editor | Layers up to the 4096th of a Stack, in Stacks with a node id below 524 288. The nodes of other layers are shown ungrouped. |
 | Undo history | 64 steps or 2 GB of page data, whichever comes first (configurable) |
 | Paint layers | Each painted layer holds its full tiles on the GPU: 40 bytes per texel (about 168 MB per 2048² tile). |
 

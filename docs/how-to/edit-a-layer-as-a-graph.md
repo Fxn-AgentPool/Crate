@@ -11,7 +11,8 @@ panel can't express.
 3. To close the Node Editor, press `Esc` or `Ctrl+Space`.
 
 To see the whole project graph instead, press `Ctrl+Space` with no layer selected, or click
-**Whole graph** in the Node Editor's header. **Selected layer** switches back.
+**Whole graph** in the Node Editor's header. **Selected layer** switches back. While **Selected
+layer** is on, the editor follows the layer you select in the Layers panel.
 
 ## Add and connect nodes
 
@@ -43,6 +44,28 @@ To see the whole project graph instead, press `Ctrl+Space` with no layer selecte
 
 New nodes, including those added from the Layers panel, are placed next to the node that reads
 them.
+
+## Arrange the layers of the whole graph
+
+In the **Whole graph** view each layer is one layer group node, with its content and mask
+outputs linked to its Stack.
+
+1. Click **Whole graph** in the Node Editor's header.
+2. Drag the layer groups where you want them. Their positions are saved with the project.
+3. To edit a layer's nodes, double-click its group (or click the open button in its header). The
+   layer is selected and shown in the **Selected layer** view.
+
+## Tile or move a texture with UVs
+
+1. Add a **UV** node and a **UV Transform** node (`Tab`, then type the name).
+2. Connect **UV** to the UV Transform's **Vector** input, and the UV Transform's output to the
+   **Vector** input of an Image, Noise or Cellular node.
+3. Set **Tile U** and **Tile V** to repeat the texture, **Rotation** to turn it about the tile's
+   center, and **Offset U** and **Offset V** to move it.
+
+For 3D transforms (for example to rotate a noise in object space), use **Geometry** →
+**Mapping** instead. To build or take apart vectors, use **Combine XYZ**, **Separate XYZ** and
+**Vector Math**. See [Nodes](../reference/nodes.md#vector).
 
 ## Reuse one result in several places
 

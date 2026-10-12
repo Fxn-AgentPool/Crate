@@ -59,7 +59,8 @@ UTF-8 JSON. Top-level keys:
 Node ids are unique within the project and never reused. `collapsed` is the node's state in the
 Node Editor; it's left out when `false`. Stack nodes also carry their `slots`
 (the layers: name, visibility, opacity, `content` and `mask` node ids, per-channel blend
-settings) and Mask Stack nodes their `mask_slots`.
+settings, and `node_pos`, the position of the layer's [group](node-editor.md#layer-groups) in
+the Node Editor, `[0, 0]` until it's first placed) and Mask Stack nodes their `mask_slots`.
 
 ## Paint pages
 
