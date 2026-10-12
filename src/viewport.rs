@@ -207,6 +207,30 @@ struct Targets {
 pub struct Overlay<'a> {
     pub borders: Option<(&'a wgpu::Buffer, u32)>,
     pub highlight: Option<(&'a wgpu::Buffer, u32)>,
+    /// Bake exclusion display: `TintVertex` triangles (vertex count) and `TintEdge` outlines
+    /// (edge count).
+    pub tint_tris: Option<(&'a wgpu::Buffer, u32)>,
+    pub tint_lines: Option<(&'a wgpu::Buffer, u32)>,
+}
+
+/// An outline edge of the bake exclusion display: its two ends (3D and UV) and its color.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TintEdge {
+    pub a_pos: [f32; 3],
+    pub a_uv: [f32; 2],
+    pub b_pos: [f32; 3],
+    pub b_uv: [f32; 2],
+    pub color: [f32; 4],
+}
+
+/// A vertex of the bake exclusion display: where it is in 3D and in the UV view, and its color.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TintVertex {
+    pub pos: [f32; 3],
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
 }
 
 pub struct Viewport {
@@ -220,6 +244,8 @@ pub struct Viewport {
     /// Geo Fill outlines and highlight.
     border_pipeline: Option<wgpu::RenderPipeline>,
     highlight_pipeline: Option<wgpu::RenderPipeline>,
+    tint_tri_pipeline: Option<wgpu::RenderPipeline>,
+    tint_line_pipeline: Option<wgpu::RenderPipeline>,
     /// UV view: the space between islands (docs/reference/2d-paint.md#display).
     gaps_pipeline: Option<wgpu::RenderPipeline>,
     frame_bind: Option<wgpu::BindGroup>,
@@ -335,6 +361,8 @@ impl Viewport {
             line_pipeline: None,
             border_pipeline: None,
             highlight_pipeline: None,
+            tint_tri_pipeline: None,
+            tint_line_pipeline: None,
             gaps_pipeline: None,
             frame_bind: None,
             targets: None,
@@ -502,6 +530,67 @@ impl Viewport {
                 cache: None,
             })
         };
+        let tint = |label: &str, topology| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_tint"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<TintVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x4],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState { topology, cull_mode: None, ..Default::default() },
+                depth_stencil: depth(false, wgpu::CompareFunction::LessEqual),
+                multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_tint"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let tint_tri_pipeline = tint("bake exclusion tint", wgpu::PrimitiveTopology::TriangleList);
+        let tint_line_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bake exclusion outlines"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_edge"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<TintEdge>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x3, 3 => Float32x2, 4 => Float32x4],
+                })],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: depth(false, wgpu::CompareFunction::LessEqual),
+            multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_tint"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let line_pipeline = overlay("viewport wireframe", wgpu::PrimitiveTopology::LineList, "fs_line");
         let border_pipeline = overlay("geo fill outlines", wgpu::PrimitiveTopology::LineList, "fs_border");
         let highlight_pipeline = overlay("geo fill highlight", wgpu::PrimitiveTopology::TriangleList, "fs_highlight");
@@ -528,6 +617,8 @@ impl Viewport {
         self.line_pipeline = Some(line_pipeline);
         self.border_pipeline = Some(border_pipeline);
         self.highlight_pipeline = Some(highlight_pipeline);
+        self.tint_tri_pipeline = Some(tint_tri_pipeline);
+        self.tint_line_pipeline = Some(tint_line_pipeline);
         self.gaps_pipeline = Some(gaps_pipeline);
         self.material_code = code.to_owned();
         Ok(true)
@@ -679,6 +770,13 @@ impl Viewport {
                     pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
                 }
+                if let Some((buffer, count)) = overlay.tint_tris {
+                    pass.set_pipeline(self.tint_tri_pipeline.as_ref().unwrap());
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..count, 0..1);
+                }
+                // The tints replaced the vertex buffer.
+                pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
                 if let Some((buffer, count)) = overlay.highlight {
                     pass.set_pipeline(self.highlight_pipeline.as_ref().unwrap());
                     pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -688,6 +786,12 @@ impl Viewport {
                     pass.set_pipeline(self.border_pipeline.as_ref().unwrap());
                     pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..count, 0, 0..1);
+                }
+                // Bake source outlines last, over the outlines along the same edges.
+                if let Some((buffer, count)) = overlay.tint_lines {
+                    pass.set_pipeline(self.tint_line_pipeline.as_ref().unwrap());
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, 0..count);
                 }
             }
         }

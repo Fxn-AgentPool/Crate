@@ -1,0 +1,94 @@
+# Bake exclusion (docs/reference/bake-exclusion.md) on tests/data/geo_stack.obj: six unit quads
+# in a row (see make_geo.py). Q0-Q2 are bolts stacked on one UV island, Q3-Q4 planks stacked on
+# another, Q5 a lone island. At camera 0 0 3 and size 600x200 their centers are at
+# x = 0.126, 0.275, 0.425, 0.575, 0.725, 0.874.
+new tests/data/geo_stack.obj 1024
+size 600x200
+expect-stacks 2
+expect-excluded 0
+fill-by island
+view position
+
+# The Position map shows which copy a stacked texel was baked from.
+uv-view 0.2 0.2 4
+render target/tests/bake_exclusion/stacked_none.png
+
+# Make Q2 the bolts' bake source: Q0 and Q1 are excluded.
+camera 0 0 3
+bake-select 0.425,0.5
+bake-source
+expect-excluded 4
+uv-view 0.2 0.2 4
+render target/tests/bake_exclusion/source_q2.png
+
+# Q0 instead: the texels move to Q0's surface.
+camera 0 0 3
+bake-select 0.126,0.5
+bake-source
+expect-excluded 4
+uv-view 0.2 0.2 4
+render target/tests/bake_exclusion/source_q0.png
+expect-different target/tests/bake_exclusion/source_q2.png target/tests/bake_exclusion/source_q0.png 20
+
+# One undo step: back to Q2.
+undo
+expect-excluded 4
+render target/tests/bake_exclusion/undone.png
+expect-same target/tests/bake_exclusion/source_q2.png target/tests/bake_exclusion/undone.png 0
+redo
+
+# A plank and the lone quad selected: only the plank's stack has a source.
+camera 0 0 3
+bake-select 0.725,0.5
+bake-select add 0.874,0.5
+bake-source
+expect-excluded 6
+# The lone quad alone isn't stacked.
+bake-select 0.874,0.5
+expect-error bake-source
+
+# Excluding the lone quad: its texels take the nearest island's surface instead.
+uv-view 0.2 0.7 4
+render target/tests/bake_exclusion/lone_before.png
+camera 0 0 3
+bake-select 0.874,0.5
+bake-exclude
+expect-excluded 8
+uv-view 0.2 0.7 4
+render target/tests/bake_exclusion/lone_excluded.png
+expect-different target/tests/bake_exclusion/lone_before.png target/tests/bake_exclusion/lone_excluded.png 20
+bake-include
+expect-excluded 6
+render target/tests/bake_exclusion/lone_included.png
+expect-same target/tests/bake_exclusion/lone_before.png target/tests/bake_exclusion/lone_included.png 0
+
+# Box select in the UV view (the planks' island is at x 0.46..0.62, y 0.74..0.98): every copy
+# on it, then excluded.
+uv-view 0.5 0.5 1.2
+bake-select-box 0.5,0.8 0.58,0.9
+bake-exclude
+expect-excluded 8
+undo
+expect-excluded 6
+# A box over nothing clears the selection, so there is nothing to exclude.
+bake-select-box 0.9,0.9 0.95,0.95
+expect-error bake-exclude
+
+# Ray-traced maps bake with it.
+bake ao
+
+# Saved, and kept on open.
+save target/tests/bake_exclusion/stack.crate
+open target/tests/bake_exclusion/stack.crate
+expect-excluded 6
+view position
+uv-view 0.2 0.2 4
+render target/tests/bake_exclusion/reopened.png
+expect-same target/tests/bake_exclusion/source_q0.png target/tests/bake_exclusion/reopened.png 0
+
+# Reimport: kept for the same triangles and UVs, cleared otherwise.
+reimport tests/data/geo_stack.obj
+expect-excluded 6
+reimport tests/data/geo.obj
+expect-excluded 0
+bake-clear

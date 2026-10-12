@@ -374,3 +374,59 @@ fn fs_border() -> @location(0) vec4f {
 fn fs_highlight() -> @location(0) vec4f {
     return vec4f(1.0, 0.02, 0.02, 0.35);
 }
+
+// Bake exclusion (docs/reference/bake-exclusion.md#display): triangles and lines with their own
+// colors, drawn like the wireframe.
+struct TintIn {
+    @location(0) pos: vec3f,
+    @location(1) uv: vec2f,
+    @location(2) color: vec4f,
+};
+
+struct TintOut {
+    @builtin(position) clip: vec4f,
+    @location(0) color: vec4f,
+};
+
+@vertex
+fn vs_tint(v: TintIn) -> TintOut {
+    var o: TintOut;
+    o.clip = frame.view_proj * placed(v.pos, v.uv);
+    o.clip.z -= 3e-4 * o.clip.w;
+    o.color = v.color;
+    return o;
+}
+
+@fragment
+fn fs_tint(i: TintOut) -> @location(0) vec4f {
+    return i.color;
+}
+
+// Bake source outlines: each edge an instance, drawn as a quad 6 pixels wide on screen.
+struct EdgeIn {
+    @location(0) a_pos: vec3f,
+    @location(1) a_uv: vec2f,
+    @location(2) b_pos: vec3f,
+    @location(3) b_uv: vec2f,
+    @location(4) color: vec4f,
+};
+
+@vertex
+fn vs_edge(@builtin(vertex_index) i: u32, e: EdgeIn) -> TintOut {
+    var ca = frame.view_proj * placed(e.a_pos, e.a_uv);
+    var cb = frame.view_proj * placed(e.b_pos, e.b_uv);
+    let size = frame.viewport.xy;
+    let sa = ca.xy / max(ca.w, 1e-6) * size;
+    let sb = cb.xy / max(cb.w, 1e-6) * size;
+    let dir = normalize(select(vec2f(1.0, 0.0), sb - sa, length(sb - sa) > 1e-4));
+    // Corners: (end, side) for two triangles.
+    let ends = array<f32, 6>(0.0, 1.0, 1.0, 0.0, 1.0, 0.0);
+    let sides = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
+    var c = select(ca, cb, ends[i] > 0.5);
+    let offset = vec2f(-dir.y, dir.x) * sides[i] * 3.0 / size * 2.0;
+    c = vec4f(c.xy + offset * c.w, c.z - 3e-4 * c.w, c.w);
+    var o: TintOut;
+    o.clip = c;
+    o.color = e.color;
+    return o;
+}

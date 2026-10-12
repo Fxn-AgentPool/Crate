@@ -90,7 +90,31 @@ pub struct Geo {
     islands: Vec<u32>,
     /// UDIM tile per source triangle (of its UV centroid).
     tiles: Vec<u32>,
+    /// Stacked UV islands, found on first use.
+    stacks: std::cell::OnceCell<Stacks>,
 }
+
+/// Groups of UV islands that share UV space (docs/reference/bake-exclusion.md#stacks).
+#[derive(Debug, Default)]
+pub struct Stacks {
+    /// Stack of each stacked island; islands not in a stack are absent.
+    pub of_island: HashMap<u32, u32>,
+    pub count: usize,
+}
+
+impl Stacks {
+    /// A stack's display color (well-separated hues), in linear RGB.
+    pub fn color(stack: u32) -> [f32; 3] {
+        let hue = (stack as f32 * 0.618034 + 0.05).fract();
+        let k = [1.0, 2.0 / 3.0, 1.0 / 3.0];
+        let c = k.map(|k: f32| (((hue + k).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0));
+        // Toward the middle of the range, so they read on light and dark materials.
+        c.map(|v| 0.15 + 0.85 * v)
+    }
+}
+
+/// Cells per UV unit when measuring how islands overlap.
+const STACK_GRID: f32 = 512.0;
 
 impl Geo {
     pub fn new(mesh: &Mesh) -> Self {
@@ -109,7 +133,7 @@ impl Geo {
                 1001 + u + 10 * v
             })
             .collect();
-        Self { bvh, facing, islands: islands(mesh), tiles }
+        Self { bvh, facing, islands: islands(mesh), tiles, stacks: Default::default() }
     }
 
     /// The frontmost triangle along a ray (either side of it).
@@ -179,6 +203,108 @@ impl Geo {
         let (i, pos, bary) = best?;
         let tri = self.bvh.order[i as usize];
         Some(Hit { tri, pos, normal: normal_at(mesh, tri, bary) })
+    }
+
+    /// The UV island of a triangle.
+    pub fn island(&self, tri: u32) -> u32 {
+        self.islands[tri as usize]
+    }
+
+    /// Stacked UV islands: two islands are stacked when at least half of the smaller one's cells
+    /// (on a grid of 512 per UV unit) are also the other's; stacks are the groups they join.
+    pub fn stacks(&self, mesh: &Mesh) -> &Stacks {
+        self.stacks.get_or_init(|| {
+            let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+            let mut area: HashMap<u32, u32> = HashMap::new();
+            let uv_of = |i: u32| Vec2::from(mesh.vertices[i as usize].uv) * STACK_GRID;
+            for (t, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+                let island = self.islands[t];
+                let p = tri.map(uv_of);
+                let den = (p[1].y - p[2].y) * (p[0].x - p[2].x) + (p[2].x - p[1].x) * (p[0].y - p[2].y);
+                if den.abs() < 1e-12 {
+                    continue;
+                }
+                let (lo, hi) = (p[0].min(p[1]).min(p[2]).floor(), p[0].max(p[1]).max(p[2]).ceil());
+                if (hi - lo).x * (hi - lo).y > 4.0e6 {
+                    continue;
+                }
+                for y in lo.y as i32..hi.y as i32 {
+                    for x in lo.x as i32..hi.x as i32 {
+                        let c = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                        let a = ((p[1].y - p[2].y) * (c.x - p[2].x) + (p[2].x - p[1].x) * (c.y - p[2].y)) / den;
+                        let b = ((p[2].y - p[0].y) * (c.x - p[2].x) + (p[0].x - p[2].x) * (c.y - p[2].y)) / den;
+                        if a >= 0.0 && b >= 0.0 && a + b <= 1.0 {
+                            let here = cells.entry((x, y)).or_default();
+                            if !here.contains(&island) {
+                                here.push(island);
+                                *area.entry(island).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut shared: HashMap<(u32, u32), u32> = HashMap::new();
+            for islands in cells.values().filter(|v| v.len() > 1) {
+                for (i, &a) in islands.iter().enumerate() {
+                    for &b in &islands[i + 1..] {
+                        *shared.entry((a.min(b), a.max(b))).or_default() += 1;
+                    }
+                }
+            }
+            // Join stacked pairs.
+            let mut parent: HashMap<u32, u32> = HashMap::new();
+            fn find(parent: &mut HashMap<u32, u32>, x: u32) -> u32 {
+                let p = *parent.entry(x).or_insert(x);
+                if p == x {
+                    return x;
+                }
+                let r = find(parent, p);
+                parent.insert(x, r);
+                r
+            }
+            for (&(a, b), &n) in &shared {
+                if n * 2 >= area[&a].min(area[&b]) {
+                    let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                    parent.insert(ra.max(rb), ra.min(rb));
+                }
+            }
+            // Number stacks in order of their first triangle (islands are numbered that way).
+            let mut members: Vec<u32> = parent.keys().copied().collect();
+            members.sort();
+            let mut ids: HashMap<u32, u32> = HashMap::new();
+            let mut of_island = HashMap::new();
+            for island in members {
+                let root = find(&mut parent, island);
+                let n = ids.len() as u32;
+                of_island.insert(island, *ids.entry(root).or_insert(n));
+            }
+            Stacks { count: ids.len(), of_island }
+        })
+    }
+
+    /// The edges of `island` along its border (other islands or open edges), as vertex pairs.
+    pub fn island_outline(&self, mesh: &Mesh, island: u32) -> Vec<u32> {
+        let corner = |t: usize, k: usize| mesh.indices[t * 3 + k % 3];
+        let key = |i: u32| {
+            let v = &mesh.vertices[i as usize];
+            (v.pos.map(f32::to_bits), v.uv.map(f32::to_bits))
+        };
+        let edge = |t: usize, k: usize| {
+            let (a, b) = (key(corner(t, k)), key(corner(t, k + 1)));
+            if a < b { (a, b) } else { (b, a) }
+        };
+        let tris: Vec<usize> = (0..mesh.indices.len() / 3).filter(|&t| self.islands[t] == island).collect();
+        let mut count: HashMap<_, u32> = HashMap::new();
+        for &t in &tris {
+            for k in 0..3 {
+                *count.entry(edge(t, k)).or_default() += 1;
+            }
+        }
+        tris.iter()
+            .flat_map(|&t| (0..3).map(move |k| (t, k)))
+            .filter(|&(t, k)| count[&edge(t, k)] == 1)
+            .flat_map(|(t, k)| [corner(t, k), corner(t, k + 1)])
+            .collect()
     }
 
     /// The element of kind `by` that triangle `tri` belongs to.
@@ -546,6 +672,46 @@ mod tests {
         assert_eq!(g.triangles(&m, g.element(&m, FillBy::Face, 1)), vec![1]);
         assert_eq!(g.element(&m, FillBy::Tile, 3).id, 1001);
         assert_eq!(g.triangles(&m, g.element(&m, FillBy::Material, 0)).len(), 4);
+    }
+
+    #[test]
+    fn stacks() {
+        // Two copies of a quad on the same UV square, and a third quad elsewhere: one stack.
+        let v = |x: f32, y: f32, u: f32, w: f32| Vertex { pos: [x, y, 0.0], uv: [u, w], ..Default::default() };
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for (x0, u0) in [(0.0, 0.1), (2.0, 0.1), (4.0, 0.6)] {
+            let b = vertices.len() as u32;
+            vertices.extend([v(x0, 0.0, u0, 0.1), v(x0 + 1.0, 0.0, u0 + 0.2, 0.1), v(x0 + 1.0, 1.0, u0 + 0.2, 0.3), v(x0, 1.0, u0, 0.3)]);
+            indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
+        }
+        let m = Mesh {
+            source: Default::default(),
+            vertices,
+            indices,
+            materials: vec!["M".into()],
+            groups: vec!["G".into()],
+            tiles: vec![1001],
+            bbox_min: Vec3::ZERO,
+            bbox_max: Vec3::new(5.0, 1.0, 0.0),
+            diagnostics: Vec::new(),
+        };
+        let g = Geo::new(&m);
+        let s = g.stacks(&m);
+        assert_eq!(s.count, 1);
+        assert_eq!(s.of_island.get(&g.island(0)), Some(&0));
+        assert_eq!(s.of_island.get(&g.island(2)), Some(&0));
+        assert_eq!(s.of_island.get(&g.island(4)), None);
+        assert_eq!(g.island_outline(&m, g.island(0)).len(), 8);
+        // Make the second copy the source: the first is excluded, the lone quad untouched.
+        let mut mask = crate::bakemask::BakeMask::default();
+        assert_eq!(mask.make_sources(&m, &g, &[3].into()), 1);
+        assert_eq!(mask.excluded, vec![true, true, false, false, false, false]);
+        assert_eq!(mask.sources, [3].into());
+        // Excluding the source's island drops the source.
+        mask.set(&m, &g, &[2], true);
+        assert!(mask.sources.is_empty());
+        assert_eq!(mask.make_sources(&m, &g, &[5].into()), 0);
     }
 
     #[test]

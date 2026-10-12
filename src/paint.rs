@@ -37,12 +37,19 @@ pub enum Tool {
     GeoFill,
     /// Draws and edits curves (docs/reference/curves.md).
     Curve,
+    /// Selects geometry to leave out of mesh map baking (docs/reference/bake-exclusion.md).
+    BakeExclude,
 }
 
 impl Tool {
     /// Whether the tool paints strokes through the paint buffer.
     pub fn strokes(self) -> bool {
         matches!(self, Tool::Paint | Tool::Erase | Tool::PaintThrough)
+    }
+
+    /// Whether the tool picks mesh elements with Select and Fill by.
+    pub fn picks(self) -> bool {
+        matches!(self, Tool::GeoFill | Tool::BakeExclude)
     }
 }
 
@@ -928,7 +935,7 @@ impl PaintEngine {
         let tool = match self.tool {
             Tool::Erase => 1,
             Tool::PaintThrough => 2,
-            Tool::Paint | Tool::GeoFill | Tool::Curve => 0,
+            Tool::Paint | Tool::GeoFill | Tool::Curve | Tool::BakeExclude => 0,
         };
         let st = stencil.unwrap_or(StencilSample {
             layer: -1,

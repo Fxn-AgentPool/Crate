@@ -115,7 +115,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 
 | Command | Description |
 |---|---|
-| `tool paint\|erase\|paint-through\|geo-fill\|curve` | Select the tool. |
+| `tool paint\|erase\|paint-through\|geo-fill\|curve\|bake-exclude` | Select the tool. |
 | `mode live\|manual` | Bake mode. |
 | `on-camera-move bake\|clear\|lock` | Manual mode camera policy. |
 | `brush key=value...` | `size`, `hardness`, `flow`, `opacity`, `spacing`, `angle`, `space=screen\|world`, `jitter_size`, `jitter_angle`, `jitter_position`, `jitter_flow`, `alpha=<library item or image>` (library folder `alphas`; `alpha=round` for the round tip). |

@@ -91,6 +91,8 @@ pub struct CrateApp {
     curve_tool: crate::ui_curves::CurveTool,
     /// Size of the 3D pane last frame, in pixels (Copy brush measures Screen sizes there).
     pane3d_size: Option<(u32, u32)>,
+    /// The Bake Exclude tool's display.
+    bake_view: crate::ui_bake::BakeView,
 }
 
 #[derive(Clone)]
@@ -159,6 +161,7 @@ impl CrateApp {
             recent: crate::recent::Recent::load(),
             curve_tool: Default::default(),
             pane3d_size: None,
+            bake_view: Default::default(),
         };
         if let Err(e) = crate::library::ensure_folders() {
             log::warn!("{e:#}");
@@ -307,6 +310,10 @@ impl eframe::App for CrateApp {
             }
             doc.validate_curve_selection();
             self.curve_tool.keys(&self.gpu, doc, ui.ctx());
+            // Esc clears the Bake Exclude selection.
+            if self.paint.tool == Tool::BakeExclude && !ui.ctx().egui_wants_keyboard_input() && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+                crate::ui_bake::clear_selection(doc);
+            }
         }
         self.shortcuts(ui.ctx());
         let ctx = ui.ctx().clone();
@@ -430,6 +437,7 @@ impl CrateApp {
                     A::ToolErase => self.paint.tool = Tool::Erase,
                     A::ToolPaintThrough => self.paint.tool = Tool::PaintThrough,
                     A::ToolGeoFill => self.paint.tool = Tool::GeoFill,
+                    A::ToolBakeExclude => self.paint.tool = Tool::BakeExclude,
                     A::ToolCurve => self.paint.tool = Tool::Curve,
                     A::SofterBrush => self.paint.brush.hardness = (self.paint.brush.hardness - 0.1).max(0.0),
                     A::HarderBrush => self.paint.brush.hardness = (self.paint.brush.hardness + 0.1).min(1.0),
@@ -703,7 +711,9 @@ impl CrateApp {
         if let Some(doc) = self.doc.as_mut() {
             let (bar, rest) = rect.split_top_bottom_at_y(rect.top() + 40.0);
             ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
-                crate::ui_paint::viewport_toolbar(ui, doc, &mut self.paint, &mut self.show_mesh_maps, &mut self.layout);
+                if let Some(m) = crate::ui_paint::viewport_toolbar(ui, &self.gpu, doc, &mut self.paint, &mut self.show_mesh_maps, &mut self.layout) {
+                    self.message = Some((m, ui.input(|i| i.time)));
+                }
             });
             rect = rest;
         }
@@ -720,10 +730,10 @@ impl CrateApp {
             return;
         }
         // The Geo Fill element stays highlighted in both panes while the pointer is over either.
-        if self.paint.tool != Tool::GeoFill {
+        if !self.paint.tool.picks() {
             self.curve_tool.cancel_geo_drag();
         }
-        if self.paint.tool != Tool::GeoFill || self.hovered_pane(ui.ctx()).is_none() {
+        if !self.paint.tool.picks() || self.hovered_pane(ui.ctx()).is_none() {
             self.curve_tool.clear_hover();
         }
         self.pane_rects.clear();
@@ -826,12 +836,14 @@ impl CrateApp {
                 self.message = Some((m, time));
             }
         } else if self.curve_tool.geo_dragging() {
-            // A Geo Fill Brush stroke or Box, filled when the button is released.
+            // A Brush stroke or Box: Geo Fill fills, Bake Exclude selects, when the button is released.
             let view = self.pane_view(pane);
             let doc = self.doc.as_mut().unwrap();
-            let filled = self.curve_tool.geo_drag(gpu, doc, &self.paint, &view, pane as u8, rect, ppp, (w, h), hover, buttons[0]);
-            if let Some(elements) = filled {
-                if let Err(e) = self.paint.fill_elements(gpu, doc, &elements) {
+            let picked = self.curve_tool.geo_drag(gpu, doc, &self.paint, &view, pane as u8, rect, ppp, (w, h), hover, buttons[0]);
+            if let Some(elements) = picked {
+                if self.paint.tool == Tool::BakeExclude {
+                    crate::ui_bake::select(doc, &elements, mods.shift);
+                } else if let Err(e) = self.paint.fill_elements(gpu, doc, &elements) {
                     self.message = Some((e, time));
                 }
             }
@@ -941,11 +953,15 @@ impl CrateApp {
                     self.message = Some((m, time));
                 }
             }
-        } else if tool_click && self.paint.tool == Tool::GeoFill {
+        } else if tool_click && self.paint.tool.picks() {
             if let Some(hp) = hover {
                 let view = self.pane_view(pane);
                 let doc = self.doc.as_mut().unwrap();
-                if self.paint.select == crate::geo::SelectMode::Click {
+                if self.paint.select == crate::geo::SelectMode::Click && self.paint.tool == Tool::BakeExclude {
+                    // Click on nothing clears the selection (docs/reference/bake-exclusion.md#bake-exclude-tool).
+                    let picked = crate::geo::element_at(doc, &view, (w, h), to_px(hp), self.paint.fill_by);
+                    crate::ui_bake::select(doc, &picked.into_iter().collect(), mods.shift);
+                } else if self.paint.select == crate::geo::SelectMode::Click {
                     if let Err(e) = self.paint.geo_fill(gpu, doc, &view, (w, h), to_px(hp)) {
                         self.message = Some((e, time));
                     }
@@ -1031,7 +1047,7 @@ impl CrateApp {
         }
         // Geo Fill's outlines and highlight (docs/reference/brushes-tools-stencils.md#outlines-and-highlight).
         let has_target = doc.selection.and_then(|s| crate::ops::paint_target(&doc.graph, s)).is_some();
-        let geo_fill = self.paint.tool == Tool::GeoFill && has_target;
+        let geo_fill = (self.paint.tool == Tool::GeoFill && has_target) || self.paint.tool == Tool::BakeExclude;
         if geo_fill && hover.is_some_and(|h| rect.contains(h)) && !mods.alt {
             self.curve_tool.update_hover(&self.gpu, doc, &self.paint, &view_of, rect, ppp, (w, h), hover);
         }
@@ -1047,7 +1063,11 @@ impl CrateApp {
             }
             *material = doc.material_version;
         }
-        let overlay = if geo_fill { self.curve_tool.overlay(&self.gpu, doc, self.paint.fill_by) } else { Default::default() };
+        let mut overlay = if geo_fill { self.curve_tool.overlay(&self.gpu, doc, self.paint.fill_by) } else { Default::default() };
+        if self.paint.tool == Tool::BakeExclude {
+            self.bake_view.update(&self.gpu, doc);
+            self.bake_view.add_to(&mut overlay);
+        }
         viewport.render(&self.gpu, &view_of, &doc.mesh, &doc.gpu_mesh, doc.scene.bind_group.as_ref().unwrap(), &self.view, &overlay, w, h);
 
         let out = viewport.output_view().unwrap();
@@ -1090,7 +1110,7 @@ impl CrateApp {
         let doc = self.doc.as_ref().unwrap();
         match self.paint.tool {
             Tool::Curve if pane == Pane::ThreeD && has_target => self.curve_tool.draw(ui, doc, &pane3, hover),
-            Tool::GeoFill if has_target && !mods.alt => {
+            Tool::GeoFill | Tool::BakeExclude if (has_target || self.paint.tool == Tool::BakeExclude) && !mods.alt => {
                 if let Some(hp) = hover.filter(|h| rect.contains(*h)) {
                     self.curve_tool.hover_label(ui, rect, hp);
                 }
@@ -1099,7 +1119,7 @@ impl CrateApp {
             _ => {}
         }
         // ⊘: nothing to paint into here (docs/reference/brushes-tools-stencils.md#tools).
-        let blocked = !has_target || (self.paint.tool == Tool::Curve && pane == Pane::Uv);
+        let blocked = (!has_target && self.paint.tool != Tool::BakeExclude) || (self.paint.tool == Tool::Curve && pane == Pane::Uv);
         let r = self.paint.brush.size * 0.5 / ppp;
         let b = &self.paint.brush;
         match (self.brush_gesture, hover) {
@@ -1797,6 +1817,15 @@ impl CrateApp {
             if let Some(pct) = doc.maps.last_misses {
                 w::hint(ui, format!("Missed: {pct:.1}% of texels"));
             }
+            // docs/reference/bake-exclusion.md#mesh-maps-window
+            let (n, sources) = (doc.bake_mask.count(), doc.bake_mask.sources.len());
+            ui.horizontal(|ui| {
+                w::hint(ui, format!("Excluded from baking: {n} triangle{}, {sources} bake source{}", if n == 1 { "" } else { "s" }, if sources == 1 { "" } else { "s" }));
+                let any = n > 0 || sources > 0;
+                if ui.add_enabled(any && !baking, w::ghost("Clear")).on_hover_text("Include every triangle and clear the bake sources").clicked() {
+                    let _ = crate::ui_bake::clear(&self.gpu, doc);
+                }
+            });
         });
         Section::new("High poly").id_salt("mesh maps high poly").show(ui, |ui| {
             let before = (doc.maps.settings, doc.maps.high_poly.clone());

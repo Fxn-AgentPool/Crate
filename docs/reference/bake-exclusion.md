@@ -42,7 +42,8 @@ view. The viewport toolbar shows:
 | Click on nothing | Clears it. |
 | `Esc` | Clears it. |
 
-Each Exclude, Include and Make bake source is one undo step. The selection is not saved and not
+Each Exclude, Include and Make bake source is one undo step. While mesh maps are baking, they
+show **Wait for the mesh map bake to finish.** instead. The selection is not saved and not
 part of undo.
 
 ### Display

@@ -401,7 +401,7 @@ impl CurveTool {
 
     /// What Geo Fill draws over the mesh: the outlines of `by` and the element under the pointer.
     pub fn overlay<'a>(&'a self, gpu: &Gpu, p: &'a Project, by: crate::geo::FillBy) -> crate::viewport::Overlay<'a> {
-        crate::viewport::Overlay { borders: Some(p.borders(gpu, by)), highlight: self.hover.as_ref().map(|h| (&h.buffer, h.count)) }
+        crate::viewport::Overlay { borders: Some(p.borders(gpu, by)), highlight: self.hover.as_ref().map(|h| (&h.buffer, h.count)), ..Default::default() }
     }
 
     /// The name of the element under the pointer, next to it.

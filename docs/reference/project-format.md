@@ -40,7 +40,7 @@ UTF-8 JSON. Top-level keys:
 | `viewport` | object | `layout` (`"3d"`, `"split"` or `"uv"`, default `"3d"`; see [UV view](uv-view.md#layouts)), `uvView` (`center`: UDIM U and V at the view's center, `zoom`: tile height in view heights, `gaps`: the **Gaps** toggle, default `true`; omitted until the UV view has been shown), camera, `exposure`, `view_transform` (script name, e.g. `"agx"`; see [Color management](color-management.md)), environment rotation, environment file and `ambient_occlusion` (boolean, default `true`; see [Viewport lighting](viewport-lighting.md#ambient-occlusion)). |
 | `export` | object | Last-used export settings. See [Export](export.md). |
 | `stencils` | object | Loaded stencils (image name, transform, display and Paint Through settings) and the active one. |
-| `meshMaps` | object | Bake settings, the list of baked maps, and `highPoly`: the high-poly mesh's path (absolute), if one is set. The high-poly file is not copied into the project. [Bake exclusion](bake-exclusion.md): `excluded`, the excluded triangles as `[first, count]` ranges of triangle indices, and `bakeSources`, one triangle index per bake source's island; both left out when empty. |
+| `meshMaps` | object | Bake settings, the list of baked maps, `outOfDate`: the baked maps that are out of date (left out when none), and `highPoly`: the high-poly mesh's path (absolute), if one is set. The high-poly file is not copied into the project. [Bake exclusion](bake-exclusion.md): `excluded`, the excluded triangles as `[first, count]` ranges of triangle indices, and `bakeSources`, one triangle index per bake source's island; both left out when empty. |
 | `images` | array of string | Images in `images/`. |
 
 ### `graph`

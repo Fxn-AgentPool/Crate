@@ -1,4 +1,5 @@
 mod app;
+mod bakemask;
 mod bakepreview;
 mod bakeview;
 mod bvh;
@@ -33,6 +34,7 @@ mod stencil;
 mod thumbs;
 mod transfer;
 mod ui_library;
+mod ui_bake;
 mod ui_bake_preview;
 mod ui_curves;
 mod ui_export;

@@ -19,6 +19,8 @@ pub struct UndoStep {
     pub selection: Option<Selection>,
     /// Page contents to restore for paint steps.
     pub paint: Option<crate::paint::PaintPages>,
+    /// Bake exclusion to restore, for steps that changed it.
+    pub bake: Option<crate::bakemask::BakeMask>,
 }
 
 /// A paint node's curve slot.
@@ -88,6 +90,13 @@ pub struct Project {
     pub curve_slots: std::collections::BTreeMap<crate::graph::NodeId, CurveSlot>,
     /// The curve being edited with the Curve tool (UI state; not saved, not part of undo).
     pub curve_sel: Option<crate::curve::CurveSelection>,
+    /// Triangles excluded from mesh map baking, and the bake sources
+    /// (docs/reference/bake-exclusion.md).
+    pub bake_mask: crate::bakemask::BakeMask,
+    /// The Bake Exclude tool's selection, as triangles (UI state; not saved, not part of undo).
+    pub bake_sel: std::collections::BTreeSet<u32>,
+    /// Incremented when `bake_mask` or `bake_sel` changes, for the viewport display.
+    pub bake_version: u64,
     curve_gpu: crate::curve::CurveGpu,
     /// Geometry queries on the mesh, built on first use.
     geo: std::cell::OnceCell<crate::geo::Geo>,
@@ -154,6 +163,9 @@ impl Project {
             mask_slots: Default::default(),
             curve_slots: Default::default(),
             curve_sel: None,
+            bake_mask: Default::default(),
+            bake_sel: Default::default(),
+            bake_version: 0,
             curve_gpu: crate::curve::CurveGpu::new(gpu),
             geo: Default::default(),
             borders: Default::default(),
@@ -305,7 +317,11 @@ impl Project {
     /// Pushes an undo step, then drops the oldest steps beyond `undo_limit` steps or
     /// `undo_bytes` of paint pages.
     fn push_undo(&mut self, label: &str, paint: Option<crate::paint::PaintPages>) {
-        self.undo.push(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint });
+        self.push_step(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint, bake: None });
+    }
+
+    fn push_step(&mut self, step: UndoStep) {
+        self.undo.push(step);
         let size = |s: &UndoStep| s.paint.as_ref().map_or(0, |p| p.data.iter().map(Vec::len).sum::<usize>());
         let mut bytes: usize = self.undo.iter().map(size).sum();
         while self.undo.len() > self.undo_limit || (bytes > self.undo_bytes && self.undo.len() > 1) {
@@ -325,14 +341,24 @@ impl Project {
             crate::paint::write_pages(gpu, &planes, &saved.pages, &saved.data);
             crate::paint::PaintPages { mask: saved.mask, pages: saved.pages, data: current }
         });
+        let bake = step.bake.map(|saved| std::mem::replace(&mut self.bake_mask, saved));
+        let restore_bake = bake.is_some();
         let reverse = UndoStep {
             label: step.label,
             graph: std::mem::replace(&mut self.graph, step.graph),
             selection: self.selection,
             paint,
+            bake,
         };
         self.selection = step.selection;
         self.validate_selection();
+        if restore_bake {
+            // Rebaking Position and World Normal can't run inside another bake.
+            if self.bake_job.is_some() {
+                self.finish_background_work(gpu);
+            }
+            self.apply_bake_mask(gpu);
+        }
         self.graph_changed(gpu);
         reverse
     }
@@ -416,6 +442,11 @@ impl Project {
         let mut maps = MeshMaps::new(gpu, &mesh, res);
         maps.settings = self.maps.settings;
         maps.high_poly = self.maps.high_poly.clone();
+        // Bake exclusion is kept for the same triangles and UVs (docs/reference/bake-exclusion.md#saving-and-reimport).
+        let keep_mask = crate::transfer::same_uvs(&self.mesh, &mesh);
+        if keep_mask {
+            maps.set_excluded(gpu, &mesh, &self.bake_mask.excluded);
+        }
         maps.bake_blocking(gpu, &gpu_mesh, res, &[MeshMap::Position, MeshMap::WorldNormal]);
         let transfer = transfer && !crate::transfer::same_uvs(&self.mesh, &mesh);
         let mut report = crate::transfer::Report::default();
@@ -531,6 +562,12 @@ impl Project {
         self.geo = Default::default();
         self.borders = Default::default();
         self.mesh_version += 1;
+        self.bake_sel.clear();
+        if !keep_mask && self.bake_mask != Default::default() {
+            self.bake_mask = Default::default();
+            report.bake_cleared = true;
+        }
+        self.bake_version += 1;
         // Undo steps hold texels of the old pools.
         self.clear_history();
         self.edit_version += 1;
@@ -552,6 +589,39 @@ impl Project {
     /// Geometry queries on the mesh, built on first use.
     pub fn geo(&self) -> &crate::geo::Geo {
         self.geo.get_or_init(|| crate::geo::Geo::new(&self.mesh))
+    }
+
+    /// Changes the bake exclusion, as one undo step (docs/reference/bake-exclusion.md).
+    pub fn set_bake_mask(&mut self, gpu: &Gpu, label: &str, mask: crate::bakemask::BakeMask) -> Result<(), String> {
+        if self.bake_job.is_some() {
+            return Err("Wait for the mesh map bake to finish.".into());
+        }
+        if mask == self.bake_mask {
+            return Ok(());
+        }
+        let previous = std::mem::replace(&mut self.bake_mask, mask);
+        self.push_step(UndoStep { label: label.into(), graph: self.graph.clone(), selection: self.selection, paint: None, bake: Some(previous) });
+        self.apply_bake_mask(gpu);
+        self.graph_changed(gpu);
+        Ok(())
+    }
+
+    /// Bakes Position and World Normal again without the excluded triangles; the other baked
+    /// maps become out of date.
+    pub fn apply_bake_mask(&mut self, gpu: &Gpu) {
+        self.maps.set_excluded(gpu, &self.mesh, &self.bake_mask.excluded);
+        self.maps.bake_blocking(gpu, &self.gpu_mesh, self.tile_resolution(), &[MeshMap::Position, MeshMap::WorldNormal]);
+        // The other maps were baked with the old exclusion.
+        for m in MeshMap::ALL {
+            if !matches!(m, MeshMap::Position | MeshMap::WorldNormal) && self.maps.status(m) == crate::meshmaps::MapStatus::UpToDate {
+                self.maps.mark_out_of_date(m);
+            }
+        }
+        self.saved_maps.remove(&MeshMap::Position);
+        self.saved_maps.remove(&MeshMap::WorldNormal);
+        self.bake_version += 1;
+        self.paint_epoch += 1;
+        self.update_scene(gpu);
     }
 
     /// Geo Fill's outlines for `by`: vertex index pairs and their count

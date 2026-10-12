@@ -347,6 +347,8 @@ pub struct MeshMaps {
     pub source: MapTexture,
     pub status: [MapStatus; 8],
     baked_with: [Option<BakeSettings>; 8],
+    /// Out of date whatever the settings: the mesh or the bake exclusion changed since the bake.
+    stale: [bool; 8],
     pub settings: BakeSettings,
     /// The high-poly mesh to bake from.
     pub high_poly: Option<PathBuf>,
@@ -365,6 +367,9 @@ pub struct MeshMaps {
     pub report: Option<Result<String, String>>,
     /// Incremented whenever any map's contents change.
     pub version: u64,
+    /// The triangles the UV raster draws when some are excluded from baking
+    /// (docs/reference/bake-exclusion.md), and their index count.
+    raster_indices: Option<(wgpu::Buffer, u32)>,
 
     bvh_nodes: wgpu::Buffer,
     bvh_tris: wgpu::Buffer,
@@ -496,6 +501,7 @@ impl MeshMaps {
             source: MapTexture::new(gpu, "map source", SRC_FORMAT, res, layers),
             status: [MapStatus::Missing; 8],
             baked_with: [None; 8],
+            stale: [false; 8],
             settings,
             high_poly: None,
             low_groups: mesh.groups.clone(),
@@ -505,6 +511,7 @@ impl MeshMaps {
             id_names: Vec::new(),
             report: None,
             version: 0,
+            raster_indices: None,
             bvh_nodes,
             bvh_tris,
             bbox_min: mesh.bbox_min,
@@ -564,6 +571,22 @@ impl MeshMaps {
         }
     }
 
+    /// Leaves the triangles flagged in `excluded` out of the UV raster (an empty slice: none).
+    pub fn set_excluded(&mut self, gpu: &Gpu, mesh: &crate::mesh::Mesh, excluded: &[bool]) {
+        if !excluded.iter().any(|e| *e) {
+            self.raster_indices = None;
+            return;
+        }
+        let indices: Vec<u32> = mesh.indices.chunks(3).zip(excluded).filter(|(_, e)| !**e).flat_map(|(t, _)| t.iter().copied()).collect();
+        let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("raster indices"),
+            // A buffer can't be empty.
+            contents: bytemuck::cast_slice(if indices.is_empty() { &[0u32; 3] } else { &indices[..] }),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        self.raster_indices = Some((buffer, indices.len() as u32));
+    }
+
     /// A map's texture and its bytes per texel.
     pub fn texture(&self, map: MeshMap) -> (&wgpu::Texture, u32) {
         match map {
@@ -601,7 +624,7 @@ impl MeshMaps {
     pub fn refresh_status(&mut self) {
         for map in MeshMap::ALL {
             if let Some(old) = &self.baked_with[map.index()] {
-                self.status[map.index()] = if self.settings.affects(old, map) {
+                self.status[map.index()] = if self.stale[map.index()] || self.settings.affects(old, map) {
                     MapStatus::OutOfDate
                 } else {
                     MapStatus::UpToDate
@@ -614,6 +637,7 @@ impl MeshMaps {
     pub fn mark_baked(&mut self, map: MeshMap) {
         self.status[map.index()] = MapStatus::UpToDate;
         self.baked_with[map.index()] = Some(self.settings);
+        self.stale[map.index()] = false;
         self.version += 1;
     }
 
@@ -621,6 +645,7 @@ impl MeshMaps {
     pub fn mark_out_of_date(&mut self, map: MeshMap) {
         self.status[map.index()] = MapStatus::OutOfDate;
         self.baked_with[map.index()] = Some(self.settings);
+        self.stale[map.index()] = true;
     }
 
     /// Advances the bake preview; doesn't block (see `bakepreview::Preview::update`).
@@ -832,6 +857,7 @@ impl MeshMaps {
                 if job.maps.contains(&m) {
                     self.status[m.index()] = MapStatus::UpToDate;
                     self.baked_with[m.index()] = Some(job.settings);
+                    self.stale[m.index()] = false;
                 }
             }
             self.report = Some(Err(e));
@@ -840,6 +866,7 @@ impl MeshMaps {
         for &m in &job.maps {
             self.status[m.index()] = MapStatus::UpToDate;
             self.baked_with[m.index()] = Some(job.settings);
+            self.stale[m.index()] = false;
         }
         if job.maps.contains(&MeshMap::Id) {
             self.id_names = match &job.high {
@@ -929,8 +956,19 @@ impl MeshMaps {
             pass.set_pipeline(&self.raster_pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            // Excluded triangles write no texels; rays still meet them (the BVH has every one).
+            match &self.raster_indices {
+                Some((buffer, count)) => {
+                    if *count > 0 {
+                        pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..*count, 0, 0..1);
+                    }
+                }
+                None => {
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
+            }
         }
         enc.copy_texture_to_texture(
             tan_tex.as_image_copy(),

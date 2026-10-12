@@ -27,6 +27,7 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
             (Tool::PaintThrough, "Paint Through", Action::ToolPaintThrough),
             (Tool::GeoFill, "Geo Fill", Action::ToolGeoFill),
             (Tool::Curve, "Curve", Action::ToolCurve),
+            (Tool::BakeExclude, "Bake Exclude", Action::ToolBakeExclude),
         ];
         for (tool, name, action) in tools {
             let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
@@ -45,6 +46,7 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
                 Tool::PaintThrough => Icon::Stencil,
                 Tool::GeoFill => Icon::GeoFill,
                 Tool::Curve => Icon::Curve,
+                Tool::BakeExclude => Icon::BakeExclude,
             };
             icons::paint(p, icon, rect.shrink(8.0), color);
             if resp.on_hover_text(format!("{name}  {}", format(&bindings.get(action)))).clicked() {
@@ -124,14 +126,16 @@ pub fn brush_cursor(ui: &egui::Ui, gpu: &Gpu, p: &Project, brush: &Brush, previe
 
 /// The strip above the viewport: Size, Flow and Hardness, and Bake Mesh Maps on the right.
 /// `mesh_maps` is whether the Mesh Maps window is open.
-pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine, mesh_maps: &mut bool, layout: &mut crate::camera::Layout) {
+/// Returns a message for the status bar.
+pub fn viewport_toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut PaintEngine, mesh_maps: &mut bool, layout: &mut crate::camera::Layout) -> Option<String> {
+    let mut message = None;
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, t::BG_PANEL);
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
     let inner = rect.shrink2(vec2(t::PANEL_PAD, 0.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
     ui.spacing_mut().item_spacing.x = 6.0;
-    if paint.tool == Tool::GeoFill {
+    if paint.tool.picks() {
         // Geo Fill uses none of the three: what a click fills instead
         // (docs/reference/brushes-tools-stencils.md#geo-fill).
         use crate::geo::{FillBy, SelectMode};
@@ -163,6 +167,10 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine,
             ui.add_space(8.0);
             ui.add(Field::new(&mut paint.brush.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
         }
+        if paint.tool == Tool::BakeExclude {
+            ui.add_space(8.0);
+            message = crate::ui_bake::toolbar_actions(&mut ui, gpu, p);
+        }
     } else {
         let b = &mut paint.brush;
         ui.add(Field::new(&mut b.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
@@ -188,6 +196,7 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine,
         let options = [(Layout::ThreeD, "3D"), (Layout::Split, "Split"), (Layout::Uv, "UV")];
         crate::ui_widgets::segmented_width(ui, layout, &options, 150.0).on_hover_text("3D (F2), Split (F1) or UV view (F3)");
     });
+    message
 }
 
 /// "Bake Mesh Maps" with Blender's UV project icon; highlighted while the window is open, with

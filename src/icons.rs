@@ -46,6 +46,7 @@ pub enum Icon {
     SelectClick,
     SelectCircle,
     SelectBox,
+    BakeExclude,
 }
 
 enum Source {
@@ -94,6 +95,7 @@ impl Icon {
             Icon::SelectClick => Svg(include_bytes!("icons/restrict_select_off.svg")),
             Icon::SelectCircle => Svg(include_bytes!("icons/mesh_circle.svg")),
             Icon::SelectBox => Svg(include_bytes!("icons/select_set.svg")),
+            Icon::BakeExclude => Svg(include_bytes!("icons/restrict_render_off.svg")),
         }
     }
 }

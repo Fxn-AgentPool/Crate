@@ -82,6 +82,14 @@ struct MeshMapsState {
     /// Names of the ID map's colors when it was baked from a high poly.
     #[serde(rename = "idNames", default, skip_serializing_if = "Vec::is_empty")]
     id_names: Vec<String>,
+    /// Baked maps that are out of date.
+    #[serde(rename = "outOfDate", default, skip_serializing_if = "Vec::is_empty")]
+    out_of_date: Vec<MeshMap>,
+    /// Bake exclusion (docs/reference/bake-exclusion.md): excluded triangles as [first, count].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    excluded: Vec<[u32; 2]>,
+    #[serde(rename = "bakeSources", default, skip_serializing_if = "Vec::is_empty")]
+    bake_sources: Vec<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -351,6 +359,9 @@ pub fn save(gpu: &Gpu, p: &mut Project, dir: &Path, viewport: &ViewportState, ex
             baked,
             high_poly: p.maps.high_poly.as_ref().map(|h| h.display().to_string()),
             id_names: p.maps.id_names.clone(),
+            out_of_date: MeshMap::ALL.into_iter().filter(|m| p.maps.status(*m) == MapStatus::OutOfDate).collect(),
+            excluded: p.bake_mask.ranges(),
+            bake_sources: p.bake_mask.sources.iter().copied().collect(),
         },
         images,
         extra: p.file_extra.clone(),
@@ -593,6 +604,17 @@ pub fn load(gpu: &Gpu, dir: &Path) -> Result<Loaded> {
             p.maps.mark_baked(m);
             p.saved_maps.insert(m);
         }
+    }
+    for m in file.mesh_maps.out_of_date {
+        if p.maps.status(m) == MapStatus::UpToDate {
+            p.maps.mark_out_of_date(m);
+        }
+    }
+    // Bake exclusion: Position and World Normal were baked without it on open.
+    p.bake_mask = crate::bakemask::BakeMask::from_ranges(&file.mesh_maps.excluded, &file.mesh_maps.bake_sources, p.mesh.triangle_count());
+    if !p.bake_mask.excluded.is_empty() {
+        p.maps.set_excluded(gpu, &p.mesh, &p.bake_mask.excluded);
+        p.maps.bake_blocking(gpu, &p.gpu_mesh, p.tile_resolution(), &[MeshMap::Position, MeshMap::WorldNormal]);
     }
     // A high-poly file that changed since the bake makes the maps baked from it out of date.
     if p.maps.high_poly.as_ref().is_some_and(|h| h.is_file()) {

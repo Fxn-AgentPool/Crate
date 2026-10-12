@@ -39,6 +39,10 @@ pub struct Report {
     /// 2D paint layers and effects kept in UV space (docs/reference/2d-paint.md#reimport).
     #[serde(skip)]
     pub kept_2d: usize,
+    /// The bake exclusion was cleared, as the triangles or UVs changed
+    /// (docs/reference/bake-exclusion.md#saving-and-reimport).
+    #[serde(skip)]
+    pub bake_cleared: bool,
 }
 
 impl Report {
@@ -46,7 +50,7 @@ impl Report {
     /// old surface)".
     pub fn message(&self) -> Option<String> {
         if !self.transferred {
-            return None;
+            return self.bake_cleared.then(|| "Bake exclusion cleared".to_string());
         }
         let mut msg = if self.missed > 0.0 {
             format!("Paint transferred to the new UVs ({} of the UV area found no old surface)", percent(self.missed))
@@ -56,6 +60,9 @@ impl Report {
         if self.kept_2d > 0 {
             let s = if self.kept_2d == 1 { "" } else { "s" };
             msg += &format!("; {} 2D paint layer{s} kept in UV space", self.kept_2d);
+        }
+        if self.bake_cleared {
+            msg += "; bake exclusion cleared";
         }
         Some(msg)
     }
@@ -228,7 +235,7 @@ pub fn run(gpu: &Gpu, old: &Mesh, new: &Mesh, res: u32, pos: &wgpu::Texture, nrm
         let _ = d.poll(wgpu::PollType::wait_indefinitely());
     }
     let counts = read_counts(gpu, &counts);
-    Report { transferred: true, missed: if counts[0] == 0 { 0.0 } else { counts[1] as f32 * 100.0 / counts[0] as f32 }, kept_2d: 0 }
+    Report { transferred: true, missed: if counts[0] == 0 { 0.0 } else { counts[1] as f32 * 100.0 / counts[0] as f32 }, kept_2d: 0, bake_cleared: false }
 }
 
 fn read_counts(gpu: &Gpu, buf: &wgpu::Buffer) -> [u32; 2] {
@@ -257,17 +264,17 @@ mod tests {
     #[test]
     fn report_message() {
         assert_eq!(Report::default().message(), None);
-        assert_eq!(Report { transferred: true, missed: 0.0, kept_2d: 0 }.message().unwrap(), "Paint transferred to the new UVs");
+        assert_eq!(Report { transferred: true, missed: 0.0, kept_2d: 0, bake_cleared: false }.message().unwrap(), "Paint transferred to the new UVs");
         assert_eq!(
-            Report { transferred: true, missed: 0.0, kept_2d: 2 }.message().unwrap(),
+            Report { transferred: true, missed: 0.0, kept_2d: 2, bake_cleared: false }.message().unwrap(),
             "Paint transferred to the new UVs; 2 2D paint layers kept in UV space"
         );
         assert_eq!(
-            Report { transferred: true, missed: 0.0, kept_2d: 1 }.message().unwrap(),
+            Report { transferred: true, missed: 0.0, kept_2d: 1, bake_cleared: false }.message().unwrap(),
             "Paint transferred to the new UVs; 1 2D paint layer kept in UV space"
         );
         assert_eq!(
-            Report { transferred: true, missed: 2.46, kept_2d: 0 }.message().unwrap(),
+            Report { transferred: true, missed: 2.46, kept_2d: 0, bake_cleared: false }.message().unwrap(),
             "Paint transferred to the new UVs (2.5% of the UV area found no old surface)"
         );
         assert_eq!(percent(0.01), "<0.1%");

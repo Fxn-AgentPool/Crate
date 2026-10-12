@@ -507,7 +507,8 @@ impl Session {
                     Some("paint-through") => Tool::PaintThrough,
                     Some("geo-fill") => Tool::GeoFill,
                     Some("curve") => Tool::Curve,
-                    _ => bail!("tool paint|erase|paint-through|geo-fill|curve"),
+                    Some("bake-exclude") => Tool::BakeExclude,
+                    _ => bail!("tool paint|erase|paint-through|geo-fill|curve|bake-exclude"),
                 };
                 if self.paint.tool != Tool::Curve {
                     if let Some(p) = self.project.as_mut() {
@@ -964,6 +965,56 @@ impl Session {
                     elements.extend(crate::geo::elements_in(p, &view_of, self.size, r, self.paint.fill_by));
                 }
                 self.paint.fill_elements(&gpu, p, &elements).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "bake-select" | "bake-select-brush" | "bake-select-box" => {
+                use crate::geo::Region;
+                let add = rest.first().is_some_and(|a| a == "add");
+                let pts: Vec<Vec2> = rest[add as usize..].iter().map(|a| self.screen_point(a)).collect::<Result<_>>()?;
+                let view_of = self.view_of();
+                let by = self.paint.fill_by;
+                let p = self.project.as_mut().context("no project")?;
+                let mut elements = std::collections::BTreeSet::new();
+                match cmd {
+                    "bake-select" => {
+                        anyhow::ensure!(pts.len() == 1, "bake-select [add] <point>");
+                        elements.extend(crate::geo::element_at(p, &view_of, self.size, pts[0], by));
+                    }
+                    "bake-select-box" => {
+                        anyhow::ensure!(pts.len() == 2, "bake-select-box [add] <point> <point>");
+                        let region = Region::Rect { min: pts[0].min(pts[1]), max: pts[0].max(pts[1]) };
+                        elements = crate::geo::elements_in(p, &view_of, self.size, region, by);
+                    }
+                    _ => {
+                        anyhow::ensure!(!pts.is_empty(), "bake-select-brush [add] <point> <point>...");
+                        let radius = (self.paint.brush.size * 0.5).max(1.0);
+                        let mut centers = vec![pts[0]];
+                        for w in pts.windows(2) {
+                            let steps = ((w[0].distance(w[1]) / (radius * 0.5)).ceil() as usize).clamp(1, 64);
+                            centers.extend((1..=steps).map(|k| w[0].lerp(w[1], k as f32 / steps as f32)));
+                        }
+                        for center in centers {
+                            elements.extend(crate::geo::elements_in(p, &view_of, self.size, Region::Circle { center, radius }, by));
+                        }
+                    }
+                }
+                crate::ui_bake::select(p, &elements, add);
+                say!("  {} triangles selected", p.bake_sel.len());
+            }
+            "bake-exclude" | "bake-include" | "bake-source" | "bake-clear" => {
+                let p = self.project.as_mut().context("no project")?;
+                let r = match cmd {
+                    "bake-exclude" => crate::ui_bake::set_excluded(&gpu, p, true),
+                    "bake-include" => crate::ui_bake::set_excluded(&gpu, p, false),
+                    "bake-source" => crate::ui_bake::make_sources(&gpu, p),
+                    _ => crate::ui_bake::clear(&gpu, p),
+                };
+                r.map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "expect-excluded" | "expect-stacks" => {
+                let want: usize = rest.first().with_context(|| format!("{cmd} <count>"))?.parse()?;
+                let p = self.project.as_ref().context("no project")?;
+                let got = if cmd == "expect-excluded" { p.bake_mask.count() } else { p.geo().stacks(&p.mesh).count };
+                anyhow::ensure!(got == want, "{got}, expected {want}");
             }
             "curve" => {
                 let closed = rest.first().is_some_and(|a| a == "closed");
