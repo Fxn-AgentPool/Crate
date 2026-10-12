@@ -14,7 +14,7 @@ curvature, thickness and ID maps for your low-poly mesh.
 
 ## Bake
 
-1. Open **Window → Mesh Maps**.
+1. Click **Bake Mesh Maps** above the viewport (or choose **Window → Mesh Maps**).
 2. Under **High poly**, click **Browse…** and choose the high-poly file.
 3. Check the maps to bake, including **Normal** and **Height**.
 4. Click **Bake selected**.

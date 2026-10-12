@@ -627,9 +627,8 @@ impl CrateApp {
         let mut rect = ui.available_rect_before_wrap();
         if let Some(doc) = self.doc.as_mut() {
             let (bar, rest) = rect.split_top_bottom_at_y(rect.top() + 40.0);
-            let shortcut = crate::shortcuts::format(&self.bindings.get(crate::shortcuts::Action::ToggleBakeMode));
             ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
-                crate::ui_paint::viewport_toolbar(ui, &self.gpu, doc, &mut self.paint, &shortcut);
+                crate::ui_paint::viewport_toolbar(ui, doc, &mut self.paint, &mut self.show_mesh_maps);
             });
             rect = rest;
         }
@@ -1173,7 +1172,12 @@ impl CrateApp {
         let bare = egui::Frame::side_top_panel(ui.style()).inner_margin(0);
         egui::Panel::right("right").resizable(true).default_size(330.0).frame(bare).show(ui, |ui| {
             let h = ui.available_height();
-            egui::Panel::bottom("properties").resizable(true).default_size(h * 0.5).frame(bare).show(ui, |ui| {
+            // Properties starts at 62% of the column, so more of a Fill layer's settings show
+            // at once. egui sizes a bottom panel to its contents and remembers that size, so the
+            // contents fill the panel: otherwise an empty Properties (nothing selected) shrinks
+            // the panel to its header for good.
+            egui::Panel::bottom("layer properties").resizable(true).default_size(h * 0.62).frame(bare).show(ui, |ui| {
+                ui.set_min_height(ui.available_height());
                 let name = ui_layers::selection_name(doc).unwrap_or_default();
                 crate::ui_layer_list::panel_header(ui, "Properties", |ui| {
                     ui.label(egui::RichText::new(name).color(crate::ui_theme::TEXT_2));

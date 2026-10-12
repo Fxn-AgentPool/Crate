@@ -6,17 +6,17 @@ the viewport.
 | Panel | Default location | Contents |
 |---|---|---|
 | Viewport | center | 3D view of the mesh. Paint buffer and stencils are drawn over it. See [Viewport](#viewport). |
-| Viewport toolbar | above the viewport | The brush's **Size**, **Flow** and **Hardness**, and the bake mode. See [Viewport](#viewport). |
+| Viewport toolbar | above the viewport | The brush's **Size**, **Flow** and **Hardness**, and **Bake Mesh Maps**. See [Viewport](#viewport). |
 | Layers | right | The root stack, or the selected group. The channel menu in its header chooses the channel whose blend mode and opacity the rows show. See [Layers and masks](layers.md). |
 | Properties | right, below Layers | Parameters of the selected layer, mask layer or node. Its header shows the selected layer's or mask layer's name. |
 | Node Editor | bottom (hidden) | The graph of the selected layer, or of the whole project. `Ctrl+Space` toggles it. See [Node Editor](node-editor.md). |
 | Tools | left edge | A column of icons: Paint, Erase and Paint Through. The current tool is highlighted; hover shows its name and shortcut. |
 | Brush | left | Tool and brush properties. See [Brushes, tools and stencils](brushes-tools-stencils.md). |
-| Brush Values | left, below Brush | Per-channel values painted by the brush. |
+| Brush Values | left, below Brush | Per-channel values painted by the brush, laid out like a Fill layer's **Values**: a check that turns the channel on, its name, then its value. |
 | Paint Buffer | left | Bake mode, buffer and projection settings. See [Paint buffer](paint-buffer.md). |
 | Stencils | left | Loaded stencils, the active stencil and its properties. |
 | Library | left, bottom | Project resources and the user library, by category. See [Library](#library). |
-| Mesh Maps | Window menu | Mesh map status and bake settings, with the [bake preview](mesh-maps.md#bake-preview) on the right. See [Mesh maps](mesh-maps.md). |
+| Mesh Maps | **Bake Mesh Maps** in the viewport toolbar, or the Window menu | Mesh map status and bake settings, with the [bake preview](mesh-maps.md#bake-preview) on the right. See [Mesh maps](mesh-maps.md). |
 | Import Log | Window menu | Diagnostics from the last mesh import. |
 | Performance | Window menu | Frame time, shader length, GPU memory use and per-node cache cost. |
 | Channels | Project menu | Enabled channels, default values and height scale. See [Channels](channels.md). |
@@ -33,7 +33,7 @@ The interface follows the rules in [About the interface](../explanation/about-th
 | Toggle | A small switch, blue when on. | Settings that take effect at once, such as **Show buffer**. Click to switch. |
 | Checkbox | A small square, blue with a check when on. | Choosing items of a set, such as the channels a brush paints. |
 | Segmented control | A row of options in one box; the chosen one is lighter. | One choice of a few, such as **Bake mode** or **Resolution scale**. |
-| Section header | Small capitals with a ▸ or ▾, above a thin line. | Click to fold or unfold the section. Some show a summary or an action on the right. |
+| Section header | Small capitals with a ▸ or ▾, below a line that runs the full width of the panel. | Click to fold or unfold the section. Some show a summary or an action on the right. |
 | Keycap | A shortcut in Geist Mono on a dark chip, like `Ctrl B`. | Shows a keyboard shortcut. |
 | Tag | A small colored label in Geist Mono: green **cached**, amber **dirty**. | Shows a state. |
 | Color swatch | A box filled with the color. | Click to open the color picker. See below. |
@@ -131,12 +131,16 @@ when an image is added.
 | Item | Double-click | Drag | Right-click |
 |---|---|---|---|
 | Mesh map | Adds it as a mask effect (a Mesh Map node) on the selected layer. | Onto the Node Editor: adds a Mesh Map node. | **Add to mask of selected layer**, **Show in viewport**. |
-| Smart material | Adds it above the selected layer. | Onto the Layers panel: adds it there. | **Add to layers**. |
+| Smart material | Adds it above the selected layer. | Onto the Layers panel: adds it there. | **Add to layers**, **Delete**. |
 | Procedural preset | — | Onto the Node Editor: adds its node. | — |
-| Texture | Imports it into the project's images (it then appears in **Images**). | Onto the Node Editor: imports it and adds an Image node using it. | **Import into project**. |
-| Alpha | Sets it as the brush alpha. | — | **Use as brush alpha**. |
-| Stencil, or image in another folder | Loads it as a stencil. | — | **Load as stencil**. |
-| Environment | Loads it as the viewport environment. | — | **Load environment**. |
+| Texture | Imports it into the project's images (it then appears in **Images**). | Onto the Node Editor: imports it and adds an Image node using it. | **Import into project**, **Delete**. |
+| Alpha | Sets it as the brush alpha. | — | **Use as brush alpha**, **Delete**. |
+| Stencil, or image in another folder | Loads it as a stencil. | — | **Load as stencil**, **Delete**. |
+| Environment | Loads it as the viewport environment. | — | **Load environment**, **Delete**. |
+| File in a reserved folder | — | — | **Delete**. |
+
+**Delete** moves the file to the system's trash (the Recycle Bin on Windows), so it can be restored
+from there. Project items (mesh maps, images) and the procedural presets can't be deleted.
 
 The Library is shown only while a project is open.
 
@@ -144,7 +148,7 @@ The Library is shown only while a project is open.
 
 | Part | Where | Contents |
 |---|---|---|
-| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, the bake mode (**Live** with a green dot, or **Manual**); clicking it switches the mode, like `Ctrl+Shift+B`. |
+| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, **Bake Mesh Maps** opens or closes the [Mesh Maps](mesh-maps.md) window; it is highlighted while the window is open, and an amber dot shows while a map that can be baked is missing or out of date. The bake mode is in the [Paint Buffer](paint-buffer.md) section and the status bar; `Ctrl+Shift+B` switches it. |
 | Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. Hidden while the viewport is too narrow for it. |
 
 ## Menus

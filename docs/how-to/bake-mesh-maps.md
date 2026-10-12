@@ -8,7 +8,7 @@ must be baked by you. To bake them, and a Normal and Height map, from a detailed
 
 ## Bake
 
-1. Open **Window → Mesh Maps**.
+1. Click **Bake Mesh Maps** above the viewport (or choose **Window → Mesh Maps**).
 2. Check the maps to bake. Maps marked **Missing** or **Out of date** are pre-checked.
 3. Click **Bake selected**.
 

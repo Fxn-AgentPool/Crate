@@ -2,7 +2,7 @@
 //! category per library folder. See docs/reference/windows-and-panels.md "Library".
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use egui::{Align2, Color32, FontId, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
@@ -295,7 +295,7 @@ impl Library {
                 })
                 .response;
             let hint = match status {
-                MapStatus::Missing => "Not baked yet: bake it in Window > Mesh Maps.\n",
+                MapStatus::Missing => "Not baked yet: bake it with Bake Mesh Maps, above the viewport.\n",
                 MapStatus::OutOfDate => "Out of date: rebake to match the current settings.\n",
                 MapStatus::UpToDate => "",
             };
@@ -342,7 +342,7 @@ impl Library {
             no_matches(ui);
             return (None, refresh);
         }
-        let mut chosen = None;
+        let (mut chosen, mut deleted) = (None, false);
         tile_grid(ui, self.tile, 1, shown.len(), |ui, i, size| {
             let (it, tex) = &items[shown[i]];
             let resp = ui
@@ -364,9 +364,10 @@ impl Library {
                     chosen = Some(it.path.clone());
                     ui.close();
                 }
+                deleted |= delete_item(ui, &it.path);
             });
         });
-        (chosen.map(LibraryAction::InsertSmartMaterial), refresh)
+        (chosen.map(LibraryAction::InsertSmartMaterial), refresh || deleted)
     }
 
     /// Any library folder other than smart materials. Returns the action and whether Refresh
@@ -413,23 +414,28 @@ impl Library {
             Kind::Environments => Some(("Load environment", LibraryAction::LoadEnvironment)),
             Kind::SmartMaterials | Kind::Reserved => None,
         };
-        let mut action = None;
+        let (mut action, mut deleted) = (None, false);
         let mut item_ui = |resp: Response, it: &library::Item| {
             let file = it.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-            let Some((label, make)) = use_item else {
-                resp.on_hover_text(file);
-                return;
-            };
-            let drag = if kind == Kind::Textures { "\nDrag onto the Node Editor: add an Image node" } else { "" };
-            let resp = resp.on_hover_text(format!("{file}\nDouble-click: {}{drag}", label.to_lowercase()));
-            if resp.double_clicked() {
-                action = Some(make(it.path.clone()));
-            }
-            resp.context_menu(|ui| {
-                if ui.button(label).clicked() {
-                    action = Some(make(it.path.clone()));
-                    ui.close();
+            let resp = match use_item {
+                Some((label, make)) => {
+                    let drag = if kind == Kind::Textures { "\nDrag onto the Node Editor: add an Image node" } else { "" };
+                    let resp = resp.on_hover_text(format!("{file}\nDouble-click: {}{drag}", label.to_lowercase()));
+                    if resp.double_clicked() {
+                        action = Some(make(it.path.clone()));
+                    }
+                    resp
                 }
+                None => resp.on_hover_text(file),
+            };
+            resp.context_menu(|ui| {
+                if let Some((label, make)) = use_item {
+                    if ui.button(label).clicked() {
+                        action = Some(make(it.path.clone()));
+                        ui.close();
+                    }
+                }
+                deleted |= delete_item(ui, &it.path);
             });
         };
         if tile_kind.is_some() {
@@ -463,7 +469,24 @@ impl Library {
                 item_ui(list_row(ui, &it.name), it);
             }
         }
-        (action, refresh)
+        (action, refresh || deleted)
+    }
+}
+
+/// The context menu's Delete entry, below a separator: moves `path` to the system's trash.
+/// Returns whether it was deleted, so the folder is scanned again.
+fn delete_item(ui: &mut Ui, path: &Path) -> bool {
+    ui.separator();
+    if !ui.button("Delete").on_hover_text("Move the file to the trash").clicked() {
+        return false;
+    }
+    ui.close();
+    match library::delete(path) {
+        Ok(()) => true,
+        Err(e) => {
+            log::error!("{e:#}");
+            false
+        }
     }
 }
 

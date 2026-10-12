@@ -51,5 +51,5 @@ jitter while you drag. Both fonts are embedded in the application under the SIL 
 License 1.1.
 
 Everything sits on a 4-point grid: controls are 24 points high, rows 26 and section headers 32.
-Section headers are small capitals separated by thin lines, so a long panel reads as a list of
+Section headers are small capitals separated by lines across the whole panel, so a long panel reads as a list of
 sections instead of a staircase of indentation.

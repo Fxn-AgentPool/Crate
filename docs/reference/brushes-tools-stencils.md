@@ -35,7 +35,9 @@ If neither is selected, painting is disabled and the cursor shows ⊘.
 
 ## Brush values
 
-The brush carries one value per channel. In the **Brush Values** panel each channel is either:
+The brush carries one value per channel. The **Brush Values** panel has a row per enabled project
+channel, laid out like a Fill layer's **Values**: a check, the channel's name, then its value (a
+color, a number, or X, Y and Z for Normal). The check sets whether the channel is:
 
 | State | Effect |
 |---|---|

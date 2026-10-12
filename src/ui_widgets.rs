@@ -626,8 +626,13 @@ impl Section {
         if response.clicked() {
             state.toggle(ui);
         }
+        // The line above runs through the surrounding padding to the panel's edges, so it gets
+        // a painter clipped wider than this Ui.
+        let clip = ui.clip_rect();
+        let wide = Rect::from_x_y_ranges(clip.x_range().expand(t::PANEL_PAD), clip.y_range());
+        let line = rect.x_range().expand(t::PANEL_PAD);
+        ui.ctx().layer_painter(ui.layer_id()).with_clip_rect(wide).hline(line, rect.min.y + 1.0, Stroke::new(2.0, t::BORDER_STRONG));
         let p = ui.painter();
-        p.hline(rect.x_range(), rect.min.y + 0.5, Stroke::new(1.0, t::DIVIDER));
         let open = state.openness(ui.ctx());
         let c = egui::pos2(rect.min.x + 4.0, rect.center().y);
         let tri = if open > 0.5 {

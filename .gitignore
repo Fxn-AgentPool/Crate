@@ -12,3 +12,6 @@
 # Python bytecode (Blender add-on tests)
 __pycache__/
 *.pyc
+
+# Third-party sources kept locally (Blender icon set)
+/third_party/

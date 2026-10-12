@@ -1970,7 +1970,7 @@ pub fn id_editor(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId) {
     let names = if p.maps.id_names.is_empty() { p.mesh.materials.clone() } else { p.maps.id_names.clone() };
     ui.label(if p.maps.id_names.is_empty() { "Selected IDs (mesh materials)" } else { "Selected IDs (high-poly materials)" });
     if p.maps.status(crate::meshmaps::MeshMap::Id) == crate::meshmaps::MapStatus::Missing {
-        ui.label(egui::RichText::new("Bake the ID map (Window → Mesh Maps) for this to have an effect.").weak().small());
+        ui.label(egui::RichText::new("Bake the ID map (Bake Mesh Maps, above the viewport) for this to have an effect.").weak().small());
     }
     let mut new = colors.clone();
     let same = |x: &[f32; 3], c: &[f32; 3]| (x[0] - c[0]).abs() + (x[1] - c[1]).abs() + (x[2] - c[2]).abs() < 1e-3;

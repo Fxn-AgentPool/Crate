@@ -6,6 +6,7 @@ use egui::{Color32, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 use crate::channels::Channel;
 use crate::gpu::Gpu;
 use crate::icons::{self, Icon};
+use crate::meshmaps::{MapStatus, MeshMap};
 use crate::paint::{BakeMode, Brush, OnCameraMove, PaintEngine, SizeSpace, Tool};
 use crate::project::Project;
 use crate::ui_theme as t;
@@ -113,8 +114,9 @@ pub fn brush_cursor(ui: &egui::Ui, gpu: &Gpu, p: &Project, brush: &Brush, previe
     painter.circle_stroke(center, radius + 1.0, Stroke::new(1.0, Color32::from_black_alpha(120)));
 }
 
-/// The strip above the viewport: Size, Flow and Hardness, and the bake mode on the right.
-pub fn viewport_toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &mut PaintEngine, bake_shortcut: &str) {
+/// The strip above the viewport: Size, Flow and Hardness, and Bake Mesh Maps on the right.
+/// `mesh_maps` is whether the Mesh Maps window is open.
+pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine, mesh_maps: &mut bool) {
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, t::BG_PANEL);
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
@@ -129,29 +131,39 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, paint: &m
     }
     ui.add(Field::new(&mut b.hardness, 0.0..=1.0).label("Hardness").decimals(2).width(128.0));
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let live = paint.mode == BakeMode::Live;
-        if bake_mode_pill(ui, live).on_hover_text(format!("Switch to {} ({bake_shortcut})", if live { "Manual" } else { "Live" })).clicked() {
-            paint.set_mode(gpu, p, if live { BakeMode::Manual } else { BakeMode::Live });
+        // Maps that need a high poly don't count without one: they can't be baked.
+        let possible = |m: &MeshMap| !m.needs_high() || p.maps.high_poly.is_some();
+        let outdated = MeshMap::ALL.into_iter().filter(|m| possible(m) && p.maps.status(*m) != MapStatus::UpToDate).count();
+        let hint = match outdated {
+            0 => "Open the Mesh Maps window: all maps are baked".to_string(),
+            n => format!("Open the Mesh Maps window: {n} maps not baked or out of date"),
+        };
+        if bake_button(ui, *mesh_maps, outdated > 0).on_hover_text(hint).clicked() {
+            *mesh_maps = !*mesh_maps;
         }
     });
 }
 
-/// "● Bake Live": the bake mode, with a green dot while Live.
-fn bake_mode_pill(ui: &mut egui::Ui, live: bool) -> egui::Response {
-    let font = t::body();
-    let label = ui.painter().layout_no_wrap("Bake".into(), font.clone(), t::TEXT_2);
-    let mode = ui.painter().layout_no_wrap(if live { "Live" } else { "Manual" }.into(), t::body_strong(), t::TEXT);
-    let width = 10.0 + 6.0 + 6.0 + label.size().x + 5.0 + mode.size().x + 10.0;
+/// "Bake Mesh Maps" with Blender's UV project icon; highlighted while the window is open, with
+/// an attention dot while some map isn't baked or is out of date.
+fn bake_button(ui: &mut egui::Ui, open: bool, attention: bool) -> egui::Response {
+    let label = ui.painter().layout_no_wrap("Bake Mesh Maps".into(), t::body_strong(), t::TEXT);
+    let dot = if attention { 12.0 } else { 0.0 };
+    let width = 8.0 + 16.0 + 6.0 + label.size().x + dot + 10.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(width, t::H_CONTROL), Sense::click());
     let p = ui.painter();
-    let bg = if resp.hovered() { t::BG_ACTIVE } else { t::BG_INPUT };
-    p.rect(rect, t::R_CONTROL, bg, Stroke::new(1.0, t::BORDER), StrokeKind::Inside);
+    let bg = if open || resp.hovered() { t::BG_ACTIVE } else { t::BG_INPUT };
+    let border = if open { t::accent(0.45) } else { t::BORDER };
+    p.rect(rect, t::R_CONTROL, bg, Stroke::new(1.0, border), StrokeKind::Inside);
     let y = rect.center().y;
-    p.circle_filled(pos2(rect.left() + 13.0, y), 3.0, if live { t::SOCK_MATERIAL } else { t::TEXT_3 });
-    let x = rect.left() + 22.0;
+    let icon = egui::Rect::from_center_size(pos2(rect.left() + 16.0, y), vec2(16.0, 16.0));
+    icons::paint(p, Icon::Bake, icon, if open || resp.hovered() { t::TEXT } else { t::TEXT_2 });
+    let x = rect.left() + 30.0;
     let lw = label.size().x;
-    p.galley(pos2(x, y - label.size().y / 2.0), label, t::TEXT_2);
-    p.galley(pos2(x + lw + 5.0, y - mode.size().y / 2.0), mode, t::TEXT);
+    p.galley(pos2(x, y - label.size().y / 2.0), label, t::TEXT);
+    if attention {
+        p.circle_filled(pos2(x + lw + 9.0, y), 3.0, t::ATTENTION);
+    }
     resp
 }
 
@@ -204,6 +216,8 @@ pub fn brush_summary(paint: &PaintEngine) -> String {
     if paint.brush.alpha.is_empty() { "Round".into() } else { paint.brush.alpha.clone() }
 }
 
+/// One row per enabled channel, laid out like a Fill layer's Values: the name in the label
+/// column and the value filling the rest, with a check in front that turns the channel on.
 pub fn brush_values_panel(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine) {
     let v = &mut paint.values;
     for c in Channel::ALL {
@@ -212,42 +226,34 @@ pub fn brush_values_panel(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngin
         }
         let i = c.index();
         ui.horizontal(|ui| {
-            ui.add(Check::new(&mut v.enabled[i], ""));
-            ui.add_enabled_ui(v.enabled[i], |ui| match c {
-                Channel::BaseColor | Channel::Emissive => {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, t::H_CONTROL), egui::Sense::hover());
-                        ui.painter().text(r.left_center() + egui::vec2(9.0, 0.0), egui::Align2::LEFT_CENTER, c.name(), t::body(), t::TEXT);
-                        let mut rgb = v.values[i];
-                        let size = egui::vec2(ui.available_width(), t::H_CONTROL - 4.0);
-                        ui.spacing_mut().interact_size = size;
-                        if crate::ui_widgets::color_edit(ui, &mut rgb).changed() {
-                            v.values[i] = rgb;
-                        }
-                    });
-                }
-                Channel::Normal => {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(60.0, t::H_CONTROL), egui::Sense::hover());
-                        ui.painter().text(r.left_center() + egui::vec2(9.0, 0.0), egui::Align2::LEFT_CENTER, c.name(), t::body(), t::TEXT);
+            ui.add(Check::new(&mut v.enabled[i], "")).on_hover_text(format!("Paint {}", c.name()));
+            ui.add_enabled_ui(v.enabled[i], |ui| {
+                w::setting(ui, c.name(), |ui| match c {
+                    Channel::BaseColor | Channel::Emissive => {
+                        // The color swatch takes the interact size: give it the whole column.
+                        ui.spacing_mut().interact_size = vec2(ui.available_width(), t::H_CONTROL);
+                        w::color_edit(ui, &mut v.values[i]);
+                    }
+                    Channel::Normal => {
                         let fw = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-                        for k in 0..3 {
-                            ui.add(Field::new(&mut v.values[i][k], 0.0..=1.0).decimals(2).width(fw));
+                        for x in &mut v.values[i] {
+                            ui.add(Field::new(x, 0.0..=1.0).decimals(2).width(fw));
                         }
-                    });
-                }
-                Channel::Height => {
-                    ui.add(Field::new(&mut v.values[i][0], -1.0..=1.0).label(c.name()));
-                }
-                _ => {
-                    ui.add(Field::new(&mut v.values[i][0], 0.0..=1.0).label(c.name()));
-                }
+                    }
+                    Channel::Height => {
+                        ui.add(Field::new(&mut v.values[i][0], -1.0..=1.0));
+                    }
+                    _ => {
+                        ui.add(Field::new(&mut v.values[i][0], 0.0..=1.0));
+                    }
+                });
             });
         });
     }
     ui.horizontal(|ui| {
+        // Lines up with the rows above, past their checks.
         ui.add_space(14.0 + ui.spacing().item_spacing.x);
-        ui.add(Field::new(&mut v.mask_value, 0.0..=1.0).label("Mask value")).on_hover_text("Value painted into masks");
+        w::setting(ui, "Mask value", |ui| ui.add(Field::new(&mut v.mask_value, 0.0..=1.0))).on_hover_text("Value painted into masks");
     });
 }
 

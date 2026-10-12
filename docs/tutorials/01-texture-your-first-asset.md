@@ -35,7 +35,7 @@ it.
 Crate needs to know the crate's shape (where its edges and crevices are) before it can wear
 them procedurally. We get this by baking mesh maps.
 
-1. Choose **Window → Mesh Maps**.
+1. Click **Bake Mesh Maps**, on the right above the viewport.
 2. **Ambient Occlusion**, **Curvature**, **Thickness** and **ID** are already checked. Click
    **Bake selected**.
 

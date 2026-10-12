@@ -36,6 +36,7 @@ pub enum Icon {
     Search,
     Refresh,
     FileBrowser,
+    Bake,
 }
 
 enum Source {
@@ -74,6 +75,7 @@ impl Icon {
             Icon::Search => Svg(include_bytes!("icons/viewzoom.svg")),
             Icon::Refresh => Svg(include_bytes!("icons/file_refresh.svg")),
             Icon::FileBrowser => Svg(include_bytes!("icons/filebrowser.svg")),
+            Icon::Bake => Svg(include_bytes!("icons/mod_uvproject.svg")),
         }
     }
 }
@@ -191,7 +193,7 @@ fn geometry(data: &[u8]) -> Option<Vec<([u8; 4], Vec<Triangle>)>> {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 26] = [
+    const ALL: [Icon; 27] = [
         Icon::Brush,
         Icon::Fill,
         Icon::Folder,
@@ -218,6 +220,7 @@ mod tests {
         Icon::Search,
         Icon::Refresh,
         Icon::FileBrowser,
+        Icon::Bake,
     ];
 
     #[test]

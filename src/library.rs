@@ -55,6 +55,11 @@ pub fn dir(folder: &str) -> PathBuf {
     root().join(folder)
 }
 
+/// Deletes a library item (a file, or a smart material) by moving it to the system's trash.
+pub fn delete(path: &Path) -> Result<()> {
+    trash::delete(path).with_context(|| format!("could not delete {}", path.display()))
+}
+
 fn built_in(folder: &str) -> Option<&'static (&'static str, &'static str, Kind)> {
     // On Windows and macOS `Alphas` and `alphas` are the same folder; on Linux they're two.
     let same = |a: &str, b: &str| if cfg!(any(windows, target_os = "macos")) { a.eq_ignore_ascii_case(b) } else { a == b };
