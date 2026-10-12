@@ -719,6 +719,10 @@ impl CrateApp {
             );
             return;
         }
+        // The Geo Fill element stays highlighted in both panes while the pointer is over either.
+        if self.paint.tool != Tool::GeoFill || self.hovered_pane(ui.ctx()).is_none() {
+            self.curve_tool.clear_hover();
+        }
         self.pane_rects.clear();
         self.gesture_live = false;
         match self.layout {
@@ -1008,6 +1012,12 @@ impl CrateApp {
                 self.uv_pane.environment = Some(self.environment.clone());
             }
         }
+        // Geo Fill's outlines and highlight (docs/reference/brushes-tools-stencils.md#outlines-and-highlight).
+        let has_target = doc.selection.and_then(|s| crate::ops::paint_target(&doc.graph, s)).is_some();
+        let geo_fill = self.paint.tool == Tool::GeoFill && has_target;
+        if geo_fill && hover.is_some_and(|h| rect.contains(h)) && !mods.alt {
+            self.curve_tool.update_hover(&self.gpu, doc, &self.paint, &view_of, rect, ppp, (w, h), hover);
+        }
         let (viewport, material, texture) = match pane {
             Pane::ThreeD => (&mut self.viewport, &mut self.viewport_material, &mut self.viewport_texture),
             Pane::Uv => (&mut self.uv_pane.viewport, &mut self.uv_pane.material, &mut self.uv_pane.texture),
@@ -1020,7 +1030,8 @@ impl CrateApp {
             }
             *material = doc.material_version;
         }
-        viewport.render(&self.gpu, &view_of, &doc.mesh, &doc.gpu_mesh, doc.scene.bind_group.as_ref().unwrap(), &self.view, w, h);
+        let overlay = if geo_fill { self.curve_tool.overlay(&self.gpu, doc, self.paint.fill_by) } else { Default::default() };
+        viewport.render(&self.gpu, &view_of, &doc.mesh, &doc.gpu_mesh, doc.scene.bind_group.as_ref().unwrap(), &self.view, &overlay, w, h);
 
         let out = viewport.output_view().unwrap();
         if owns_buffer {
@@ -1060,13 +1071,11 @@ impl CrateApp {
             ui.painter().rect_stroke(rect.shrink(1.5), 0.0, egui::Stroke::new(3.0, orange), egui::StrokeKind::Inside);
         }
         let doc = self.doc.as_ref().unwrap();
-        let has_target = doc.selection.and_then(|s| crate::ops::paint_target(&doc.graph, s)).is_some();
         match self.paint.tool {
             Tool::Curve if pane == Pane::ThreeD && has_target => self.curve_tool.draw(ui, doc, &pane3, hover),
             Tool::GeoFill if has_target && !mods.alt => {
                 if let Some(hp) = hover.filter(|h| rect.contains(*h)) {
-                    let view = self.pane_view(pane);
-                    self.curve_tool.geo_hover(ui, doc, &self.paint, &view, rect, ppp, (w, h), hp);
+                    self.curve_tool.hover_label(ui, rect, hp);
                 }
             }
             _ => {}

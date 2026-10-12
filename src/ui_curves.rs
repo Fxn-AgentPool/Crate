@@ -19,8 +19,6 @@ use crate::ui_widgets::{self as w, Check, Field, Section, Toggle};
 
 /// How close the pointer must be to a curve or a point to hit it, in points.
 const HIT: f32 = 6.0;
-/// Geo Fill highlights elements of up to this many triangles.
-const HIGHLIGHT_MAX: usize = 50_000;
 
 /// A 3D pane: its camera, where it is on screen, and its size in pixels.
 #[derive(Clone, Copy)]
@@ -58,8 +56,18 @@ pub struct CurveTool {
     /// The point of the selected curve being dragged, and whether it has moved (the undo step is
     /// made on the first move, so a click alone makes none).
     drag: Option<(usize, bool)>,
-    /// The Geo Fill element under the pointer, the mesh it is of, and its triangles.
-    hover: Option<(Element, u64, Vec<u32>)>,
+    /// The Geo Fill element under the pointer.
+    hover: Option<Hover>,
+}
+
+/// The Geo Fill element under the pointer, with its triangles on the GPU for the highlight.
+struct Hover {
+    element: Element,
+    /// The mesh version it was found on.
+    mesh: u64,
+    buffer: wgpu::Buffer,
+    count: u32,
+    label: String,
 }
 
 /// Distance from `q` to a polyline of projected points (None: behind the camera).
@@ -239,46 +247,48 @@ impl CurveTool {
         }
     }
 
-    /// Geo Fill: names the element under the pointer and, in a 3D pane, highlights it.
+    /// Geo Fill: finds the element under the pointer (`hover`, in a pane showing `view`), keeping
+    /// its triangles for the highlight. None clears it.
     #[allow(clippy::too_many_arguments)]
-    pub fn geo_hover(&mut self, ui: &egui::Ui, p: &Project, paint: &PaintEngine, view: &crate::camera::View, rect: egui::Rect, ppp: f32, size: (u32, u32), hover: Pos2) {
-        let px = Vec2::new((hover.x - rect.min.x) * ppp, (hover.y - rect.min.y) * ppp);
-        let Some(e) = crate::geo::element_at(p, view, size, px, paint.fill_by) else { return };
+    pub fn update_hover(&mut self, gpu: &Gpu, p: &Project, paint: &PaintEngine, view: &crate::camera::View, rect: egui::Rect, ppp: f32, size: (u32, u32), hover: Option<Pos2>) {
+        let px = |h: Pos2| Vec2::new((h.x - rect.min.x) * ppp, (h.y - rect.min.y) * ppp);
+        let Some(e) = hover.and_then(|h| crate::geo::element_at(p, view, size, px(h), paint.fill_by)) else {
+            self.hover = None;
+            return;
+        };
         let key = p.mesh_version();
-        if !self.hover.as_ref().is_some_and(|(he, hk, _)| *he == e && *hk == key) {
-            self.hover = Some((e, key, p.geo().triangles(&p.mesh, e)));
+        if self.hover.as_ref().is_some_and(|h| h.element == e && h.mesh == key) {
+            return;
         }
-        let tris = &self.hover.as_ref().unwrap().2;
-        let painter = ui.painter_at(rect);
-        if let crate::camera::View::Persp(camera) = view {
-            if tris.len() <= HIGHLIGHT_MAX {
-                let pane = Pane3d { camera: *camera, rect, ppp, size };
-                let vp = pane.view_proj(p);
-                let eye = camera.eye();
-                let mut mesh = egui::Mesh::default();
-                let fill = t::accent(0.28);
-                for &tri in tris {
-                    let v = |k: usize| &p.mesh.vertices[p.mesh.indices[tri as usize * 3 + k] as usize];
-                    let pos = [0, 1, 2].map(|k| Vec3::from(v(k).pos));
-                    let n: Vec3 = (0..3).map(|k| Vec3::from(v(k).normal)).sum();
-                    let centroid = (pos[0] + pos[1] + pos[2]) / 3.0;
-                    if n.dot(eye - centroid) <= 0.0 {
-                        continue;
-                    }
-                    let Some(s) = pos.iter().map(|q| pane.project(&vp, *q)).collect::<Option<Vec<_>>>() else { continue };
-                    let base = mesh.vertices.len() as u32;
-                    for q in s {
-                        mesh.colored_vertex(q, fill);
-                    }
-                    mesh.add_triangle(base, base + 1, base + 2);
-                }
-                painter.add(egui::Shape::mesh(mesh));
-            }
-        }
+        let tris = p.geo().triangles(&p.mesh, e);
+        let indices: Vec<u32> = tris.iter().flat_map(|&t| (0..3).map(move |k| p.mesh.indices[t as usize * 3 + k])).collect();
+        use wgpu::util::DeviceExt;
+        let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("geo fill highlight"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         let label = p.geo().label(&p.mesh, e, tris.len());
-        let at = hover + vec2(16.0, 14.0);
-        painter.text(at + vec2(1.0, 1.0), egui::Align2::LEFT_TOP, &label, t::value(), Color32::from_black_alpha(160));
-        painter.text(at, egui::Align2::LEFT_TOP, label, t::value(), Color32::WHITE);
+        self.hover = Some(Hover { element: e, mesh: key, buffer, count: indices.len() as u32, label });
+    }
+
+    /// Forgets the element under the pointer.
+    pub fn clear_hover(&mut self) {
+        self.hover = None;
+    }
+
+    /// What Geo Fill draws over the mesh: the outlines of `by` and the element under the pointer.
+    pub fn overlay<'a>(&'a self, gpu: &Gpu, p: &'a Project, by: crate::geo::FillBy) -> crate::viewport::Overlay<'a> {
+        crate::viewport::Overlay { borders: Some(p.borders(gpu, by)), highlight: self.hover.as_ref().map(|h| (&h.buffer, h.count)) }
+    }
+
+    /// The name of the element under the pointer, next to it.
+    pub fn hover_label(&self, ui: &egui::Ui, rect: egui::Rect, at: Pos2) {
+        let Some(h) = &self.hover else { return };
+        let painter = ui.painter_at(rect);
+        let at = at + vec2(16.0, 14.0);
+        painter.text(at + vec2(1.0, 1.0), egui::Align2::LEFT_TOP, &h.label, t::value(), Color32::from_black_alpha(160));
+        painter.text(at, egui::Align2::LEFT_TOP, &h.label, t::value(), Color32::WHITE);
     }
 }
 

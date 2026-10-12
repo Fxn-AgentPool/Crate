@@ -201,6 +201,14 @@ struct Targets {
     tonemap_bind: wgpu::BindGroup,
 }
 
+/// Index buffers drawn over the mesh: Geo Fill's outlines (vertex pairs) and highlight
+/// (triangles). See docs/reference/brushes-tools-stencils.md#outlines-and-highlight.
+#[derive(Default)]
+pub struct Overlay<'a> {
+    pub borders: Option<(&'a wgpu::Buffer, u32)>,
+    pub highlight: Option<(&'a wgpu::Buffer, u32)>,
+}
+
 pub struct Viewport {
     frame_buffer: wgpu::Buffer,
     tonemap_buffer: wgpu::Buffer,
@@ -209,6 +217,9 @@ pub struct Viewport {
     tonemap_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: Option<wgpu::RenderPipeline>,
     line_pipeline: Option<wgpu::RenderPipeline>,
+    /// Geo Fill outlines and highlight.
+    border_pipeline: Option<wgpu::RenderPipeline>,
+    highlight_pipeline: Option<wgpu::RenderPipeline>,
     /// UV view: the space between islands (docs/reference/2d-paint.md#display).
     gaps_pipeline: Option<wgpu::RenderPipeline>,
     frame_bind: Option<wgpu::BindGroup>,
@@ -322,6 +333,8 @@ impl Viewport {
             tonemap_pipeline,
             mesh_pipeline: None,
             line_pipeline: None,
+            border_pipeline: None,
+            highlight_pipeline: None,
             gaps_pipeline: None,
             frame_bind: None,
             targets: None,
@@ -461,34 +474,37 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
-        let line_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport wireframe"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(vertex_layout())],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: depth(false, wgpu::CompareFunction::LessEqual),
-            multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        // Drawn over the mesh with a small depth offset, hidden where the mesh covers them.
+        let overlay = |label: &str, topology, fs: &str| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_line"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(vertex_layout())],
+                },
+                primitive: wgpu::PrimitiveState { topology, cull_mode: None, ..Default::default() },
+                depth_stencil: depth(false, wgpu::CompareFunction::LessEqual),
+                multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let line_pipeline = overlay("viewport wireframe", wgpu::PrimitiveTopology::LineList, "fs_line");
+        let border_pipeline = overlay("geo fill outlines", wgpu::PrimitiveTopology::LineList, "fs_border");
+        let highlight_pipeline = overlay("geo fill highlight", wgpu::PrimitiveTopology::TriangleList, "fs_highlight");
         let gaps_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("viewport between islands"),
             layout: Some(&layout),
@@ -510,6 +526,8 @@ impl Viewport {
         }
         self.mesh_pipeline = Some(mesh_pipeline);
         self.line_pipeline = Some(line_pipeline);
+        self.border_pipeline = Some(border_pipeline);
+        self.highlight_pipeline = Some(highlight_pipeline);
         self.gaps_pipeline = Some(gaps_pipeline);
         self.material_code = code.to_owned();
         Ok(true)
@@ -560,7 +578,7 @@ impl Viewport {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// Renders `view`: the 3D camera, or the mesh laid out at its UVs (docs/reference/uv-view.md).
+    /// Renders `view`, with `overlay` over the mesh: the 3D camera, or the mesh laid out at its UVs (docs/reference/uv-view.md).
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -569,6 +587,7 @@ impl Viewport {
         gpu_mesh: &GpuMesh,
         scene_bind: &wgpu::BindGroup,
         view: &ViewSettings,
+        overlay: &Overlay,
         width: u32,
         height: u32,
     ) {
@@ -659,6 +678,16 @@ impl Viewport {
                     pass.set_pipeline(self.line_pipeline.as_ref().unwrap());
                     pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
+                }
+                if let Some((buffer, count)) = overlay.highlight {
+                    pass.set_pipeline(self.highlight_pipeline.as_ref().unwrap());
+                    pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..count, 0, 0..1);
+                }
+                if let Some((buffer, count)) = overlay.borders {
+                    pass.set_pipeline(self.border_pipeline.as_ref().unwrap());
+                    pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..count, 0, 0..1);
                 }
             }
         }

@@ -362,3 +362,15 @@ fn vs_line(v: VsIn) -> LineOut {
 fn fs_line() -> @location(0) vec4f {
     return vec4f(0.02, 0.02, 0.02, frame.light.w);
 }
+
+// Geo Fill (docs/reference/brushes-tools-stencils.md#outlines-and-highlight): the borders between
+// elements, and the element under the pointer, drawn with the wireframe's depth offset.
+@fragment
+fn fs_border() -> @location(0) vec4f {
+    return vec4f(1.0, 0.02, 0.02, 1.0);
+}
+
+@fragment
+fn fs_highlight() -> @location(0) vec4f {
+    return vec4f(1.0, 0.02, 0.02, 0.35);
+}

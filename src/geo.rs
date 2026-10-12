@@ -155,7 +155,7 @@ impl Geo {
     pub fn element(&self, mesh: &Mesh, by: FillBy, tri: u32) -> Element {
         let v = &mesh.vertices[mesh.indices[tri as usize * 3] as usize];
         let id = match by {
-            FillBy::Face => mesh.faces.get(tri as usize).copied().unwrap_or(tri),
+            FillBy::Face => tri,
             FillBy::Island => self.islands[tri as usize],
             FillBy::Part => v.group,
             FillBy::Material => v.material,
@@ -169,12 +169,49 @@ impl Geo {
         (0..(mesh.indices.len() / 3) as u32).filter(|&t| self.element(mesh, e.by, t) == e).collect()
     }
 
+    /// Outlines (docs/reference/brushes-tools-stencils.md#outlines-and-highlight): the edges of
+    /// every triangle that borders another element of kind `by`, or no other triangle, as vertex
+    /// index pairs. A border is listed once per triangle along it, so the UV view outlines both
+    /// sides of a seam.
+    pub fn borders(&self, mesh: &Mesh, by: FillBy) -> Vec<u32> {
+        let corner = |t: usize, k: usize| mesh.indices[t * 3 + k % 3];
+        let key = |i: u32| mesh.vertices[i as usize].pos.map(f32::to_bits);
+        let edge = |t: usize, k: usize| {
+            let (a, b) = (key(corner(t, k)), key(corner(t, k + 1)));
+            if a < b { (a, b) } else { (b, a) }
+        };
+        let tris = mesh.indices.len() / 3;
+        // The elements on each edge, by position.
+        let mut sides: HashMap<_, (u32, u32, bool)> = HashMap::new();
+        for t in 0..tris {
+            let id = self.element(mesh, by, t as u32).id;
+            for k in 0..3 {
+                sides
+                    .entry(edge(t, k))
+                    .and_modify(|(first, count, mixed)| {
+                        *count += 1;
+                        *mixed |= *first != id;
+                    })
+                    .or_insert((id, 1, false));
+            }
+        }
+        let mut out = Vec::new();
+        for t in 0..tris {
+            for k in 0..3 {
+                let (_, count, mixed) = sides[&edge(t, k)];
+                if count == 1 || mixed || by == FillBy::Face {
+                    out.extend([corner(t, k), corner(t, k + 1)]);
+                }
+            }
+        }
+        out
+    }
+
     /// What the pointer label says about an element of `count` triangles.
     pub fn label(&self, mesh: &Mesh, e: Element, count: usize) -> String {
         let name = |names: &[String]| names.get(e.id as usize).cloned().unwrap_or_else(|| format!("#{}", e.id));
         match e.by {
-            // Fanned polygons: n sides make n - 2 triangles.
-            FillBy::Face => format!("Face · {} sides", count + 2),
+            FillBy::Face => "Face".into(),
             FillBy::Island => format!("UV island · {} triangle{}", thousands(count), if count == 1 { "" } else { "s" }),
             FillBy::Part => format!("Part: {}", name(&mesh.groups)),
             FillBy::Material => format!("Material: {}", name(&mesh.materials)),
@@ -344,7 +381,6 @@ mod tests {
         let indices = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
         Mesh {
             source: Default::default(),
-            faces: vec![0, 0, 1, 1],
             vertices,
             indices,
             materials: vec!["Mat".into()],
@@ -365,9 +401,35 @@ mod tests {
         assert_ne!(island(1), island(2));
         assert_eq!(g.triangles(&m, island(3)), vec![2, 3]);
         assert_eq!(g.label(&m, g.element(&m, FillBy::Part, 2), 2), "Part: Right");
-        assert_eq!(g.label(&m, g.element(&m, FillBy::Face, 0), 2), "Face · 4 sides");
+        assert_eq!(g.label(&m, g.element(&m, FillBy::Face, 0), 1), "Face");
+        assert_eq!(g.triangles(&m, g.element(&m, FillBy::Face, 1)), vec![1]);
         assert_eq!(g.element(&m, FillBy::Tile, 3).id, 1001);
         assert_eq!(g.triangles(&m, g.element(&m, FillBy::Material, 0)).len(), 4);
+    }
+
+    #[test]
+    fn borders() {
+        let m = two_quads();
+        let g = Geo::new(&m);
+        let edges = |by| {
+            let b = g.borders(&m, by);
+            let mut e: Vec<(u32, u32)> = b.chunks(2).map(|c| (c[0].min(c[1]), c[0].max(c[1]))).collect();
+            e.sort();
+            e
+        };
+        // Face: every edge of every triangle.
+        assert_eq!(edges(FillBy::Face).len(), 12);
+        // Island and part: the outline of each quad, the shared x = 1 edge once per side;
+        // not the quads' diagonals.
+        let island = edges(FillBy::Island);
+        assert_eq!(island.len(), 8);
+        assert!(island.contains(&(1, 2)) && island.contains(&(4, 7)));
+        assert!(!island.contains(&(0, 2)));
+        assert_eq!(edges(FillBy::Part), island);
+        // One material: only the open edges, x = 1 shared inside it is no border.
+        let material = edges(FillBy::Material);
+        assert_eq!(material.len(), 6);
+        assert!(!material.contains(&(1, 2)));
     }
 
     #[test]

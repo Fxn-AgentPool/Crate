@@ -1210,6 +1210,7 @@ impl Session {
             &p.gpu_mesh,
             p.scene.bind_group.as_ref().unwrap(),
             &self.view,
+            &Default::default(),
             self.size.0,
             self.size.1,
         );

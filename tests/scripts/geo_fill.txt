@@ -3,7 +3,7 @@
 # centers are at x = 0.19, 0.40, 0.60, 0.81. Colors are checked in the UV view, centered on a
 # point of each quad:
 #   Q1 (0.25, 0.5), its two triangles at (0.325, 0.425) and (0.175, 0.575); Q2 (0.55, 0.5);
-#   Q3 (1.25, 0.5); Q4 (1.7, 0.5); padding 4 texels left of Q1 at (0.096, 0.5).
+#   Q3 (1.25, 0.5); Q4 (1.7, 0.5); padding 4 texels below Q1's lower-right triangle at (0.325, 0.346).
 # On islands the UV view shows some colors a few levels off their value (a Fill layer of #2040C0
 # shows 33,62,185), so colors are checked within 8 levels; the test colors are far apart.
 new tests/data/geo.obj 1024
@@ -19,22 +19,25 @@ render target/tests/geo_fill/before_q2.png
 uv-view 1.25 0.5 40
 render target/tests/geo_fill/before_q3.png
 
-# Face: one quad, both of its triangles.
+# Face: one triangle. Q1's lower-right triangle is at world (-1.25, -0.25), screen
+# (0.241, 0.604); its other triangle stays unfilled.
+uv-view 0.175 0.575 40
+render target/tests/geo_fill/before_q1b.png
 camera 0 0 2
 fill-by face
 brush-values base_color=#C03020
-geo-fill 0.19,0.5
+geo-fill 0.241,0.604
 uv-view 0.325 0.425 40
 render target/tests/geo_fill/face_a.png
 expect-color target/tests/geo_fill/face_a.png 192,48,32 8
 uv-view 0.175 0.575 40
 render target/tests/geo_fill/face_b.png
-expect-color target/tests/geo_fill/face_b.png 192,48,32 8
+expect-same target/tests/geo_fill/before_q1b.png target/tests/geo_fill/face_b.png 0
 uv-view 0.55 0.5 40
 render target/tests/geo_fill/face_q2.png
 expect-same target/tests/geo_fill/before_q2.png target/tests/geo_fill/face_q2.png 0
 # Padding is filled with its island texels.
-uv-view 0.096 0.5 40
+uv-view 0.325 0.346 40
 render target/tests/geo_fill/face_padding.png
 expect-color target/tests/geo_fill/face_padding.png 192,48,32 8
 
@@ -121,10 +124,11 @@ add-mask
 add-mask-paint
 fill-by face
 brush-values mask=0
-geo-fill 0.40,0.5
+# Q2's lower-right triangle: world (-0.25, -0.25), screen (0.448, 0.604), UV (0.625, 0.425).
+geo-fill 0.448,0.604
 uv-view 0.25 0.5 40
 render target/tests/geo_fill/mask_q1.png
 expect-color target/tests/geo_fill/mask_q1.png 192,48,32 8
-uv-view 0.55 0.5 40
+uv-view 0.625 0.425 40
 render target/tests/geo_fill/mask_q2.png
 expect-color target/tests/geo_fill/mask_q2.png 176,176,176 8

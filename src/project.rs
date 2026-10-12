@@ -91,6 +91,8 @@ pub struct Project {
     curve_gpu: crate::curve::CurveGpu,
     /// Geometry queries on the mesh, built on first use.
     geo: std::cell::OnceCell<crate::geo::Geo>,
+    /// Geo Fill outlines per Fill by kind, as GPU edge lists, built on first use.
+    borders: [std::cell::OnceCell<(wgpu::Buffer, u32)>; 5],
     /// Incremented when the mesh is replaced.
     mesh_version: u64,
     pub stencils: crate::stencil::StencilSet,
@@ -154,6 +156,7 @@ impl Project {
             curve_sel: None,
             curve_gpu: crate::curve::CurveGpu::new(gpu),
             geo: Default::default(),
+            borders: Default::default(),
             mesh_version: 0,
             image_sources: Default::default(),
             stencils: Default::default(),
@@ -526,6 +529,7 @@ impl Project {
         self.paint_epoch += 1;
         // Curves are drawn again on the new surface (docs/reference/curves.md#saving-and-copying).
         self.geo = Default::default();
+        self.borders = Default::default();
         self.mesh_version += 1;
         // Undo steps hold texels of the old pools.
         self.clear_history();
@@ -548,6 +552,24 @@ impl Project {
     /// Geometry queries on the mesh, built on first use.
     pub fn geo(&self) -> &crate::geo::Geo {
         self.geo.get_or_init(|| crate::geo::Geo::new(&self.mesh))
+    }
+
+    /// Geo Fill's outlines for `by`: vertex index pairs and their count
+    /// (docs/reference/brushes-tools-stencils.md#outlines-and-highlight).
+    pub fn borders(&self, gpu: &Gpu, by: crate::geo::FillBy) -> (&wgpu::Buffer, u32) {
+        use wgpu::util::DeviceExt;
+        let i = crate::geo::FillBy::ALL.iter().position(|b| *b == by).unwrap();
+        let (buffer, count) = self.borders[i].get_or_init(|| {
+            let edges = self.geo().borders(&self.mesh, by);
+            let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("geo fill outlines"),
+                // A buffer can't be empty.
+                contents: bytemuck::cast_slice(if edges.is_empty() { &[0u32, 0] } else { &edges[..] }),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            (buffer, edges.len() as u32)
+        });
+        (buffer, *count)
     }
 
     /// The slot holding a node's curves, if it has any.

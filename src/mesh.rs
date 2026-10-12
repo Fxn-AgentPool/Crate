@@ -76,9 +76,6 @@ pub struct Mesh {
     pub materials: Vec<String>,
     /// Part names (glTF node or mesh names, OBJ object names); `Vertex::group` indexes this.
     pub groups: Vec<String>,
-    /// Polygon of each triangle, for Geo Fill's Face (docs/reference/brushes-tools-stencils.md#geo-fill):
-    /// OBJ faces as written, glTF triangles paired across their common longest edge.
-    pub faces: Vec<u32>,
     /// Sorted UDIM numbers in use.
     pub tiles: Vec<u32>,
     pub bbox_min: Vec3,
@@ -183,10 +180,6 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
     if raw.has_uvs {
         tiles = check_uvs(&raw.vertices, &raw.indices, &mut diagnostics);
     }
-    let faces = match raw.faces.take() {
-        Some(f) => f,
-        None => quad_faces(&raw.vertices, &raw.indices),
-    };
 
     Ok(Mesh {
         source: path.to_path_buf(),
@@ -194,7 +187,6 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
         indices: raw.indices,
         materials: raw.materials,
         groups: raw.groups,
-        faces,
         tiles,
         bbox_min,
         bbox_max,
@@ -207,8 +199,6 @@ struct RawMesh {
     indices: Vec<u32>,
     materials: Vec<String>,
     groups: Vec<String>,
-    /// Polygon of each triangle, when the file has polygons (OBJ).
-    faces: Option<Vec<u32>>,
     has_uvs: bool,
     has_normals: bool,
     has_tangents: bool,
@@ -231,7 +221,6 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
         indices: Vec::new(),
         materials: Vec::new(),
         groups: Vec::new(),
-        faces: None,
         has_uvs: true,
         has_normals: true,
         has_tangents: true,
@@ -332,10 +321,8 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
 fn load_obj(path: &Path) -> Result<RawMesh> {
     let (models, materials) = tobj::load_obj(
         path,
-        // Polygons are kept and fanned here, as tobj's own triangulation does, so each triangle
-        // knows its face.
         &tobj::LoadOptions {
-            triangulate: false,
+            triangulate: true,
             single_index: true,
             ..Default::default()
         },
@@ -351,7 +338,6 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
         indices: Vec::new(),
         materials: Vec::new(),
         groups: Vec::new(),
-        faces: Some(Vec::new()),
         has_uvs: true,
         has_normals: true,
         has_tangents: false,
@@ -388,19 +374,7 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
                 group,
             });
         }
-        let faces = out.faces.as_mut().unwrap();
-        let first_face = faces.last().map_or(0, |f| f + 1);
-        // No arities: every face is a triangle.
-        let arities: Vec<u32> = if m.face_arities.is_empty() { vec![3; m.indices.len() / 3] } else { m.face_arities.clone() };
-        let mut at = 0usize;
-        for (face_id, n) in (first_face..).zip(arities) {
-            let face = &m.indices[at..at + n as usize];
-            at += n as usize;
-            for k in 1..face.len().saturating_sub(1) {
-                out.indices.extend([base + face[0], base + face[k], base + face[k + 1]]);
-                faces.push(face_id);
-            }
-        }
+        out.indices.extend(m.indices.iter().map(|i| base + i));
     }
     if out.vertices.is_empty() {
         bail!("The OBJ file contains no faces.");
@@ -589,52 +563,6 @@ fn overlap_texels(vertices: &[Vertex], indices: &[u32]) -> (usize, usize) {
     (over, cells.len())
 }
 
-/// Faces of a mesh that has only triangles: each triangle is paired with the neighbor across its
-/// longest edge when that edge is the neighbor's longest too (and both are of the same part,
-/// material and UV island), recovering triangulated quads.
-fn quad_faces(vertices: &[Vertex], indices: &[u32]) -> Vec<u32> {
-    let tris = indices.len() / 3;
-    let key = |i: u32| {
-        let v = &vertices[i as usize];
-        (v.pos.map(f32::to_bits), v.uv.map(f32::to_bits))
-    };
-    let corner = |t: usize, k: usize| indices[t * 3 + k % 3];
-    let longest = |t: usize| {
-        let p = |k: usize| Vec3::from(vertices[corner(t, k) as usize].pos);
-        (0..3).max_by(|&a, &b| p(a).distance_squared(p(a + 1)).total_cmp(&p(b).distance_squared(p(b + 1)))).unwrap()
-    };
-    let mut edges: HashMap<_, Vec<usize>> = HashMap::new();
-    for t in 0..tris {
-        let e = longest(t);
-        let (a, b) = (key(corner(t, e)), key(corner(t, e + 1)));
-        edges.entry(if a < b { (a, b) } else { (b, a) }).or_default().push(t);
-    }
-    let mut faces = vec![u32::MAX; tris];
-    let mut next = 0;
-    for t in 0..tris {
-        if faces[t] != u32::MAX {
-            continue;
-        }
-        faces[t] = next;
-        let e = longest(t);
-        let (a, b) = (key(corner(t, e)), key(corner(t, e + 1)));
-        let same = |o: usize| {
-            let (vt, vo) = (&vertices[corner(t, 0) as usize], &vertices[corner(o, 0) as usize]);
-            vt.group == vo.group && vt.material == vo.material
-        };
-        if let Some(group) = edges.get(&if a < b { (a, b) } else { (b, a) }) {
-            if let [x, y] = group.as_slice() {
-                let o = if *x == t { *y } else { *x };
-                if faces[o] == u32::MAX && same(o) {
-                    faces[o] = next;
-                }
-            }
-        }
-        next += 1;
-    }
-    faces
-}
-
 /// Unique triangle edges, for wireframe display.
 pub fn edge_list(indices: &[u32], vertices: &[Vertex]) -> Vec<u32> {
     let key = |i: u32| {
@@ -653,37 +581,4 @@ pub fn edge_list(indices: &[u32], vertices: &[Vertex]) -> Vec<u32> {
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn triangulated_quads_pair_up() {
-        // Two unit quads side by side, each split along its diagonal, and a lone triangle above.
-        let v = |x: f32, y: f32| Vertex { pos: [x, y, 0.0], uv: [x * 0.1, y * 0.1], ..Default::default() };
-        let vertices = vec![v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0), v(2.0, 0.0), v(2.0, 1.0), v(1.0, 2.0)];
-        let indices = vec![0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2, 3, 2, 6];
-        assert_eq!(quad_faces(&vertices, &indices), vec![0, 0, 1, 1, 2]);
-    }
-
-    #[test]
-    fn obj_polygons_are_faces() {
-        let dir = std::env::temp_dir().join(format!("crate-faces-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("poly.obj");
-        // A quad and a pentagon, fanned into 2 and 3 triangles.
-        std::fs::write(
-            &path,
-            "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 2 0 0\nv 3 0 0\nv 3 1 0\nv 2.5 2 0\nv 2 1 0\n\
-             vt 0 0\nvt 0.1 0\nvt 0.1 0.1\nvt 0 0.1\nvt 0.2 0\nvt 0.3 0\nvt 0.3 0.1\nvt 0.25 0.2\nvt 0.2 0.1\n\
-             f 1/1 2/2 3/3 4/4\nf 5/5 6/6 7/7 8/8 9/9\n",
-        )
-        .unwrap();
-        let mesh = import(&path, &ImportSettings::default()).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(mesh.faces, vec![0, 0, 1, 1, 1]);
-        assert_eq!(mesh.triangle_count(), 5);
-    }
 }

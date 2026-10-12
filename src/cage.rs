@@ -69,7 +69,6 @@ pub fn compute(low: &LowMesh, low_match: &[u32], samples: &[(Vec3, u32)], diagon
         indices: low.indices.clone(),
         materials: Vec::new(),
         groups: Vec::new(),
-        faces: Vec::new(),
         tiles: Vec::new(),
         bbox_min: Vec3::ZERO,
         bbox_max: Vec3::ZERO,
