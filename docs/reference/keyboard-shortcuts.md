@@ -14,6 +14,10 @@ inside the Node Editor are fixed.
 | Frame mesh | `F` |
 | Frame cursor | `Shift+F` |
 | Rotate environment | `Shift` + right-drag |
+| View: Split / 3D / UV | `F1` / `F2` / `F3` |
+
+In the [UV view](uv-view.md#navigation), `Alt` + left-drag pans instead of orbiting, and `F`
+frames the used tiles.
 
 ## Fields
 

@@ -64,3 +64,15 @@ Projection paints what the camera sees. Some consequences:
 - [Paint buffer](../reference/paint-buffer.md) (reference)
 - [How to paint in manual bake mode](../how-to/paint-in-manual-bake-mode.md)
 - [Project a decal with a stencil](../tutorials/02-project-a-decal-with-a-stencil.md) (tutorial)
+
+## Painting in UV space
+
+The [UV view](../reference/uv-view.md) doesn't have a painting system of its own. It's another
+way of mapping texels to the screen: where the 3D view projects each texel's surface position
+through the camera, the UV view places it by its UV. Strokes go into the same buffer and are
+baked by the same pass, so brushes, stencils, Manual mode and undo behave identically.
+
+The UV view only paints where the mesh covers a tile. A texel outside every UV island belongs to
+no surface: the material can't be evaluated there (nothing gives it a position, a normal or mesh
+maps), export doesn't write it, and a reimport with new UVs couldn't carry it over. Painting
+there would leave paint that is never seen.

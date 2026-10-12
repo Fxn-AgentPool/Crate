@@ -68,3 +68,7 @@ For each tile touched by the buffer region, and for each texel in it:
 
 Baking requires the Position and World Normal mesh maps. If they are missing, they are baked
 automatically first.
+
+A buffer painted in the [UV view](uv-view.md#painting) is baked the same way, except for steps
+2 to 4: each covered texel's place in the buffer comes from its UV and the UV view's pan and
+zoom, there is no depth test, and the strength is 1.

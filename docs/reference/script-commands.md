@@ -131,7 +131,8 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | Command | Description |
 |---|---|
 | `size <W>x<H>` | Size of renders and of the screen strokes are painted on (default `960x720`). |
-| `camera <yaw> <pitch> [zoom]` | Degrees around and above the mesh; `zoom` > 1 moves closer. |
+| `camera <yaw> <pitch> [zoom]` | Degrees around and above the mesh; `zoom` > 1 moves closer. Renders and strokes use the 3D view. |
+| `uv-view [<u> <v> <zoom>]` | Renders and strokes use the [UV view](uv-view.md): centered on UDIM coordinates `u`, `v`, with one tile `zoom` render heights high. Without arguments, frames the used tiles, as `F` does. |
 | `view material\|<channel>\|<map>` | What renders show, e.g. `view roughness`, `view curvature`. `normal` and `height` are channels; the mesh maps are `normal-map` and `height-map`. |
 | `tiles on\|off` | Tint by UDIM tile. |
 | `environment <library item or file.hdr\|exr>`, `exposure <ev>` | Lighting. Library folder `environments`. See [Viewport lighting](viewport-lighting.md). |

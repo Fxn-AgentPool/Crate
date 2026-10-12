@@ -45,6 +45,7 @@ Directions for specific tasks, assuming you already know your way around.
 - [How to bake mesh maps](how-to/bake-mesh-maps.md)
 - [How to bake from a high-poly mesh](how-to/bake-from-a-high-poly-mesh.md)
 - [How to paint in manual bake mode](how-to/paint-in-manual-bake-mode.md)
+- [How to paint in the UV view](how-to/paint-in-the-uv-view.md)
 - [How to paint through a stencil](how-to/paint-through-a-stencil.md)
 - [How to mask a layer with a generator](how-to/mask-a-layer-with-a-generator.md)
 - [How to edit a layer as a node graph](how-to/edit-a-layer-as-a-graph.md)
@@ -65,6 +66,7 @@ Technical descriptions of the machinery. Structured like the application.
 
 - [Project format](reference/project-format.md)
 - [Mesh import and UDIM tiles](reference/mesh-and-udims.md)
+- [UV view](reference/uv-view.md)
 - [Channels](reference/channels.md)
 - [Layers and masks](reference/layers.md)
 - [Blend modes](reference/blend-modes.md)

@@ -5,7 +5,7 @@ the viewport.
 
 | Panel | Default location | Contents |
 |---|---|---|
-| Viewport | center | 3D view of the mesh. Paint buffer and stencils are drawn over it. See [Viewport](#viewport). |
+| Viewport | center | 3D view of the mesh, the [UV view](uv-view.md), or both side by side. Paint buffer and stencils are drawn over it. See [Viewport](#viewport). |
 | Viewport toolbar | above the viewport | The brush's **Size**, **Flow** and **Hardness**, and **Bake Mesh Maps**. See [Viewport](#viewport). |
 | Layers | right | The root stack, or the selected group. The channel menu in its header chooses the channel whose blend mode and opacity the rows show. See [Layers and masks](layers.md). |
 | Properties | right, below Layers | Parameters of the selected layer, mask layer or node. Its header shows the selected layer's or mask layer's name. |
@@ -148,7 +148,7 @@ The Library is shown only while a project is open.
 
 | Part | Where | Contents |
 |---|---|---|
-| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, **Bake Mesh Maps** opens or closes the [Mesh Maps](mesh-maps.md) window; it is highlighted while the window is open, and an amber dot shows while a map that can be baked is missing or out of date. The bake mode is in the [Paint Buffer](paint-buffer.md) section and the status bar; `Ctrl+Shift+B` switches it. |
+| Toolbar | Strip above the viewport | **Size** (in pixels), **Flow** (in %) and **Hardness** fields: the same values as in the **Brush** section. On the right, the **3D · Split · UV** layout control (see [UV view](uv-view.md#layouts)), then **Bake Mesh Maps** opens or closes the [Mesh Maps](mesh-maps.md) window; it is highlighted while the window is open, and an amber dot shows while a map that can be baked is missing or out of date. The bake mode is in the [Paint Buffer](paint-buffer.md) section and the status bar; `Ctrl+Shift+B` switches it. |
 | Display | Top left, over the view | **Material** and one button per enabled channel. Choosing one shows it in the viewport, like the display shortcuts. While a mesh map is shown, none is highlighted. Hidden while the viewport is too narrow for it. |
 
 ## Menus
