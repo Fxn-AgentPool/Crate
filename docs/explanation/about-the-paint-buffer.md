@@ -72,7 +72,8 @@ way of mapping texels to the screen: where the 3D view projects each texel's sur
 through the camera, the UV view places it by its UV. Strokes go into the same buffer and are
 baked by the same pass, so brushes, stencils, Manual mode and undo behave identically.
 
-The UV view only paints where the mesh covers a tile. A texel outside every UV island belongs to
-no surface: the material can't be evaluated there (nothing gives it a position, a normal or mesh
-maps), export doesn't write it, and a reimport with new UVs couldn't carry it over. Painting
-there would leave paint that is never seen.
+Ordinary paint only reaches the UV islands and their padding, from either view: a texel
+between islands has no surface of its own, so ordinary paint there couldn't be carried to new
+UVs on reimport, and it would mostly be hidden by padding. [2D paint](../reference/2d-paint.md)
+is the deliberate exception; see [About painting between UV
+islands](about-painting-between-islands.md).

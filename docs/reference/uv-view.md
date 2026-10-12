@@ -26,7 +26,7 @@ the display mode is shared.
 
 | Part | Contents |
 |---|---|
-| Background | The viewport background. |
+| Background | The viewport background. With **Gaps** on, the space between islands shows the final texture instead (see [2D paint](2d-paint.md#display)). |
 | UDIM grid | Every tile from 1001 to the highest tile in use, as unit squares with U to the right and V up. Used tiles are outlined in the border color and labeled with their number in their bottom-left corner; unused tiles only as faint lines. |
 | Material | Each triangle drawn at its UVs, shaded with the same material and display mode as the 3D view. Where islands overlap in UV space, the triangle that comes first in the mesh shows. |
 | UV edges | The triangles' edges, always shown, dark at 35 % opacity. |
@@ -56,9 +56,10 @@ frames the used tiles. The UV view's center and zoom are saved with the project
 ## Painting
 
 Brushes, tools, stencils, brush values and the paint buffer work as in the 3D view; strokes are
-painted into the same buffer and baked into the same tiles. Painting only reaches texels the
-mesh covers: the UV islands and their padding (8 texels by default). Elsewhere a tile has no
-surface, so there's nothing to paint, show or export.
+painted into the same buffer and baked into the same tiles. Ordinary paint only reaches texels
+the mesh covers: the UV islands and their padding (8 texels by default). [2D paint](2d-paint.md)
+reaches every texel of a used tile, and the [Pixel brush](2d-paint.md#pixel-brush) paints exact
+texels.
 
 Differences from the 3D view:
 

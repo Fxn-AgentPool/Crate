@@ -49,7 +49,7 @@ Every node has:
 |---|---|
 | Id | Unique, read-only. |
 | Label | Optional display name. |
-| Cached | If on, the node's output is evaluated in UV space and stored per tile. See [About realtime evaluation](../explanation/about-realtime-evaluation.md). Available for nodes with one Material output, or at most one Color and one Float output and no Vector output. A Stack used as a Group layer is not read from its cache. |
+| Cached | If on, the node's output is evaluated in UV space and stored per tile. See [About realtime evaluation](../explanation/about-realtime-evaluation.md). Available for nodes with one Material output, or at most one Color and one Float output and no Vector output. A Stack used as a Group layer is not read from its cache, nor is a node that reads [2D paint](2d-paint.md#caching). |
 | Exposed parameters | Settings and value inputs marked **Expose** appear on the owning layer in the Layers panel and on smart materials. An exposed value input that is connected has no effect. |
 
 ## Categories
@@ -66,7 +66,7 @@ Node Editor and where the node is listed in the add menu, in this order:
 | Vector | indigo `#3C3C83` | UV Transform, Mapping, Vector Math |
 | Converter | blue `#246283` | Math, Clamp, Ramp, Combine XYZ, Separate XYZ, Material Combine, Material Split |
 | Filter | purple `#6C3B75` | Blur, Dilate, Height to Normal |
-| Layer | dark green `#2D6A2D` | Paint, Paint Mask, Fill, Stack, Mask Stack |
+| Layer | dark green `#2D6A2D` | Paint, Paint Mask, 2D Paint, 2D Paint Mask, Fill, Stack, Mask Stack |
 | Layout | gray `#4A4D55` | Reroute |
 | Output | dark red `#4D0017` | Material Output (not in the add menu) |
 
@@ -177,6 +177,8 @@ cannot be turned off. Their radius and strength are settings, the same for the w
 |---|---|---|---|
 | Paint | — | Out (Material) | Channels painted. Holds paint pages. |
 | Paint Mask | — | Out (Float) | Holds single-channel paint pages. |
+| 2D Paint | — | Out (Material) | Like Paint, but read at its own texel between UV islands. See [2D paint](2d-paint.md). |
+| 2D Paint Mask | — | Out (Float) | Like Paint Mask, read at its own texel between UV islands. |
 | Fill | — | Out (Material) | Same as [Fill layer properties](layers.md#fill-layer-properties). |
 | Stack | Material slots | Out (Material) | Ordered layer slots. Displayed by the Layers panel. |
 | Mask Stack | Float slots | Out (Float) | Ordered mask layer slots. |

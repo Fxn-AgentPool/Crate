@@ -35,7 +35,17 @@ painting projects onto. **Normal** and **Height** need a high-poly mesh; without
 | Spread angle | AO | 180° | Cone angle of the AO rays. |
 | Ignore backfaces | AO | on | Rays hitting backfaces don't count as occlusion. |
 | Curvature radius | Curvature | 0.005 | Sampling radius, relative to the bounding box diagonal. |
-| Padding | all | 8 texels | Dilation into empty UV space. |
+| Padding | all | 8 texels | How far beyond the UV islands painting reaches (see [Padding](#padding)). |
+
+### Padding
+
+The Position, World Normal and ID maps cover every texel of a used tile. Texels of a UV island
+hold their own values; every other texel holds a copy of the nearest island texel's (the nearest
+by distance in texels, found by jump flooding). Texels within **Padding** texels of an island
+are padding: ordinary paint reaches them, so seams stay hidden. Texels farther out only lend
+their copied surface point to the material between islands (see
+[2D paint](2d-paint.md#the-space-between-islands)). The ray-traced and high-poly maps are only
+baked for island and padding texels.
 
 ## High-poly mesh
 

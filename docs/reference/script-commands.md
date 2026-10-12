@@ -68,7 +68,7 @@ full file name is used. An argument with an extension is a file path, relative t
 
 | Command | Description |
 |---|---|
-| `add-fill [name]`, `add-paint [name]` | Add a layer above the selected one and select it. |
+| `add-fill [name]`, `add-paint [name]`, `add-paint-2d [name]` | Add a fill, paint or [2D paint](2d-paint.md) layer above the selected one and select it. |
 | `select <layer name>` | Select a layer (searches folders too). |
 | `select-mask <index>` | Select a mask layer of the selected layer (0 = bottom). |
 | `rename <name>` | Rename the selected layer. |
@@ -79,7 +79,8 @@ full file name is used. An argument with an extension is a file path, relative t
 | `undo`, `redo` | Undo or redo. |
 | `add-mask`, `add-black-mask` | Add a white or black mask to the selected layer. |
 | `add-generator <type>` | Add a generator effect: `edge-wear`, `dirt`, `curvature-mask`, `position-gradient`. |
-| `add-mask-paint`, `add-mask-fill`, `add-mask-levels` | Add a paint, fill or levels effect to the mask. |
+| `add-mask-paint`, `add-mask-paint-2d`, `add-mask-fill`, `add-mask-levels` | Add a paint, 2D paint, fill or levels effect to the mask. |
+| `uv-gaps on\|off` | The UV view's **Gaps** toggle, for renders after `uv-view`. |
 | `save-smart [name]` | Save the selected layer as a smart material. |
 | `add-smart <name or file.smat>` | Add a smart material from the library (`smart-materials`) or a file. |
 | `delete-smart <name>` | Delete a smart material from the library. |

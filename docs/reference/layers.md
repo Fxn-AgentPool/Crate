@@ -8,6 +8,7 @@ stack is shown by default. Layers are composited bottom to top.
 | Type | Icon | Content |
 |---|---|---|
 | Paint layer | brush | A multi-channel Paint node. Receives baked paint from the paint buffer. |
+| 2D paint layer | brush with "2D" | A 2D Paint node: paint that reaches every texel from the UV view. See [2D paint](2d-paint.md). |
 | Fill layer | paint bucket | Per-channel constant values or images, projected by UV or triplanar mapping. |
 | Group | folder | A nested Stack node. Has its own layers, mask, opacity and blend modes. |
 | Graph layer | nodes | Any node graph that outputs a Material. Shown when the content is not a Paint, Fill or Stack node. |
@@ -65,6 +66,7 @@ mask layers composited the same way as layers, producing a value from 0 to 1.
 | Mask layer type | Content |
 |---|---|
 | Paint | Single-channel paint. Painted with the same tools as layers. |
+| 2D paint | Single-channel [2D paint](2d-paint.md): reaches every texel from the UV view. |
 | Fill | Constant value or grayscale image. |
 | Generator | A node graph with a Float output, typically from the generator nodes. |
 | Levels | Adjusts the mask below it (input/output black and white points, gamma). |
@@ -89,6 +91,7 @@ composited result; this is an approximation of fully isolated group compositing.
 |---|---|---|
 | Add paint layer | `Ctrl+Shift+N` | Inserts above the selected layer. |
 | Add fill layer | `Ctrl+Shift+F` | Inserts above the selected layer. |
+| Add 2D paint layer | **+** menu | Inserts a [2D paint](2d-paint.md) layer above the selected layer. |
 | Group selected | `Ctrl+G` | Moves the selected layers into a new Group. `Ctrl`+click selects several layers of the same stack. |
 | Add mask | context menu | Adds an empty mask (white = fully visible). |
 | Add black mask | context menu | Adds a mask with value 0. |

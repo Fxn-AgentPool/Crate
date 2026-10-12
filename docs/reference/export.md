@@ -13,7 +13,7 @@ writes image files.
 | Format | per preset | PNG, TGA, EXR. |
 | Bit depth | per preset | PNG: 8, 16. TGA: 8. EXR: 16f, 32f. |
 | Resolution | tile resolution | Downscaling only. |
-| Padding | Infinite | `None`, `N texels`, or `Infinite` (fill all empty space by dilation). |
+| Padding | Infinite | `None`, `N texels`, or `Infinite` (fill all empty space by dilation). Texels between islands that [2D paint](2d-paint.md#export) covers are always written. |
 | Normal format | OpenGL | OpenGL (+Y) or DirectX (−Y). |
 | Tiles | all | Subset of tiles to export. |
 

@@ -32,6 +32,8 @@ If neither is selected, painting is disabled and the cursor shows ⊘.
 | Follow stroke | on/off | off | Rotates the tip along the stroke direction. |
 | Jitter: size / angle / position / flow | 0–1 | 0 | Random variation per dab. |
 | Pressure → size / flow / opacity | on/off | size on | Maps pen pressure to the property. |
+| Pixel | on/off | off | In the UV view: a hard square of whole texels, snapped to the texel grid. See [Pixel brush](2d-paint.md#pixel-brush). |
+| Pixel size | 1–64 texels | 1 | The square's side while **Pixel** is on. |
 
 ## Brush values
 
