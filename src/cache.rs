@@ -189,10 +189,12 @@ fn filters<'a>(gpu: &Gpu, c: &'a mut Caches) -> &'a Filters {
 fn pipeline(gpu: &Gpu, p: &mut crate::project::Project, target: &Target, material: bool) -> anyhow::Result<wgpu::RenderPipeline> {
     let scene = &p.scene;
     let (slots, masks, caches) = (&p.paint_slots, &p.mask_slots, &p.caches);
+    let curve_slot = |id| p.curve_slot(id);
     let env = compile::Env {
         preview: None,
         image_layer: &|n| scene.image_layer(n),
         paint_slot: &|id| slots.get(&id).or(masks.get(&id)).copied(),
+        curve_slot: &|id| curve_slot(id),
         cache: &|id| caches.lookup(id),
     };
     let code = compile::compile_target(&p.graph, &p.channels, &env, target);

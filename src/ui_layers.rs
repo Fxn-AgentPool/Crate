@@ -200,14 +200,14 @@ pub fn selection_name(p: &Project) -> Option<String> {
     }
 }
 
-pub fn properties_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
+pub fn properties_panel(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, src: &mut crate::ui_curves::BrushSource) {
     let Some(sel) = p.selection else {
         ui.label(RichText::new("Select a layer.").weak());
         return;
     };
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match sel {
-        Selection::Layer(l) => layer_properties(ui, gpu, p, l),
-        Selection::MaskLayer(l, i) => mask_layer_properties(ui, gpu, p, l, i),
+        Selection::Layer(l) => layer_properties(ui, gpu, p, l, src),
+        Selection::MaskLayer(l, i) => mask_layer_properties(ui, gpu, p, l, i, src),
     });
 }
 
@@ -222,7 +222,7 @@ pub fn track(p: &mut Project, gpu: &Gpu, resp: &egui::Response, label: &str, app
     }
 }
 
-fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) {
+fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, src: &mut crate::ui_curves::BrushSource) {
     let Some(slot) = ops::slot(&p.graph, l).cloned() else { return };
     let kind = ops::layer_kind(&p.graph, &slot);
     let channels: Vec<Channel> = Channel::ALL.into_iter().filter(|c| p.channels.is_enabled(*c)).collect();
@@ -281,9 +281,11 @@ fn layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef) 
         }
         LayerKind::Paint => {
             crate::ui_widgets::hint(ui, "Paint with the Paint tool (B).");
+            crate::ui_curves::curves_section(ui, gpu, p, content, src);
         }
         LayerKind::Paint2d => {
             crate::ui_widgets::hint(ui, "Paint with the Paint tool (B). In the UV view this reaches every texel; it stays in UV space on reimport.");
+            crate::ui_curves::curves_section(ui, gpu, p, content, src);
         }
         LayerKind::Graph | LayerKind::SmartMaterial | LayerKind::Group => {
             exposed_parameters(ui, gpu, p, content);
@@ -380,7 +382,7 @@ fn fill_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
     });
 }
 
-fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, i: usize) {
+fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, i: usize, src: &mut crate::ui_curves::BrushSource) {
     let Some(m) = ops::mask_slot(&p.graph, l, i).cloned() else { return };
     let mut opacity = m.opacity * 100.0;
     let r = ui.add(Field::new(&mut opacity, 0.0..=100.0).label("Opacity").decimals(0).suffix(" %"));
@@ -430,6 +432,7 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
             let n = p.graph.node(node).clone();
             if crate::graph::is_paint_mask(&n.ty) {
                 ui.label(RichText::new("Paint with the Paint tool (B).").weak());
+                crate::ui_curves::curves_section(ui, gpu, p, node, src);
             }
             // Settings that apply, and value inputs nothing is connected to.
             for def in n.def().params.iter().filter(|d| n.shows(d) && !n.inputs.contains_key(d.name)) {

@@ -69,6 +69,7 @@ pub fn compute(low: &LowMesh, low_match: &[u32], samples: &[(Vec3, u32)], diagon
         indices: low.indices.clone(),
         materials: Vec::new(),
         groups: Vec::new(),
+        faces: Vec::new(),
         tiles: Vec::new(),
         bbox_min: Vec3::ZERO,
         bbox_max: Vec3::ZERO,
@@ -194,7 +195,7 @@ fn closest(bvh: &Bvh, tri_match: &[u32], p: Vec3, id: u32, max_d: f32) -> Option
 
 /// Closest point on triangle `abc` to `p`, and its barycentric coordinates (Ericson, Real-Time
 /// Collision Detection, 5.1.5).
-fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> (Vec3, Vec3) {
+pub(crate) fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> (Vec3, Vec3) {
     let (ab, ac, ap) = (b - a, c - a, p - a);
     let (d1, d2) = (ab.dot(ap), ac.dot(ap));
     if d1 <= 0.0 && d2 <= 0.0 {

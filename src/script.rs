@@ -505,8 +505,15 @@ impl Session {
                     Some("paint") => Tool::Paint,
                     Some("erase") => Tool::Erase,
                     Some("paint-through") => Tool::PaintThrough,
-                    _ => bail!("tool paint|erase|paint-through"),
+                    Some("geo-fill") => Tool::GeoFill,
+                    Some("curve") => Tool::Curve,
+                    _ => bail!("tool paint|erase|paint-through|geo-fill|curve"),
                 };
+                if self.paint.tool != Tool::Curve {
+                    if let Some(p) = self.project.as_mut() {
+                        crate::curve::finish(&gpu, p);
+                    }
+                }
             }
             "mode" => {
                 let mode = match rest.first().map(String::as_str) {
@@ -914,6 +921,142 @@ impl Session {
                 anyhow::ensure!(max >= min, "images are too similar (max difference {max}, expected at least {min})");
                 say!("  different (max difference {max})");
             }
+            "fill-by" => {
+                use crate::geo::FillBy;
+                self.paint.fill_by = match rest.first().map(String::as_str) {
+                    Some("face") => FillBy::Face,
+                    Some("island") => FillBy::Island,
+                    Some("part") => FillBy::Part,
+                    Some("material") => FillBy::Material,
+                    Some("tile") => FillBy::Tile,
+                    _ => bail!("fill-by face|island|part|material|tile"),
+                };
+            }
+            "geo-fill" => {
+                let pt = self.screen_point(rest.first().context("geo-fill <point>")?)?;
+                let view_of = self.view_of();
+                let p = self.project.as_mut().context("no project")?;
+                p.finish_background_work(&gpu);
+                self.paint.geo_fill(&gpu, p, &view_of, self.size, pt).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "curve" => {
+                let closed = rest.first().is_some_and(|a| a == "closed");
+                let args = &rest[closed as usize..];
+                anyhow::ensure!(!args.is_empty(), "curve [closed] <point> <point>...");
+                anyhow::ensure!(self.uv.is_none(), "curves are drawn in the 3D view: use camera first");
+                let pts: Vec<Vec2> = args.iter().map(|a| self.screen_point(a)).collect::<Result<_>>()?;
+                let (camera, size) = (self.camera, self.size);
+                let p = self.project.as_mut().context("no project")?;
+                p.finish_background_work(&gpu);
+                let surface = |p: &crate::project::Project, pt: Vec2| {
+                    crate::curve::surface_point(p, &camera, size, pt).with_context(|| format!("point {},{} misses the mesh", pt.x / size.0 as f32, pt.y / size.1 as f32))
+                };
+                let first = surface(p, pts[0])?;
+                let world = crate::curve::world_per_px(&camera, size, glam::Vec3::from(first.pos));
+                let width = crate::curve::brush_world_size(&self.paint.brush, Some(world));
+                let e = |e: String| anyhow::anyhow!(e);
+                crate::curve::start(&gpu, p, first, &self.paint.brush, &self.paint.values, width).map_err(e)?;
+                for (k, &pt) in pts.iter().enumerate().skip(1) {
+                    let point = surface(p, pt)?;
+                    crate::curve::insert_point(&gpu, p, k, point).map_err(e)?;
+                }
+                if closed {
+                    crate::curve::close(&gpu, p).map_err(e)?;
+                }
+                crate::curve::finish(&gpu, p);
+                anyhow::ensure!(crate::curve::selected(p).is_some(), "a curve needs two or more points");
+            }
+            "curve-select" => {
+                let i: usize = rest.first().context("curve-select <index>")?.parse()?;
+                let p = self.project.as_mut().context("no project")?;
+                crate::curve::select(p, Some(i)).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "curve-set" => {
+                let p = self.project.as_mut().context("no project")?;
+                let (node, i) = crate::curve::selected(p).context("no curve selected: curve-select first")?;
+                let mut c = p.graph.node(node).curves[i].clone();
+                for kv in rest {
+                    let (k, v) = kv.split_once('=').context("curve-set key=value")?;
+                    match k {
+                        "name" => c.name = v.to_string(),
+                        "size" => c.size = v.parse::<f32>()?.max(1e-6),
+                        "hardness" => c.hardness = v.parse::<f32>()?.clamp(0.0, 1.0),
+                        "flow" => c.flow = v.parse::<f32>()?.clamp(0.0, 1.0),
+                        "opacity" => c.opacity = v.parse::<f32>()?.clamp(0.0, 1.0),
+                        "spacing" => c.spacing = v.parse::<f32>()?.clamp(1.0, 200.0),
+                        "angle" => c.angle = v.parse()?,
+                        "jitter_size" => c.jitter_size = v.parse()?,
+                        "jitter_angle" => c.jitter_angle = v.parse()?,
+                        "jitter_position" => c.jitter_position = v.parse()?,
+                        "jitter_flow" => c.jitter_flow = v.parse()?,
+                        "closed" => c.closed = v == "on",
+                        "mask" => c.values.mask_value = v.parse()?,
+                        "alpha" if v == "round" => c.alpha.clear(),
+                        "alpha" => {
+                            let path = crate::library::resolve(v, "alphas", |s| self.path(s))?;
+                            let p = self.project.as_mut().context("no project")?;
+                            c.alpha = p.import_image(&gpu, &path)?;
+                        }
+                        _ => {
+                            let ch = channel_by_key(k).with_context(|| format!("unknown curve property {k}"))?;
+                            if v == "off" {
+                                c.values.enabled[ch.index()] = false;
+                            } else {
+                                c.values.enabled[ch.index()] = true;
+                                c.values.values[ch.index()] = parse_color(v)?;
+                            }
+                        }
+                    }
+                }
+                anyhow::ensure!(!c.closed || c.points.len() >= 3, "a closed curve needs 3 or more points");
+                let p = self.project.as_mut().context("no project")?;
+                p.edit(&gpu, "Curve settings", |g| g.node_mut(node).curves[i] = c);
+            }
+            "curve-point" | "curve-insert" => {
+                let usage = format!("{cmd} <index> <point>");
+                let at: usize = rest.first().context(usage.clone())?.parse()?;
+                let pt = self.screen_point(rest.get(1).context(usage)?)?;
+                anyhow::ensure!(self.uv.is_none(), "curves are edited in the 3D view: use camera first");
+                let (camera, size) = (self.camera, self.size);
+                let p = self.project.as_mut().context("no project")?;
+                let point = crate::curve::surface_point(p, &camera, size, pt).context("the point misses the mesh")?;
+                let e = |e: String| anyhow::anyhow!(e);
+                if cmd == "curve-point" {
+                    p.checkpoint("Move curve point");
+                    crate::curve::move_point(&gpu, p, at, point).map_err(e)?;
+                } else {
+                    crate::curve::insert_point(&gpu, p, at, point).map_err(e)?;
+                }
+            }
+            "curve-delete-point" => {
+                let at: usize = rest.first().context("curve-delete-point <index>")?.parse()?;
+                let p = self.project.as_mut().context("no project")?;
+                crate::curve::delete_point(&gpu, p, at).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "curve-order" => {
+                let up = match rest.first().map(String::as_str) {
+                    Some("up") => true,
+                    Some("down") => false,
+                    _ => bail!("curve-order up|down"),
+                };
+                let p = self.project.as_mut().context("no project")?;
+                crate::curve::reorder(&gpu, p, up).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "curve-delete" => {
+                let p = self.project.as_mut().context("no project")?;
+                crate::curve::delete(&gpu, p).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "rasterize-curves" => {
+                let p = self.project.as_mut().context("no project")?;
+                self.paint.merge_curves(&gpu, p).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            "expect-curves" => {
+                let want: usize = rest.first().context("expect-curves <count>")?.parse()?;
+                let p = self.project.as_ref().context("no project")?;
+                let node = crate::curve::target(p).map_err(|e| anyhow::anyhow!(e))?;
+                let got = p.graph.node(node).curves.len();
+                anyhow::ensure!(got == want, "the layer holds {got} curves, expected {want}");
+            }
             "bake-buffer" => {
                 let p = self.project.as_mut().context("no project")?;
                 self.paint.bake(&gpu, p).map_err(|e| anyhow::anyhow!(e))?;
@@ -1006,6 +1149,13 @@ impl Session {
     }
 
     /// What renders and strokes show: the UV view after `uv-view`, otherwise the 3D camera.
+    /// A screen point given as viewport fractions `x,y`, in pixels.
+    fn screen_point(&self, s: &str) -> Result<Vec2> {
+        let v: Vec<f32> = s.split(',').map(|x| x.parse()).collect::<Result<_, _>>()?;
+        anyhow::ensure!(v.len() == 2, "points are x,y (fractions of the viewport)");
+        Ok(Vec2::new(v[0], v[1]) * Vec2::new(self.size.0 as f32, self.size.1 as f32))
+    }
+
     fn view_of(&self) -> crate::camera::View {
         match self.uv {
             Some(v) => crate::camera::View::Uv(v),

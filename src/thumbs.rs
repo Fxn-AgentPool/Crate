@@ -61,7 +61,11 @@ impl Thumbnails {
     /// Thumbnail of a Paint / Paint Mask node, or None if it has never been painted.
     pub fn get(&mut self, ctx: &egui::Context, gpu: &Gpu, p: &Project, node: NodeId) -> Option<egui::TextureId> {
         let mask = p.graph.get(node).is_some_and(|n| crate::graph::is_paint_mask(&n.ty));
-        let slot = if mask { p.mask_slots.get(&node) } else { p.paint_slots.get(&node) }.copied()?;
+        let slot = if mask { p.mask_slots.get(&node) } else { p.paint_slots.get(&node) }.copied();
+        let curves = p.curve_slot(node);
+        if slot.is_none() && curves.is_none() {
+            return None;
+        }
         let now = ctx.input(|i| i.time);
         let entry = self.cache.get(&node);
         let stale = entry.is_none_or(|(e, _, _)| *e != p.paint_epoch);
@@ -73,7 +77,8 @@ impl Thumbnails {
         }
         if stale && due {
             let pool = if mask { &p.scene.mask } else { &p.scene.paint[0] };
-            let image = self.render(gpu, pool, slot * p.tile_count(), p.tile_count(), mask);
+            let first = |s: Option<u32>| s.map(|s| s * p.tile_count());
+            let image = self.render(gpu, pool, first(slot), first(curves), p.tile_count(), mask);
             match self.cache.get_mut(&node) {
                 Some((epoch, time, handle)) => {
                     handle.set(image, egui::TextureOptions::LINEAR);
@@ -90,7 +95,8 @@ impl Thumbnails {
     }
 
     /// Renders up to four tiles in a grid (one tile fills the thumbnail).
-    fn render(&self, gpu: &Gpu, pool: &crate::scene::Pool, first_layer: u32, tiles: u32, mask: bool) -> egui::ColorImage {
+    /// `paint` and `curves` are the first array layers of the node's paint and curve slots.
+    fn render(&self, gpu: &Gpu, pool: &crate::scene::Pool, paint: Option<u32>, curves: Option<u32>, tiles: u32, mask: bool) -> egui::ColorImage {
         let d = &gpu.device;
         let n = tiles.clamp(1, 4);
         let cols = if n == 1 { 1 } else { 2 };
@@ -100,7 +106,7 @@ impl Thumbnails {
             .map(|t| {
                 let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("thumbnail params"),
-                    contents: bytemuck::cast_slice(&[(first_layer + t) as f32, mask as u8 as f32, cell as f32, 0.0]),
+                    contents: bytemuck::cast_slice(&[paint.map_or(-1.0, |l| (l + t) as f32), mask as u8 as f32, cell as f32, curves.map_or(-1.0, |l| (l + t) as f32)]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 d.create_bind_group(&wgpu::BindGroupDescriptor {

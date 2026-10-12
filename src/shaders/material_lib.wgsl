@@ -162,6 +162,24 @@ fn paint_sample(slot: u32, s: Surface) -> Mat {
     return m;
 }
 
+// A node's curves over its freehand paint (docs/reference/curves.md#order): both premultiplied
+// with coverage, composited per channel.
+fn paint_over(below: Mat, top: Mat) -> Mat {
+    var m = below;
+    for (var c = 0u; c < 7u; c++) {
+        let a = top.a[c] + below.a[c] * (1.0 - top.a[c]);
+        let v = (top.v[c] * top.a[c] + below.v[c] * below.a[c] * (1.0 - top.a[c])) / max(a, 1e-5);
+        m.v[c] = select(below.v[c], v, a > 1e-6);
+        m.a[c] = a;
+    }
+    return m;
+}
+
+// The same for masks: (premultiplied value, coverage).
+fn paint_mask_over(below: vec2f, top: vec2f) -> vec2f {
+    return top + below * (1.0 - top.y);
+}
+
 // 2D paint (docs/reference/2d-paint.md): the texel itself, unfiltered, so a painted texel stays
 // a sharp square and texels between islands read their own paint.
 fn texel_of(s: Surface, res: u32) -> vec2i {

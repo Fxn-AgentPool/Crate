@@ -142,6 +142,7 @@ struct Ctx<'a> {
     func_done: HashSet<NodeId>,
     errors: Vec<String>,
     paint_slot: &'a dyn Fn(NodeId) -> Option<u32>,
+    curve_slot: &'a dyn Fn(NodeId) -> Option<u32>,
     cache: &'a dyn Fn(NodeId) -> Option<CacheRef>,
     /// Node evaluated for its own cache: never read from the cache.
     exclude: Option<NodeId>,
@@ -163,6 +164,8 @@ pub enum CacheRef {
 pub struct Env<'a> {
     pub image_layer: &'a dyn Fn(&str) -> i32,
     pub paint_slot: &'a dyn Fn(NodeId) -> Option<u32>,
+    /// Slot holding a paint node's curves, drawn over its paint (docs/reference/curves.md#order).
+    pub curve_slot: &'a dyn Fn(NodeId) -> Option<u32>,
     pub cache: &'a dyn Fn(NodeId) -> Option<CacheRef>,
     /// Node Editor preview: show this output instead of the Material Output (viewport only).
     pub preview: Option<&'a Link>,
@@ -309,9 +312,20 @@ impl<'a> Ctx<'a> {
             func_done: HashSet::new(),
             errors: Vec::new(),
             paint_slot: env.paint_slot,
+            curve_slot: env.curve_slot,
             cache: env.cache,
             exclude,
             linked: HashMap::new(),
+        }
+    }
+
+    /// A paint node's content: its paint, its curves over it, or None when it has neither.
+    fn paint_expr(&self, id: NodeId, sample: &str, over: &str) -> Option<String> {
+        let paint = (self.paint_slot)(id).map(|s| format!("{sample}({s}u, s)"));
+        let curves = (self.curve_slot)(id).map(|s| format!("{sample}({s}u, s)"));
+        match (paint, curves) {
+            (Some(p), Some(c)) => Some(format!("{over}({p}, {c})")),
+            (p, c) => p.or(c),
         }
     }
 
@@ -397,22 +411,16 @@ impl<'a> Ctx<'a> {
         let o = |out: &str| var(id, out);
         let mut lines: Vec<String> = Vec::new();
         match n.ty.as_str() {
-            "paint" => match (self.paint_slot)(id) {
-                Some(slot) => lines.push(format!("let {} = paint_sample({slot}u, s);", o("out"))),
-                None => lines.push(format!("let {} = mat_uncovered(mat_defaults());", o("out"))),
-            },
-            "paint_2d" => match (self.paint_slot)(id) {
-                Some(slot) => lines.push(format!("let {} = paint_sample_2d({slot}u, s);", o("out"))),
-                None => lines.push(format!("let {} = mat_uncovered(mat_defaults());", o("out"))),
-            },
-            "paint_mask_2d" => match (self.paint_slot)(id) {
-                Some(slot) => lines.push(format!("let {} = paint_mask_sample_2d({slot}u, s).x;", o("out"))),
-                None => lines.push(format!("let {} = 0.0;", o("out"))),
-            },
-            "paint_mask" => match (self.paint_slot)(id) {
-                Some(slot) => lines.push(format!("let {} = paint_mask_sample({slot}u, s).x;", o("out"))),
-                None => lines.push(format!("let {} = 0.0;", o("out"))),
-            },
+            "paint" | "paint_2d" => {
+                let sample = if n.ty == "paint" { "paint_sample" } else { "paint_sample_2d" };
+                let e = self.paint_expr(id, sample, "paint_over").unwrap_or_else(|| "mat_uncovered(mat_defaults())".into());
+                lines.push(format!("let {} = {e};", o("out")));
+            }
+            "paint_mask" | "paint_mask_2d" => {
+                let sample = if n.ty == "paint_mask" { "paint_mask_sample" } else { "paint_mask_sample_2d" };
+                let e = self.paint_expr(id, sample, "paint_mask_over").map(|e| format!("{e}.x")).unwrap_or_else(|| "0.0".into());
+                lines.push(format!("let {} = {e};", o("out")));
+            }
             "value" => {
                 let v = if n.param("type").as_str() == "Factor" { self.p(n, "factor") } else { self.p(n, "value") };
                 lines.push(format!("let {} = {v};", o("value")));
@@ -888,9 +896,9 @@ impl<'a> Ctx<'a> {
                     let Some(src_node) = g.get(*src) else { continue };
                     if graph::is_paint_mask(&src_node.ty) {
                         let sample = if graph::is_2d(&src_node.ty) { "paint_mask_sample_2d" } else { "paint_mask_sample" };
-                        match (self.paint_slot)(*src) {
-                            Some(ps) => {
-                                f.lines.push(format!("let pm{i} = {sample}({ps}u, s);"));
+                        match self.paint_expr(*src, sample, "paint_mask_over") {
+                            Some(e) => {
+                                f.lines.push(format!("let pm{i} = {e};"));
                                 f.lines.push(format!("let v{i} = pm{i}.x / max(pm{i}.y, 1e-5);"));
                                 f.lines.push(format!("let a{i} = pm{i}.y;"));
                             }
@@ -931,7 +939,7 @@ mod tests {
     use super::*;
 
     fn code(g: &Graph, preview: &Link) -> String {
-        let env = Env { image_layer: &|_| 0, paint_slot: &|_| None, cache: &|_| None, preview: Some(preview) };
+        let env = Env { image_layer: &|_| 0, paint_slot: &|_| None, curve_slot: &|_| None, cache: &|_| None, preview: Some(preview) };
         let c = compile(g, &ChannelSettings::default(), &env);
         assert!(c.errors.is_empty(), "{:?}", c.errors);
         c.code

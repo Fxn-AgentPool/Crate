@@ -87,6 +87,10 @@ pub struct CrateApp {
     restart: bool,
     /// File > Open Recent.
     recent: crate::recent::Recent,
+    /// The Curve and Geo Fill tools in the viewport.
+    curve_tool: crate::ui_curves::CurveTool,
+    /// Size of the 3D pane last frame, in pixels (Copy brush measures Screen sizes there).
+    pane3d_size: Option<(u32, u32)>,
 }
 
 #[derive(Clone)]
@@ -153,6 +157,8 @@ impl CrateApp {
             updater: Default::default(),
             restart: false,
             recent: crate::recent::Recent::load(),
+            curve_tool: Default::default(),
+            pane3d_size: None,
         };
         if let Err(e) = crate::library::ensure_folders() {
             log::warn!("{e:#}");
@@ -291,6 +297,17 @@ impl eframe::App for CrateApp {
                 None => {}
             }
         }
+        if let Some(doc) = &mut self.doc {
+            // Another tool, layer or mask finishes the curve being drawn (docs/reference/curves.md#drawing).
+            if let Some(s) = doc.curve_sel.filter(|s| s.drawing) {
+                let target = crate::curve::target(doc).ok();
+                if self.paint.tool != Tool::Curve || target != Some(s.node) {
+                    crate::curve::finish(&self.gpu, doc);
+                }
+            }
+            doc.validate_curve_selection();
+            self.curve_tool.keys(&self.gpu, doc, ui.ctx());
+        }
         self.shortcuts(ui.ctx());
         let ctx = ui.ctx().clone();
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
@@ -412,6 +429,8 @@ impl CrateApp {
                     A::ToolPaint => self.paint.tool = Tool::Paint,
                     A::ToolErase => self.paint.tool = Tool::Erase,
                     A::ToolPaintThrough => self.paint.tool = Tool::PaintThrough,
+                    A::ToolGeoFill => self.paint.tool = Tool::GeoFill,
+                    A::ToolCurve => self.paint.tool = Tool::Curve,
                     A::SofterBrush => self.paint.brush.hardness = (self.paint.brush.hardness - 0.1).max(0.0),
                     A::HarderBrush => self.paint.brush.hardness = (self.paint.brush.hardness + 0.1).min(1.0),
                     A::SmallerBrush => self.paint.brush.size = (self.paint.brush.size / 1.15).max(1.0),
@@ -420,6 +439,12 @@ impl CrateApp {
                     A::NewFillLayer => ui_layers::add_fill(gpu, doc),
                     A::Group => ui_layers::group_selected(gpu, doc),
                     A::Duplicate => ui_layers::duplicate_selected(gpu, doc),
+                    // With the Curve tool, Delete deletes the selected curve (docs/reference/curves.md#editing).
+                    A::Delete if self.paint.tool == Tool::Curve && crate::curve::selected(doc).is_some_and(|(n, _)| crate::curve::target(doc) == Ok(n)) => {
+                        if let Err(e) = crate::curve::delete(gpu, doc) {
+                            self.message = Some((e, time));
+                        }
+                    }
                     A::Delete => ui_layers::delete_selected(gpu, doc),
                     A::NextStencil => doc.stencils.next(),
                     A::SearchLibrary => self.library.focus_search(),
@@ -737,6 +762,9 @@ impl CrateApp {
             return;
         }
         let size = Vec2::new(w as f32, h as f32);
+        if pane == Pane::ThreeD {
+            self.pane3d_size = Some((w, h));
+        }
         if pane == Pane::Uv && self.uv_view.is_none() {
             let mut v = UvView::default();
             v.frame(&self.doc.as_ref().unwrap().mesh.tiles, size);
@@ -783,7 +811,14 @@ impl CrateApp {
         let owns_buffer = self.paint_pane == pane;
 
         let mut gesture_live = false;
-        if self.paint.stroking() {
+        let pane3 = crate::ui_curves::Pane3d { camera: self.camera, rect, ppp, size: (w, h) };
+        let tool_click = pressed && response.hovered() && !mods.alt && !v_down && !s_down;
+        if self.curve_tool.dragging() && pane == Pane::ThreeD {
+            // A curve point follows the pointer until the button is released.
+            if let Some(m) = self.curve_tool.input(gpu, doc, &self.paint, &pane3, hover, false, buttons[0], mods.command) {
+                self.message = Some((m, time));
+            }
+        } else if self.paint.stroking() {
             // Strokes continue until the button is released, in the pane they started in.
             if owns_buffer {
                 if let Some(hp) = hover {
@@ -881,7 +916,23 @@ impl CrateApp {
                     self.message = Some((CAMERA_LOCKED.into(), time));
                 }
             }
-        } else if pressed && response.hovered() && !mods.alt && !v_down && !s_down {
+        } else if tool_click && self.paint.tool == Tool::Curve {
+            // The Curve tool works in the 3D view only.
+            if pane == Pane::ThreeD {
+                let doc = self.doc.as_mut().unwrap();
+                if let Some(m) = self.curve_tool.input(gpu, doc, &self.paint, &pane3, hover, true, buttons[0], mods.command) {
+                    self.message = Some((m, time));
+                }
+            }
+        } else if tool_click && self.paint.tool == Tool::GeoFill {
+            if let Some(hp) = hover {
+                let view = self.pane_view(pane);
+                let doc = self.doc.as_mut().unwrap();
+                if let Err(e) = self.paint.geo_fill(gpu, doc, &view, (w, h), to_px(hp)) {
+                    self.message = Some((e, time));
+                }
+            }
+        } else if tool_click {
             if let Some(hp) = hover {
                 let doc = self.doc.as_mut().unwrap();
                 // A Manual-mode buffer of the other pane is handled like a camera move first.
@@ -1009,6 +1060,19 @@ impl CrateApp {
             ui.painter().rect_stroke(rect.shrink(1.5), 0.0, egui::Stroke::new(3.0, orange), egui::StrokeKind::Inside);
         }
         let doc = self.doc.as_ref().unwrap();
+        let has_target = doc.selection.and_then(|s| crate::ops::paint_target(&doc.graph, s)).is_some();
+        match self.paint.tool {
+            Tool::Curve if pane == Pane::ThreeD && has_target => self.curve_tool.draw(ui, doc, &pane3, hover),
+            Tool::GeoFill if has_target && !mods.alt => {
+                if let Some(hp) = hover.filter(|h| rect.contains(*h)) {
+                    let view = self.pane_view(pane);
+                    self.curve_tool.geo_hover(ui, doc, &self.paint, &view, rect, ppp, (w, h), hp);
+                }
+            }
+            _ => {}
+        }
+        // ⊘: nothing to paint into here (docs/reference/brushes-tools-stencils.md#tools).
+        let blocked = !has_target || (self.paint.tool == Tool::Curve && pane == Pane::Uv);
         let r = self.paint.brush.size * 0.5 / ppp;
         let b = &self.paint.brush;
         match (self.brush_gesture, hover) {
@@ -1030,7 +1094,8 @@ impl CrateApp {
                 ui.painter().text(at + egui::vec2(1.0, 1.0), egui::Align2::CENTER_CENTER, &readout, font.clone(), egui::Color32::from_black_alpha(160));
                 ui.painter().text(at, egui::Align2::CENTER_CENTER, readout, font, egui::Color32::WHITE);
             }
-            (None, Some(hp)) if rect.contains(hp) && !mods.alt => {
+            (None, Some(hp)) if rect.contains(hp) && !mods.alt && blocked => crate::ui_curves::not_allowed(ui, hp),
+            (None, Some(hp)) if rect.contains(hp) && !mods.alt && self.paint.tool.strokes() => {
                 crate::ui_paint::brush_cursor(ui, &self.gpu, doc, b, &mut self.tip_preview, hp, r);
             }
             _ => {}
@@ -1393,7 +1458,8 @@ impl CrateApp {
                     ui.label(egui::RichText::new(name).color(crate::ui_theme::TEXT_2));
                 });
                 egui::Frame::NONE.inner_margin(egui::Margin::same(crate::ui_theme::PANEL_PAD as i8)).show(ui, |ui| {
-                    ui_layers::properties_panel(ui, &self.gpu, doc);
+                    let mut src = crate::ui_curves::BrushSource { paint: &mut self.paint, view: self.pane3d_size.map(|s| (self.camera, s)) };
+                    ui_layers::properties_panel(ui, &self.gpu, doc, &mut src);
                 });
             });
             egui::CentralPanel::default().frame(bare).show(ui, |ui| {

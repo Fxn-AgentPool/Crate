@@ -37,6 +37,8 @@ pub enum Icon {
     Refresh,
     FileBrowser,
     Bake,
+    GeoFill,
+    Curve,
 }
 
 enum Source {
@@ -76,6 +78,8 @@ impl Icon {
             Icon::Refresh => Svg(include_bytes!("icons/file_refresh.svg")),
             Icon::FileBrowser => Svg(include_bytes!("icons/filebrowser.svg")),
             Icon::Bake => Svg(include_bytes!("icons/mod_uvproject.svg")),
+            Icon::GeoFill => Svg(include_bytes!("icons/facesel.svg")),
+            Icon::Curve => Svg(include_bytes!("icons/curve_bezcurve.svg")),
         }
     }
 }

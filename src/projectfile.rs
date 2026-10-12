@@ -105,6 +105,8 @@ struct NodeFile {
     pos: [f32; 2],
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     collapsed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    curves: Vec<crate::curve::Curve>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -206,6 +208,7 @@ fn graph_to_file(g: &Graph) -> GraphFile {
                 mask_slots,
                 pos: n.pos,
                 collapsed: n.collapsed,
+                curves: n.curves.clone(),
             }
         })
         .collect();
@@ -235,6 +238,7 @@ fn graph_from_file(f: GraphFile, root: &str) -> Result<Graph> {
                 mask_slots: nf.mask_slots,
                 pos: nf.pos,
                 collapsed: nf.collapsed,
+                curves: nf.curves,
             },
         );
         g.next_id = g.next_id.max(id + 1);

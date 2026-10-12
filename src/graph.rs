@@ -356,6 +356,10 @@ pub struct Node {
     /// Collapsed to its header in the Node Editor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collapsed: bool,
+    /// Paint and Paint Mask nodes: curves drawn over the paint, bottom to top
+    /// (docs/reference/curves.md).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<crate::curve::Curve>,
 }
 
 impl Node {
@@ -446,6 +450,7 @@ impl Graph {
                 mask_slots: Vec::new(),
                 pos: [0.0, 0.0],
                 collapsed: false,
+                curves: Vec::new(),
             },
         );
         id

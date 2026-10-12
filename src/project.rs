@@ -21,6 +21,16 @@ pub struct UndoStep {
     pub paint: Option<crate::paint::PaintPages>,
 }
 
+/// A paint node's curve slot.
+pub struct CurveSlot {
+    pub slot: u32,
+    pub mask: bool,
+    /// Signature of what the slot was last drawn from.
+    signature: u64,
+    /// Each curve's path on the surface, as last drawn.
+    pub paths: Vec<Vec<crate::curve::PathPoint>>,
+}
+
 pub const UNDO_LIMIT: usize = 64;
 pub const UNDO_BYTES: usize = 2 << 30;
 
@@ -73,6 +83,16 @@ pub struct Project {
     pub paint_slots: std::collections::BTreeMap<crate::graph::NodeId, u32>,
     /// Same for Paint Mask nodes (mask pool).
     pub mask_slots: std::collections::BTreeMap<crate::graph::NodeId, u32>,
+    /// Pool slots the curves of paint nodes are drawn into (docs/reference/curves.md), with what
+    /// they were drawn from. Not saved: drawn again from the graph.
+    pub curve_slots: std::collections::BTreeMap<crate::graph::NodeId, CurveSlot>,
+    /// The curve being edited with the Curve tool (UI state; not saved, not part of undo).
+    pub curve_sel: Option<crate::curve::CurveSelection>,
+    curve_gpu: crate::curve::CurveGpu,
+    /// Geometry queries on the mesh, built on first use.
+    geo: std::cell::OnceCell<crate::geo::Geo>,
+    /// Incremented when the mesh is replaced.
+    mesh_version: u64,
     pub stencils: crate::stencil::StencilSet,
     /// Original pixel size of imported images, by name.
     pub image_sizes: std::collections::BTreeMap<String, (u32, u32)>,
@@ -130,6 +150,11 @@ impl Project {
             material_version: 0,
             paint_slots: Default::default(),
             mask_slots: Default::default(),
+            curve_slots: Default::default(),
+            curve_sel: None,
+            curve_gpu: crate::curve::CurveGpu::new(gpu),
+            geo: Default::default(),
+            mesh_version: 0,
             image_sources: Default::default(),
             stencils: Default::default(),
             image_sizes: Default::default(),
@@ -198,6 +223,8 @@ impl Project {
 
     /// Recompiles the material after any change to the graph or channel settings.
     pub fn graph_changed(&mut self, gpu: &Gpu) {
+        self.validate_curve_selection();
+        self.update_curves(gpu);
         self.compile_material(gpu);
         self.edit_version += 1;
         self.update_scene(gpu);
@@ -209,14 +236,15 @@ impl Project {
         let caches = &self.caches;
         let image_layer = |n: &str| scene.image_layer(n);
         let paint_slot = |id| slots.get(&id).or(masks.get(&id)).copied();
+        let curve_slot = |id| self.curve_slot(id);
         let cache = |id| caches.lookup(id);
-        let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, cache: &cache, preview: None };
+        let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, curve_slot: &curve_slot, cache: &cache, preview: None };
         let compiled = compile::compile(&self.graph, &self.channels, &env);
         let code = format!("{}\n{}", compile::LIB_WGSL, compiled.code);
         // The preview only changes what the viewport shows; exports always use `material_code`.
         let preview = self.preview.as_ref().filter(|l| self.graph.get(l.node).is_some());
         let preview_code = preview.map(|l| {
-            let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, cache: &cache, preview: Some(l) };
+            let env = compile::Env { image_layer: &image_layer, paint_slot: &paint_slot, curve_slot: &curve_slot, cache: &cache, preview: Some(l) };
             format!("{}\n{}", compile::LIB_WGSL, compile::compile(&self.graph, &self.channels, &env).code)
         });
         self.scene.write_params(gpu, &compiled.params);
@@ -332,7 +360,7 @@ impl Project {
         let (res, tiles) = (self.tile_resolution(), self.tile_count());
         let slot;
         if mask {
-            slot = map.len() as u32;
+            slot = self.mask_slot_count();
             self.mask_slots.insert(node, slot);
             self.scene.ensure_mask_slots(gpu, slot + 1, res, tiles);
         } else {
@@ -392,7 +420,7 @@ impl Project {
             let nt = new_tiles.len() as u32;
             let fresh = |slots: u32| crate::scene::Pool::new(gpu, "paint plane", crate::scene::PAINT_FORMAT, res, (slots * nt).max(1).next_power_of_two());
             let slots = if self.scene.paint[0].res == res { self.next_paint_slot } else { 0 };
-            let mslots = if self.scene.mask.res == res { self.mask_slots.len() as u32 } else { 0 };
+            let mslots = if self.scene.mask.res == res { self.mask_slot_count() } else { 0 };
             let paint: Vec<crate::scene::Pool> = (0..self.scene.paint.len()).map(|_| fresh(slots)).collect();
             let mask_pool = fresh(mslots);
             let (pos, _) = maps.texture(MeshMap::Position);
@@ -475,7 +503,7 @@ impl Project {
                 let mut planes: Vec<&mut crate::scene::Pool> = self.scene.paint.iter_mut().collect();
                 remap(&mut planes, slots);
             }
-            let mslots = self.mask_slots.len() as u32;
+            let mslots = self.mask_slot_count();
             if mslots > 0 && self.scene.mask.res == res {
                 let mut m = vec![&mut self.scene.mask];
                 remap(&mut m, mslots);
@@ -496,12 +524,100 @@ impl Project {
         }
         self.saved_maps.clear();
         self.paint_epoch += 1;
+        // Curves are drawn again on the new surface (docs/reference/curves.md#saving-and-copying).
+        self.geo = Default::default();
+        self.mesh_version += 1;
         // Undo steps hold texels of the old pools.
         self.clear_history();
         self.edit_version += 1;
         self.last_transfer = Some(report);
         self.graph_changed(gpu);
         Ok(report)
+    }
+
+    /// Slots in use in the mask pool: Paint Mask nodes and their curves.
+    fn mask_slot_count(&self) -> u32 {
+        (self.mask_slots.len() + self.curve_slots.values().filter(|c| c.mask).count()) as u32
+    }
+
+    /// Incremented when the mesh is replaced.
+    pub fn mesh_version(&self) -> u64 {
+        self.mesh_version
+    }
+
+    /// Geometry queries on the mesh, built on first use.
+    pub fn geo(&self) -> &crate::geo::Geo {
+        self.geo.get_or_init(|| crate::geo::Geo::new(&self.mesh))
+    }
+
+    /// The slot holding a node's curves, if it has any.
+    pub fn curve_slot(&self, node: crate::graph::NodeId) -> Option<u32> {
+        let has = self.graph.get(node).is_some_and(|n| !n.curves.is_empty());
+        self.curve_slots.get(&node).filter(|_| has).map(|c| c.slot)
+    }
+
+    /// Draws the curves of every paint node whose curves, mesh or textures changed since they
+    /// were last drawn.
+    fn update_curves(&mut self, gpu: &Gpu) {
+        use std::hash::{Hash, Hasher};
+        let nodes: Vec<(crate::graph::NodeId, bool, u64)> = self
+            .graph
+            .nodes
+            .values()
+            .filter(|n| !n.curves.is_empty() && (crate::graph::is_paint(&n.ty) || crate::graph::is_paint_mask(&n.ty)))
+            .map(|n| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(&n.curves).unwrap_or_default().hash(&mut h);
+                for c in &n.curves {
+                    self.scene.image_layer(&c.alpha).hash(&mut h);
+                }
+                (self.mesh_version, self.maps.version, self.tile_resolution(), self.tile_count()).hash(&mut h);
+                crate::channels::Channel::ALL.map(|c| self.channels.is_enabled(c)).hash(&mut h);
+                (n.id, crate::graph::is_paint_mask(&n.ty), h.finish())
+            })
+            .collect();
+        let mut drawn = false;
+        for (node, mask, signature) in nodes {
+            if self.curve_slots.get(&node).is_some_and(|c| c.signature == signature && c.mask == mask) {
+                continue;
+            }
+            let slot = match self.curve_slots.get(&node) {
+                Some(c) if c.mask == mask => c.slot,
+                _ => {
+                    let (res, tiles) = (self.tile_resolution(), self.tile_count());
+                    let slot = if mask {
+                        let s = self.mask_slot_count();
+                        self.scene.ensure_mask_slots(gpu, s + 1, res, tiles);
+                        s
+                    } else {
+                        self.alloc_material_slot(gpu)
+                    };
+                    self.curve_slots.insert(node, CurveSlot { slot, mask, signature: 0, paths: Vec::new() });
+                    self.update_scene(gpu);
+                    slot
+                }
+            };
+            let curves = self.graph.node(node).curves.clone();
+            let paths = self.curve_gpu.render(gpu, self, &curves, slot, mask);
+            let entry = self.curve_slots.get_mut(&node).unwrap();
+            entry.signature = signature;
+            entry.paths = paths;
+            drawn = true;
+        }
+        if drawn {
+            self.paint_epoch += 1;
+        }
+    }
+
+    /// Drops the curve selection when its node or curve no longer exists.
+    pub fn validate_curve_selection(&mut self) {
+        if let Some(s) = self.curve_sel {
+            let target = self.selection.and_then(|sel| crate::ops::paint_target(&self.graph, sel));
+            let ok = target == Some(s.node) && s.curve.is_none_or(|c| self.graph.get(s.node).is_some_and(|n| c < n.curves.len()));
+            if !ok {
+                self.curve_sel = None;
+            }
+        }
     }
 
     /// Reserves a slot in the material paint pools (paint nodes and material caches).

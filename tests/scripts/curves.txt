@@ -1,0 +1,152 @@
+# Curves (docs/reference/curves.md) on tests/data/geo.obj: four unit quads in a row, facing the
+# camera (see make_geo.py). At camera 0 0 2 and size 400x200, world (x, y) is at screen
+# (0.5 + 0.2075 x, 0.5 - 0.415 y). Colors are checked in the UV view: Q2's center is UV
+# (0.55, 0.5), Q3's (1.25, 0.5); one world unit is 0.3 in UV. On islands the UV view shows colors
+# a few levels off their values, so they are checked within 8 levels.
+new tests/data/geo.obj 1024
+size 400x200
+add-fill
+set base_color=#808080
+add-paint
+rename Curves
+view base_color
+
+# Freehand paint under the curves: Q2 filled red.
+camera 0 0 2
+tool geo-fill
+fill-by face
+brush-values base_color=#C03020
+geo-fill 0.396,0.5
+
+# A curve along y = 0 from Q1 to Q4: across both parts and both tiles.
+tool curve
+brush-values base_color=#2040C0
+brush hardness=1 flow=1 opacity=1
+curve 0.189,0.5 0.5,0.5 0.811,0.5
+expect-curves 1
+curve-set size=0.5
+uv-view 0.55 0.5 40
+render target/tests/curves/q2.png
+expect-color target/tests/curves/q2.png 32,64,192 8
+uv-view 1.25 0.5 40
+render target/tests/curves/q3.png
+expect-color target/tests/curves/q3.png 32,64,192 8
+# Width: radius 0.25 world units. 0.2 from the path is inside, 0.35 outside (the red fill).
+uv-view 0.55 0.56 40
+render target/tests/curves/inside.png
+expect-color target/tests/curves/inside.png 32,64,192 8
+uv-view 0.55 0.605 40
+render target/tests/curves/outside.png
+expect-color target/tests/curves/outside.png 192,48,32 8
+
+# Erasing changes only the freehand paint: the red goes, the curve stays.
+camera 0 0 2
+tool erase
+brush size=60 hardness=1
+stroke 0.396,0.25 0.396,0.75
+uv-view 0.55 0.605 40
+render target/tests/curves/erased_outside.png
+expect-different target/tests/curves/outside.png target/tests/curves/erased_outside.png 40
+uv-view 0.55 0.5 40
+render target/tests/curves/erased_curve.png
+expect-color target/tests/curves/erased_curve.png 32,64,192 8
+
+# Settings stay editable.
+curve-select 0
+curve-set base_color=#30A040
+render target/tests/curves/recolored.png
+expect-color target/tests/curves/recolored.png 48,160,64 8
+
+# A second curve across Q3, on top of the first; moved down, the first is on top again.
+camera 0 0 2
+tool curve
+brush-values base_color=#C0A020
+curve 0.604,0.666 0.604,0.334
+expect-curves 2
+curve-set size=0.4
+uv-view 1.25 0.5 40
+render target/tests/curves/second_on_top.png
+expect-color target/tests/curves/second_on_top.png 192,160,32 8
+curve-order down
+render target/tests/curves/first_on_top.png
+expect-color target/tests/curves/first_on_top.png 48,160,64 8
+expect-error curve-order down
+curve-select 0
+curve-delete
+expect-curves 1
+
+# Points: insert, delete, closed.
+camera 0 0 2
+curve-select 0
+curve-insert 1 0.3,0.5
+expect-error curve-delete-point 4
+curve-delete-point 1
+expect-error curve-insert 9 0.3,0.5
+curve-set closed=on
+curve-set closed=off
+curve-delete-point 2
+expect-error curve-set closed=on
+# A point moved off the mesh is refused.
+expect-error curve-point 0 0.02,0.05
+expect-error curve 0.02,0.05 0.5,0.5
+
+# Saved in the project and drawn again on open.
+curve-insert 2 0.811,0.5
+uv-view 0.55 0.5 40
+render target/tests/curves/before_save.png
+save target/tests/curves/curves.crate
+open target/tests/curves/curves.crate
+select Curves
+expect-curves 1
+uv-view 0.55 0.5 40
+render target/tests/curves/after_open.png
+expect-same target/tests/curves/before_save.png target/tests/curves/after_open.png 0
+
+# Rasterize: the same look, as freehand paint; one undo step brings the curve back.
+uv-view 1.25 0.5 40
+render target/tests/curves/live.png
+rasterize-curves
+expect-curves 0
+render target/tests/curves/rasterized.png
+expect-same target/tests/curves/live.png target/tests/curves/rasterized.png 2
+undo
+expect-curves 1
+
+# A paint mask's curve: Mask value 0 hides the layer along it.
+camera 0 0 2
+add-fill
+rename Masked
+set base_color=#C03020
+add-mask
+add-mask-paint
+tool curve
+brush-values mask=0
+curve 0.189,0.5 0.811,0.5
+expect-curves 1
+curve-set size=0.5
+uv-view 0.55 0.5 40
+render target/tests/curves/masked_on_path.png
+expect-color target/tests/curves/masked_on_path.png 48,160,64 8
+uv-view 0.55 0.605 40
+render target/tests/curves/masked_off_path.png
+expect-color target/tests/curves/masked_off_path.png 192,48,32 8
+select Masked
+delete
+select Curves
+
+# Reimport with Q1 + Q2 moved down in UV space: the curve is drawn again on the surface, so it
+# follows Q2 to UV (0.55, 0.2).
+reimport tests/data/geo_moved.obj
+uv-view 0.55 0.2 40
+render target/tests/curves/reimported.png
+expect-color target/tests/curves/reimported.png 48,160,64 8
+
+# Smart materials carry curves; on another mesh their points are pulled onto its surface.
+group Curves
+rename "Curve Test Material"
+save-smart "Curve Test Material"
+new tests/data/geo.obj 1024
+add-smart "Curve Test Material"
+select Curves
+expect-curves 1
+delete-smart "Curve Test Material"

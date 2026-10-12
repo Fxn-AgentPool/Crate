@@ -33,6 +33,17 @@ pub enum Tool {
     Paint,
     Erase,
     PaintThrough,
+    /// Fills a mesh element (docs/reference/brushes-tools-stencils.md#geo-fill).
+    GeoFill,
+    /// Draws and edits curves (docs/reference/curves.md).
+    Curve,
+}
+
+impl Tool {
+    /// Whether the tool paints strokes through the paint buffer.
+    pub fn strokes(self) -> bool {
+        matches!(self, Tool::Paint | Tool::Erase | Tool::PaintThrough)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +327,8 @@ struct Buffers {
 
 pub struct PaintEngine {
     pub tool: Tool,
+    /// What a Geo Fill click fills.
+    pub fill_by: crate::geo::FillBy,
     pub brush: Brush,
     pub values: BrushValues,
     pub mode: BakeMode,
@@ -334,6 +347,12 @@ pub struct PaintEngine {
     dirty: Option<(wgpu::Buffer, u32)>,
     dab_pipeline: wgpu::ComputePipeline,
     bake_pipeline: wgpu::ComputePipeline,
+    fill_raster: wgpu::RenderPipeline,
+    fill_raster_layout: wgpu::BindGroupLayout,
+    fill_pipeline: wgpu::ComputePipeline,
+    merge_pipeline: wgpu::ComputePipeline,
+    /// Sampled stand-ins for planes a mask target doesn't have.
+    dummy_in: Vec<wgpu::Texture>,
     depth_pipeline: wgpu::RenderPipeline,
     depth_layout: wgpu::BindGroupLayout,
     overlay_pipeline: wgpu::RenderPipeline,
@@ -358,6 +377,39 @@ impl PaintEngine {
         };
         let dab_pipeline = compute(include_str!("shaders/dab.wgsl"), "dab");
         let bake_pipeline = compute(include_str!("shaders/paintbake.wgsl"), "paint bake");
+        let fill_pipeline = compute(include_str!("shaders/geofill.wgsl"), "geo fill");
+        let merge_pipeline = compute(include_str!("shaders/curve_merge.wgsl"), "curve merge");
+        let fill_module = gpu::shader(d, "geo fill raster", include_str!("shaders/geofill_raster.wgsl"));
+        let fill_raster_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("geo fill raster"),
+            entries: &[gpu::uniform_entry(0, wgpu::ShaderStages::VERTEX)],
+        });
+        let fill_pl = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("geo fill raster"),
+            bind_group_layouts: &[Some(&fill_raster_layout)],
+            immediate_size: 0,
+        });
+        let fill_raster = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("geo fill raster"),
+            layout: Some(&fill_pl),
+            vertex: wgpu::VertexState {
+                module: &fill_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(vertex_layout())],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &fill_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::TextureFormat::R8Unorm.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let depth_module = gpu::shader(d, "view depth", include_str!("shaders/viewdepth.wgsl"));
         let depth_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -433,6 +485,7 @@ impl PaintEngine {
             ..Default::default()
         });
         let dummy_out = (0..4).map(|_| array_texture(gpu, "dummy out", 1, 1)).collect();
+        let dummy_in = (0..4).map(|_| array_texture(gpu, "dummy in", 1, 1)).collect();
         let dummy_alpha = d.create_texture(&wgpu::TextureDescriptor {
             label: Some("dummy alpha"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -445,6 +498,7 @@ impl PaintEngine {
         });
         Self {
             tool: Tool::Paint,
+            fill_by: crate::geo::FillBy::Island,
             brush: Brush::default(),
             values: BrushValues::default(),
             mode: BakeMode::Live,
@@ -461,6 +515,11 @@ impl PaintEngine {
             dirty: None,
             dab_pipeline,
             bake_pipeline,
+            fill_raster,
+            fill_raster_layout,
+            fill_pipeline,
+            merge_pipeline,
+            dummy_in,
             depth_pipeline,
             depth_layout,
             overlay_pipeline,
@@ -865,9 +924,9 @@ impl PaintEngine {
         }
         let alpha_layer = p.scene.image_layer(&self.brush.alpha);
         let tool = match self.tool {
-            Tool::Paint => 0,
             Tool::Erase => 1,
             Tool::PaintThrough => 2,
+            Tool::Paint | Tool::GeoFill | Tool::Curve => 0,
         };
         let st = stencil.unwrap_or(StencilSample {
             layer: -1,
@@ -1114,8 +1173,198 @@ impl PaintEngine {
         self.mode = mode;
     }
 
+    /// Geo Fill: fills the element under `pos` with the brush values, one undo step
+    /// (docs/reference/brushes-tools-stencils.md#geo-fill).
+    pub fn geo_fill(&mut self, gpu: &Gpu, p: &mut Project, view: &View, screen: (u32, u32), pos: Vec2) -> Result<(), String> {
+        let target = self.target(gpu, p)?;
+        let element = crate::geo::element_at(p, view, screen, pos, self.fill_by).ok_or("Nothing to fill here.")?;
+        let tris = p.geo().triangles(&p.mesh, element);
+        // The tiles the element's triangles reach.
+        let mut tiles = std::collections::BTreeSet::new();
+        for &t in &tris {
+            let uv = |k: usize| Vec2::from(p.mesh.vertices[p.mesh.indices[t as usize * 3 + k] as usize].uv);
+            let (lo, hi) = (uv(0).min(uv(1)).min(uv(2)), uv(0).max(uv(1)).max(uv(2)));
+            for v in (lo.y.floor() as i32).max(0)..=(hi.y.floor() as i32).min(9) {
+                for u in (lo.x.floor() as i32).max(0)..=(hi.x.floor() as i32).min(9) {
+                    if let Some(i) = p.mesh.tiles.iter().position(|&x| x == 1001 + u as u32 + 10 * v as u32) {
+                        tiles.insert(i as u32);
+                    }
+                }
+            }
+        }
+        self.prepare_bake(gpu, p, target);
+        let d = &gpu.device;
+        let indices: Vec<u32> = tris.iter().flat_map(|&t| (0..3).map(move |k| t as usize * 3 + k)).map(|i| p.mesh.indices[i]).collect();
+        let ibuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("geo fill triangles"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let mres = p.maps.res;
+        let element_tex = gpu::render_target(d, "geo fill element", mres, mres, wgpu::TextureFormat::R8Unorm, wgpu::TextureUsages::TEXTURE_BINDING);
+        let element_view = element_tex.create_view(&Default::default());
+        let mut mask = 0u32;
+        let mut values = [[0f32; 4]; 7];
+        for c in Channel::ALL {
+            if self.values.enabled[c.index()] && p.channels.is_enabled(c) {
+                mask |= 1 << c.index();
+            }
+            let v = self.values.values[c.index()];
+            values[c.index()] = match c {
+                Channel::Normal => {
+                    let n = Vec3::new(v[0] * 2.0 - 1.0, v[1] * 2.0 - 1.0, v[2] * 2.0 - 1.0).normalize_or(Vec3::Z);
+                    [n.x, n.y, n.z, 0.0]
+                }
+                _ => [v[0], v[1], v[2], 0.0],
+            };
+        }
+        let (count, res) = (p.tile_count(), p.tile_resolution());
+        let (scratch, _, _) = self.scratch.as_ref().unwrap();
+        let pools = pool_textures(p, target.mask);
+        let arr = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let base_views: Vec<_> = (0..PAINT_PLANES).map(|i| arr(&scratch[i])).collect();
+        let out_views: Vec<_> = (0..PAINT_PLANES).map(|i| if i < pools.len() { arr(pools[i]) } else { arr(&self.dummy_out[i - 1]) }).collect();
+        let (src_tex, _) = (&p.maps.source.view, ());
+        for tile in tiles {
+            let k = p.mesh.tiles[tile as usize] - 1001;
+            let offset: [f32; 4] = [(k % 10) as f32, (k / 10) as f32, 0.0, 0.0];
+            let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("geo fill raster params"),
+                contents: bytemuck::cast_slice(&offset),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("geo fill raster"),
+                layout: &self.fill_raster_layout,
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() }],
+            });
+            let mut params: Vec<f32> = Vec::new();
+            params.extend([tile, target.slot * count + tile, target.mask as u32, res / PAGE].map(f32::from_bits));
+            params.extend([self.brush.opacity.clamp(0.0, 1.0), self.values.mask_value, mask as f32, 0.0]);
+            params.extend(values.iter().flatten());
+            let pbuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("geo fill params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let mut entries = vec![
+                wgpu::BindGroupEntry { binding: 0, resource: pbuf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&p.maps.position.view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(src_tex) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&element_view) },
+            ];
+            for (i, v) in base_views.iter().enumerate() {
+                entries.push(wgpu::BindGroupEntry { binding: 4 + i as u32, resource: wgpu::BindingResource::TextureView(v) });
+            }
+            for (i, v) in out_views.iter().enumerate() {
+                entries.push(wgpu::BindGroupEntry { binding: 9 + i as u32, resource: wgpu::BindingResource::TextureView(v) });
+            }
+            entries.push(wgpu::BindGroupEntry { binding: 14, resource: self.dirty.as_ref().unwrap().0.as_entire_binding() });
+            let fill_bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("geo fill"),
+                layout: &self.fill_pipeline.get_bind_group_layout(0),
+                entries: &entries,
+            });
+            let mut enc = d.create_command_encoder(&Default::default());
+            {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("geo fill raster"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &element_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.fill_raster);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.set_vertex_buffer(0, p.gpu_mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+            }
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&self.fill_pipeline);
+                pass.set_bind_group(0, &fill_bind, &[]);
+                pass.dispatch_workgroups(res.div_ceil(8), res.div_ceil(8), 1);
+            }
+            gpu.queue.submit([enc.finish()]);
+        }
+        p.paint_epoch += 1;
+        self.record_undo(gpu, p, target, "Geo fill");
+        Ok(())
+    }
+
+    /// Rasterize: writes the target's curves into its paint and removes them, one undo step
+    /// (docs/reference/curves.md#rasterize).
+    pub fn merge_curves(&mut self, gpu: &Gpu, p: &mut Project) -> Result<(), String> {
+        let target = self.target(gpu, p)?;
+        if p.graph.node(target.node).curves.is_empty() {
+            return Err("The layer has no curves.".into());
+        }
+        let cslot = p.curve_slot(target.node).ok_or("The layer has no curves.")?;
+        self.prepare_bake(gpu, p, target);
+        let (count, res) = (p.tile_count(), p.tile_resolution());
+        let planes = if target.mask { 1 } else { PAINT_PLANES };
+        let pools = pool_textures(p, target.mask);
+        let d = &gpu.device;
+        // The curves, copied out of the pool the result is written to.
+        let top: Vec<wgpu::Texture> = (0..planes).map(|_| array_texture(gpu, "curves to merge", res, count)).collect();
+        let mut enc = d.create_command_encoder(&Default::default());
+        for (pool, t) in pools.iter().zip(&top) {
+            enc.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo { texture: pool, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: cslot * count }, aspect: wgpu::TextureAspect::All },
+                t.as_image_copy(),
+                wgpu::Extent3d { width: res, height: res, depth_or_array_layers: count },
+            );
+        }
+        gpu.queue.submit([enc.finish()]);
+        let (scratch, _, _) = self.scratch.as_ref().unwrap();
+        let arr = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let base_views: Vec<_> = (0..PAINT_PLANES).map(|i| arr(&scratch[i])).collect();
+        let top_views: Vec<_> = (0..PAINT_PLANES).map(|i| if i < top.len() { arr(&top[i]) } else { arr(&self.dummy_in[i - 1]) }).collect();
+        let out_views: Vec<_> = (0..PAINT_PLANES).map(|i| if i < pools.len() { arr(pools[i]) } else { arr(&self.dummy_out[i - 1]) }).collect();
+        let mut enc = d.create_command_encoder(&Default::default());
+        for tile in 0..count {
+            let params = [tile, target.slot * count + tile, target.mask as u32, res / PAGE];
+            let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("curve merge params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() }];
+            for (i, v) in base_views.iter().chain(&top_views).chain(&out_views).enumerate() {
+                entries.push(wgpu::BindGroupEntry { binding: 1 + i as u32, resource: wgpu::BindingResource::TextureView(v) });
+            }
+            entries.push(wgpu::BindGroupEntry { binding: 16, resource: self.dirty.as_ref().unwrap().0.as_entire_binding() });
+            let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("curve merge"),
+                layout: &self.merge_pipeline.get_bind_group_layout(0),
+                entries: &entries,
+            });
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.merge_pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(res.div_ceil(8), res.div_ceil(8), 1);
+        }
+        gpu.queue.submit([enc.finish()]);
+        // One step restores both: the pages and the graph with its curves.
+        if !self.record_undo(gpu, p, target, "Rasterize curves") {
+            p.checkpoint("Rasterize curves");
+        }
+        p.graph.node_mut(target.node).curves.clear();
+        p.paint_epoch += 1;
+        p.graph_changed(gpu);
+        Ok(())
+    }
+
     /// Reads the dirty page mask and saves the pre-bake contents of those pages.
-    fn record_undo(&mut self, gpu: &Gpu, p: &mut Project, target: Target, label: &str) {
+    /// Returns whether any page changed (and a step was pushed).
+    fn record_undo(&mut self, gpu: &Gpu, p: &mut Project, target: Target, label: &str) -> bool {
         let (dbuf, words) = self.dirty.as_ref().unwrap();
         let bytes = read_buffer(gpu, dbuf, *words as u64 * 4);
         let mask: &[u32] = bytemuck::cast_slice(&bytes);
@@ -1131,7 +1380,7 @@ impl PaintEngine {
             }
         }
         if pages.is_empty() {
-            return;
+            return false;
         }
         let (scratch, _, _) = self.scratch.as_ref().unwrap();
         let planes: Vec<&wgpu::Texture> = scratch.iter().take(if target.mask { 1 } else { PAINT_PLANES }).collect();
@@ -1139,6 +1388,7 @@ impl PaintEngine {
         // Store with pool layers, as undo writes back into the pool.
         let pages = pages.into_iter().map(|(t, x, y)| (target.slot * tiles + t, x, y)).collect();
         p.push_paint_undo(label, PaintPages { mask: target.mask, pages, data });
+        true
     }
 
     /// Draws unbaked Manual-mode paint over the viewport output.

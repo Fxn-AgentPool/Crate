@@ -16,6 +16,8 @@ pub enum Action {
     ToolPaint,
     ToolErase,
     ToolPaintThrough,
+    ToolGeoFill,
+    ToolCurve,
     SmallerBrush,
     LargerBrush,
     SofterBrush,
@@ -49,7 +51,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 37] = [
+    pub const ALL: [Action; 39] = [
         Action::NewProject,
         Action::OpenProject,
         Action::Save,
@@ -59,6 +61,8 @@ impl Action {
         Action::ToolPaint,
         Action::ToolErase,
         Action::ToolPaintThrough,
+        Action::ToolGeoFill,
+        Action::ToolCurve,
         Action::SmallerBrush,
         Action::LargerBrush,
         Action::SofterBrush,
@@ -100,6 +104,8 @@ impl Action {
             Action::ToolPaint => "Paint tool",
             Action::ToolErase => "Erase tool",
             Action::ToolPaintThrough => "Paint Through tool",
+            Action::ToolGeoFill => "Geo Fill tool",
+            Action::ToolCurve => "Curve tool",
             Action::SmallerBrush => "Smaller brush",
             Action::LargerBrush => "Larger brush",
             Action::SofterBrush => "Softer brush",
@@ -146,6 +152,8 @@ impl Action {
             Action::ToolPaint => (n, Key::B),
             Action::ToolErase => (n, Key::E),
             Action::ToolPaintThrough => (n, Key::P),
+            Action::ToolGeoFill => (n, Key::L),
+            Action::ToolCurve => (n, Key::K),
             Action::SmallerBrush => (n, Key::OpenBracket),
             Action::LargerBrush => (n, Key::CloseBracket),
             Action::SofterBrush => (s, Key::OpenBracket),

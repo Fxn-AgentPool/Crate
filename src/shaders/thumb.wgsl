@@ -1,7 +1,9 @@
-// Small preview of one paint layer tile: premultiplied base color over a checkerboard.
+// Small preview of one paint layer tile: premultiplied base color over a checkerboard, with the
+// node's curves over it (docs/reference/curves.md#order).
 
 struct Params {
-    // x: array layer, y: 1 = mask pool (grayscale value), z: thumbnail size
+    // x: array layer of the paint (-1: none), y: 1 = mask pool (grayscale value), z: thumbnail size,
+    // w: array layer of the curves (-1: none)
     info: vec4f,
 };
 
@@ -32,14 +34,21 @@ fn srgb_encode(c: vec3f) -> vec3f {
 fn fs_main(in: VsOut) -> @location(0) vec4f {
     // Average a 4 x 4 grid of samples across this thumbnail pixel.
     let px = 1.0 / params.info.z;
-    var acc = vec4f(0.0);
+    var paint = vec4f(0.0);
+    var curves = vec4f(0.0);
     for (var y = 0; y < 4; y++) {
         for (var x = 0; x < 4; x++) {
             let o = (vec2f(f32(x), f32(y)) + 0.5) / 4.0 - 0.5;
-            acc += textureSampleLevel(plane, samp, in.uv + o * px, i32(params.info.x), 0.0);
+            if params.info.x >= 0.0 {
+                paint += textureSampleLevel(plane, samp, in.uv + o * px, i32(params.info.x), 0.0);
+            }
+            if params.info.w >= 0.0 {
+                curves += textureSampleLevel(plane, samp, in.uv + o * px, i32(params.info.w), 0.0);
+            }
         }
     }
-    acc /= 16.0;
+    // Both premultiplied: the curves over the paint.
+    let acc = (curves + paint * (1.0 - curves.a / 16.0)) / 16.0;
     let cell = floor(in.uv * 6.0);
     let checker = select(0.12, 0.2, (i32(cell.x + cell.y) % 2) == 0);
     var c: vec3f;

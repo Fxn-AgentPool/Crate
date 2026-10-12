@@ -117,10 +117,14 @@ pub fn save(gpu: &Gpu, p: &Project, l: LayerRef, thumbnail: Option<(u32, Vec<u8>
             }
         }
     }
-    // Images used by the subgraph.
+    // Images used by the subgraph, curve alphas included.
+    let mut names = std::collections::BTreeSet::new();
     for n in &nodes {
-        for v in n.params.values() {
-            let name = v.as_str();
+        names.extend(n.params.values().map(|v| v.as_str().to_string()));
+        names.extend(n.curves.iter().map(|c| c.alpha.clone()));
+    }
+    {
+        for name in names.iter().map(String::as_str) {
             if let Some(src) = p.image_sources.get(name) {
                 if let Ok(bytes) = std::fs::read(src) {
                     z.start_file(format!("images/{name}"), opts)?;

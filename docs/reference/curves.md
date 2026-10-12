@@ -66,8 +66,11 @@ from its last point back to its first.
 
 The path is then pulled onto the surface: along it, samples about a fifth of the curve's Size
 apart are each moved to the nearest surface point whose triangle faces the same way as the
-curve there (the interpolated normal of the neighboring points, within 90°). So between widely
-spaced points the path follows the surface instead of cutting through the mesh.
+curve there (the interpolated normal of the neighboring points, within 90°). Where two
+neighboring samples land more than two steps apart, as on two sides of an edge the spline cuts
+through, their midpoint is pulled onto the surface too, and so on until the gaps close. So between
+widely spaced points the path follows the surface, over edges, instead of cutting through the
+mesh.
 
 Points are stored as positions on the surface. When the surface under them changes (after a
 [reimport](mesh-and-udims.md#reimport)), they are pulled onto the new surface in the same way.

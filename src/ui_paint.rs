@@ -21,7 +21,13 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
     let frame = egui::Frame::new().fill(t::BG_CHROME).inner_margin(egui::Margin::symmetric(8, 8));
     egui::Panel::left("tool rail").exact_size(RAIL_W).resizable(false).frame(frame).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
-        let tools = [(Tool::Paint, "Paint", Action::ToolPaint), (Tool::Erase, "Erase", Action::ToolErase), (Tool::PaintThrough, "Paint Through", Action::ToolPaintThrough)];
+        let tools = [
+            (Tool::Paint, "Paint", Action::ToolPaint),
+            (Tool::Erase, "Erase", Action::ToolErase),
+            (Tool::PaintThrough, "Paint Through", Action::ToolPaintThrough),
+            (Tool::GeoFill, "Geo Fill", Action::ToolGeoFill),
+            (Tool::Curve, "Curve", Action::ToolCurve),
+        ];
         for (tool, name, action) in tools {
             let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
             let on = paint.tool == tool;
@@ -37,6 +43,8 @@ pub fn tool_rail(ui: &mut egui::Ui, paint: &mut PaintEngine, bindings: &crate::s
                 Tool::Paint => Icon::Brush,
                 Tool::Erase => Icon::Erase,
                 Tool::PaintThrough => Icon::Stencil,
+                Tool::GeoFill => Icon::GeoFill,
+                Tool::Curve => Icon::Curve,
             };
             icons::paint(p, icon, rect.shrink(8.0), color);
             if resp.on_hover_text(format!("{name}  {}", format(&bindings.get(action)))).clicked() {
@@ -123,13 +131,21 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine,
     let inner = rect.shrink2(vec2(t::PANEL_PAD, 0.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
     ui.spacing_mut().item_spacing.x = 6.0;
-    let b = &mut paint.brush;
-    ui.add(Field::new(&mut b.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
-    let mut flow = b.flow * 100.0;
-    if ui.add(Field::new(&mut flow, 0.0..=100.0).label("Flow").decimals(0).suffix("%").width(128.0)).changed() {
-        b.flow = flow / 100.0;
+    if paint.tool == Tool::GeoFill {
+        // Geo Fill uses none of the three: what a click fills instead
+        // (docs/reference/brushes-tools-stencils.md#geo-fill).
+        ui.label(RichText::new("Fill by").color(t::TEXT_2));
+        let options: Vec<_> = crate::geo::FillBy::ALL.iter().map(|f| (*f, f.name())).collect();
+        w::segmented_width(&mut ui, &mut paint.fill_by, &options, 420.0);
+    } else {
+        let b = &mut paint.brush;
+        ui.add(Field::new(&mut b.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
+        let mut flow = b.flow * 100.0;
+        if ui.add(Field::new(&mut flow, 0.0..=100.0).label("Flow").decimals(0).suffix("%").width(128.0)).changed() {
+            b.flow = flow / 100.0;
+        }
+        ui.add(Field::new(&mut b.hardness, 0.0..=1.0).label("Hardness").decimals(2).width(128.0));
     }
-    ui.add(Field::new(&mut b.hardness, 0.0..=1.0).label("Hardness").decimals(2).width(128.0));
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // Maps that need a high poly don't count without one: they can't be baked.
         let possible = |m: &MeshMap| !m.needs_high() || p.maps.high_poly.is_some();
