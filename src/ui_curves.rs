@@ -2,6 +2,8 @@
 //! See docs/reference/curves.md and docs/reference/brushes-tools-stencils.md#geo-fill.
 
 use egui::{Color32, Pos2, RichText, Stroke, pos2, vec2};
+use std::collections::BTreeSet;
+
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::camera::Camera;
@@ -56,13 +58,31 @@ pub struct CurveTool {
     /// The point of the selected curve being dragged, and whether it has moved (the undo step is
     /// made on the first move, so a click alone makes none).
     drag: Option<(usize, bool)>,
-    /// The Geo Fill element under the pointer.
+    /// The Geo Fill element under the pointer, or what a Brush stroke has collected.
     hover: Option<Hover>,
+    /// A Geo Fill Brush stroke or Box being dragged.
+    geo_drag: Option<GeoDrag>,
+}
+
+/// A Geo Fill Brush stroke or Box (docs/reference/brushes-tools-stencils.md#geo-fill).
+struct GeoDrag {
+    mode: crate::geo::SelectMode,
+    /// The pane it started in.
+    pane: u8,
+    start: Pos2,
+    last: Pos2,
+    /// Brush: what it has touched so far.
+    elements: BTreeSet<Element>,
+}
+
+/// A point in a pane, in pixels from its top left.
+fn to_px(rect: egui::Rect, ppp: f32, p: Pos2) -> Vec2 {
+    Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp)
 }
 
 /// The Geo Fill element under the pointer, with its triangles on the GPU for the highlight.
 struct Hover {
-    element: Element,
+    elements: BTreeSet<Element>,
     /// The mesh version it was found on.
     mesh: u64,
     buffer: wgpu::Buffer,
@@ -247,34 +267,136 @@ impl CurveTool {
         }
     }
 
-    /// Geo Fill: finds the element under the pointer (`hover`, in a pane showing `view`), keeping
-    /// its triangles for the highlight. None clears it.
+    /// Geo Fill: finds the element under the pointer (`hover`, in a pane showing `view`) and
+    /// highlights it. None clears it. While a Brush stroke or Box is dragged, it highlights what
+    /// they select instead.
     #[allow(clippy::too_many_arguments)]
     pub fn update_hover(&mut self, gpu: &Gpu, p: &Project, paint: &PaintEngine, view: &crate::camera::View, rect: egui::Rect, ppp: f32, size: (u32, u32), hover: Option<Pos2>) {
+        if self.geo_drag.is_some() {
+            return;
+        }
         let px = |h: Pos2| Vec2::new((h.x - rect.min.x) * ppp, (h.y - rect.min.y) * ppp);
         let Some(e) = hover.and_then(|h| crate::geo::element_at(p, view, size, px(h), paint.fill_by)) else {
             self.hover = None;
             return;
         };
+        self.highlight(gpu, p, std::iter::once(e).collect(), true);
+    }
+
+    /// Highlights `elements`, naming the element when `label` and there is one.
+    fn highlight(&mut self, gpu: &Gpu, p: &Project, elements: BTreeSet<Element>, label: bool) {
         let key = p.mesh_version();
-        if self.hover.as_ref().is_some_and(|h| h.element == e && h.mesh == key) {
+        if self.hover.as_ref().is_some_and(|h| h.elements == elements && h.mesh == key) {
             return;
         }
-        let tris = p.geo().triangles(&p.mesh, e);
+        let tris = p.geo().triangles_of(&p.mesh, &elements);
         let indices: Vec<u32> = tris.iter().flat_map(|&t| (0..3).map(move |k| p.mesh.indices[t as usize * 3 + k])).collect();
         use wgpu::util::DeviceExt;
         let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("geo fill highlight"),
-            contents: bytemuck::cast_slice(&indices),
+            // A buffer can't be empty.
+            contents: bytemuck::cast_slice(if indices.is_empty() { &[0u32; 3] } else { &indices[..] }),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let label = p.geo().label(&p.mesh, e, tris.len());
-        self.hover = Some(Hover { element: e, mesh: key, buffer, count: indices.len() as u32, label });
+        let label = match elements.first() {
+            Some(e) if label && elements.len() == 1 => p.geo().label(&p.mesh, *e, tris.len()),
+            _ => String::new(),
+        };
+        self.hover = Some(Hover { elements, mesh: key, buffer, count: indices.len() as u32, label });
     }
 
-    /// Forgets the element under the pointer.
-    pub fn clear_hover(&mut self) {
+    /// Whether a Geo Fill Brush stroke or Box is being dragged.
+    pub fn geo_dragging(&self) -> bool {
+        self.geo_drag.is_some()
+    }
+
+    /// Starts a Brush stroke or Box at `at`, in pane `pane`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn geo_press(&mut self, gpu: &Gpu, p: &Project, paint: &PaintEngine, view: &crate::camera::View, pane: u8, rect: egui::Rect, ppp: f32, size: (u32, u32), at: Pos2) {
+        self.geo_drag = Some(GeoDrag { mode: paint.select, pane, start: at, last: at, elements: BTreeSet::new() });
+        if paint.select == crate::geo::SelectMode::Brush {
+            self.brush_to(gpu, p, paint, view, rect, ppp, size, at);
+        }
+    }
+
+    /// Continues the drag in its pane. Returns what to fill when the button is released.
+    #[allow(clippy::too_many_arguments)]
+    pub fn geo_drag(&mut self, gpu: &Gpu, p: &Project, paint: &PaintEngine, view: &crate::camera::View, pane: u8, rect: egui::Rect, ppp: f32, size: (u32, u32), hover: Option<Pos2>, down: bool) -> Option<BTreeSet<Element>> {
+        let drag = self.geo_drag.as_ref()?;
+        if drag.pane != pane {
+            return None;
+        }
+        if let Some(h) = hover.filter(|_| down) {
+            match drag.mode {
+                crate::geo::SelectMode::Brush => self.brush_to(gpu, p, paint, view, rect, ppp, size, h),
+                _ => self.geo_drag.as_mut().unwrap().last = h,
+            }
+            return None;
+        }
+        let drag = self.geo_drag.take().unwrap();
         self.hover = None;
+        match drag.mode {
+            crate::geo::SelectMode::Box => {
+                let (a, b) = (to_px(rect, ppp, drag.start), to_px(rect, ppp, drag.last));
+                let region = crate::geo::Region::Rect { min: a.min(b), max: a.max(b) };
+                Some(crate::geo::elements_in(p, view, size, region, paint.fill_by))
+            }
+            _ => Some(drag.elements),
+        }
+    }
+
+    /// Brush: adds what the circle touches between the last position and `to`.
+    #[allow(clippy::too_many_arguments)]
+    fn brush_to(&mut self, gpu: &Gpu, p: &Project, paint: &PaintEngine, view: &crate::camera::View, rect: egui::Rect, ppp: f32, size: (u32, u32), to: Pos2) {
+        let radius = (paint.brush.size * 0.5).max(1.0);
+        let drag = self.geo_drag.as_mut().unwrap();
+        let (from, to_v) = (to_px(rect, ppp, drag.last), to_px(rect, ppp, to));
+        // Circles half a radius apart along the movement, so a fast stroke leaves no gaps.
+        let steps = ((from.distance(to_v) / (radius * 0.5)).ceil() as usize).clamp(1, 64);
+        let first = if drag.elements.is_empty() && from == to_v { 0 } else { 1 };
+        for k in first..=steps {
+            let center = from.lerp(to_v, k as f32 / steps as f32);
+            let found = crate::geo::elements_in(p, view, size, crate::geo::Region::Circle { center, radius }, paint.fill_by);
+            drag.elements.extend(found);
+        }
+        drag.last = to;
+        let elements = drag.elements.clone();
+        self.highlight(gpu, p, elements, false);
+    }
+
+    /// The Brush circle at the pointer, or the Box being dragged.
+    pub fn geo_cursor(&self, ui: &egui::Ui, paint: &PaintEngine, pane: u8, rect: egui::Rect, ppp: f32, hover: Option<Pos2>) {
+        let painter = ui.painter_at(rect);
+        let stroke = |w: f32, c: Color32| Stroke::new(w, c);
+        match (&self.geo_drag, paint.select) {
+            (Some(d), crate::geo::SelectMode::Box) if d.pane == pane => {
+                let r = egui::Rect::from_two_pos(d.start, d.last);
+                painter.rect_stroke(r, 0.0, stroke(3.0, Color32::from_black_alpha(140)), egui::StrokeKind::Middle);
+                painter.rect_stroke(r, 0.0, stroke(1.0, Color32::WHITE), egui::StrokeKind::Middle);
+            }
+            (_, crate::geo::SelectMode::Brush) => {
+                if let Some(h) = hover.filter(|h| rect.contains(*h)) {
+                    let r = paint.brush.size * 0.5 / ppp;
+                    painter.circle_stroke(h, r + 1.0, stroke(1.0, Color32::from_black_alpha(120)));
+                    painter.circle_stroke(h, r, stroke(1.0, Color32::from_white_alpha(200)));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Forgets the element under the pointer, unless a Brush stroke or Box is being dragged.
+    pub fn clear_hover(&mut self) {
+        if self.geo_drag.is_none() {
+            self.hover = None;
+        }
+    }
+
+    /// Drops a Brush stroke or Box without filling (another tool was chosen).
+    pub fn cancel_geo_drag(&mut self) {
+        if self.geo_drag.take().is_some() {
+            self.hover = None;
+        }
     }
 
     /// What Geo Fill draws over the mesh: the outlines of `by` and the element under the pointer.
@@ -284,7 +406,7 @@ impl CurveTool {
 
     /// The name of the element under the pointer, next to it.
     pub fn hover_label(&self, ui: &egui::Ui, rect: egui::Rect, at: Pos2) {
-        let Some(h) = &self.hover else { return };
+        let Some(h) = self.hover.as_ref().filter(|h| !h.label.is_empty()) else { return };
         let painter = ui.painter_at(rect);
         let at = at + vec2(16.0, 14.0);
         painter.text(at + vec2(1.0, 1.0), egui::Align2::LEFT_TOP, &h.label, t::value(), Color32::from_black_alpha(160));

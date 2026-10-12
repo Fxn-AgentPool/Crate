@@ -21,7 +21,7 @@ one click each.
 3. To fill many elements at once, choose **Brush** or **Box** under **Select** (the first row of
    icons). With Brush, drag over the elements: they turn red as the circle touches them, and are
    filled when you release. With Box, drag a rectangle around them. Set the circle's size with
-   **Size** in the Brush section, or `[` and `]`.
+   **Size** in the toolbar, or `[` and `]`.
 4. To fill from the UV layout instead, switch to the UV view (`F3`) and click inside an island.
    With **UDIM tile**, click anywhere in the tile.
 

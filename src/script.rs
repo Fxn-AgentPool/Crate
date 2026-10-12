@@ -939,6 +939,32 @@ impl Session {
                 p.finish_background_work(&gpu);
                 self.paint.geo_fill(&gpu, p, &view_of, self.size, pt).map_err(|e| anyhow::anyhow!(e))?;
             }
+            "geo-fill-brush" | "geo-fill-box" => {
+                use crate::geo::Region;
+                let pts: Vec<Vec2> = rest.iter().map(|a| self.screen_point(a)).collect::<Result<_>>()?;
+                let regions: Vec<Region> = if cmd == "geo-fill-box" {
+                    anyhow::ensure!(pts.len() == 2, "geo-fill-box <point> <point>");
+                    vec![Region::Rect { min: pts[0].min(pts[1]), max: pts[0].max(pts[1]) }]
+                } else {
+                    anyhow::ensure!(!pts.is_empty(), "geo-fill-brush <point> <point>...");
+                    // Circles half a radius apart along the stroke, as the Brush does.
+                    let radius = (self.paint.brush.size * 0.5).max(1.0);
+                    let mut centers = vec![pts[0]];
+                    for w in pts.windows(2) {
+                        let steps = ((w[0].distance(w[1]) / (radius * 0.5)).ceil() as usize).clamp(1, 64);
+                        centers.extend((1..=steps).map(|k| w[0].lerp(w[1], k as f32 / steps as f32)));
+                    }
+                    centers.into_iter().map(|center| Region::Circle { center, radius }).collect()
+                };
+                let view_of = self.view_of();
+                let p = self.project.as_mut().context("no project")?;
+                p.finish_background_work(&gpu);
+                let mut elements = std::collections::BTreeSet::new();
+                for r in regions {
+                    elements.extend(crate::geo::elements_in(p, &view_of, self.size, r, self.paint.fill_by));
+                }
+                self.paint.fill_elements(&gpu, p, &elements).map_err(|e| anyhow::anyhow!(e))?;
+            }
             "curve" => {
                 let closed = rest.first().is_some_and(|a| a == "closed");
                 let args = &rest[closed as usize..];

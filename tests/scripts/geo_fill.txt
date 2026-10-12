@@ -132,3 +132,61 @@ expect-color target/tests/geo_fill/mask_q1.png 192,48,32 8
 uv-view 0.625 0.425 40
 render target/tests/geo_fill/mask_q2.png
 expect-color target/tests/geo_fill/mask_q2.png 176,176,176 8
+
+# Brush and Box select, on a new layer.
+add-paint
+uv-view 1.25 0.5 40
+render target/tests/geo_fill/sel_before_q3.png
+uv-view 1.7 0.5 40
+render target/tests/geo_fill/sel_before_q4.png
+# Brush: a stroke from Q2 to the middle of Q3 touches the Q1 + Q2 island and Q3, not Q4.
+camera 0 0 2
+fill-by island
+brush size=20
+brush-values base_color=#C03020
+geo-fill-brush 0.40,0.5 0.60,0.5
+uv-view 0.25 0.5 40
+render target/tests/geo_fill/brush_q1.png
+expect-color target/tests/geo_fill/brush_q1.png 192,48,32 8
+uv-view 1.25 0.5 40
+render target/tests/geo_fill/brush_q3.png
+expect-color target/tests/geo_fill/brush_q3.png 192,48,32 8
+uv-view 1.7 0.5 40
+render target/tests/geo_fill/brush_q4.png
+expect-same target/tests/geo_fill/sel_before_q4.png target/tests/geo_fill/brush_q4.png 0
+# One undo step for the whole stroke.
+undo
+uv-view 1.25 0.5 40
+render target/tests/geo_fill/brush_undone.png
+expect-same target/tests/geo_fill/sel_before_q3.png target/tests/geo_fill/brush_undone.png 0
+# Box in 3D: a rectangle inside Q4 (screen x 0.71..0.92) fills both its faces, nothing else.
+camera 0 0 2
+fill-by face
+brush-values base_color=#2040C0
+geo-fill-box 0.72,0.33 0.90,0.67
+uv-view 1.6 0.4 40
+render target/tests/geo_fill/box_q4a.png
+expect-color target/tests/geo_fill/box_q4a.png 32,64,192 8
+uv-view 1.8 0.6 40
+render target/tests/geo_fill/box_q4b.png
+expect-color target/tests/geo_fill/box_q4b.png 32,64,192 8
+uv-view 1.25 0.5 40
+render target/tests/geo_fill/box_q3.png
+expect-same target/tests/geo_fill/sel_before_q3.png target/tests/geo_fill/box_q3.png 0
+# In the UV view, with tile 1002 1.2 render heights high around (1.5, 0.5): Q3 is at screen
+# x 0.35..0.47, Q4 at x 0.53..0.71, both at y 0.32..0.68.
+uv-view 1.5 0.5 1.2
+fill-by island
+brush size=10
+brush-values base_color=#30A040
+geo-fill-brush 0.40,0.5
+# A box between the two islands selects nothing.
+expect-error geo-fill-box 0.48,0.10 0.52,0.90
+uv-view 1.25 0.5 40
+render target/tests/geo_fill/uv_brush_q3.png
+expect-color target/tests/geo_fill/uv_brush_q3.png 48,160,64 8
+uv-view 1.5 0.5 1.2
+geo-fill-box 0.55,0.35 0.69,0.65
+uv-view 1.7 0.5 40
+render target/tests/geo_fill/uv_box_q4.png
+expect-color target/tests/geo_fill/uv_box_q4.png 48,160,64 8

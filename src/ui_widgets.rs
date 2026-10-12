@@ -486,6 +486,33 @@ pub fn segmented_enabled<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, optio
     response
 }
 
+/// A segmented control of icons, each `H_CONTROL` square, with its name on hover.
+pub fn segmented_icons<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, options: &[(V, Icon, &str)]) -> Response {
+    let n = options.len() as f32;
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(n * (t::H_CONTROL + 2.0) + 2.0, t::H_CONTROL), Sense::hover());
+    let p = ui.painter().clone();
+    p.rect(rect, CornerRadius::same(6), t::BG_APP, Stroke::new(1.0, t::BORDER), StrokeKind::Inside);
+    let inner = rect.shrink(2.0);
+    let w = (inner.width() - 2.0 * (n - 1.0)) / n;
+    for (k, (option, icon, name)) in options.iter().enumerate() {
+        let r = Rect::from_min_size(egui::pos2(inner.min.x + k as f32 * (w + 2.0), inner.min.y), Vec2::new(w, inner.height()));
+        let resp = ui.interact(r, response.id.with(k), Sense::click()).on_hover_text(*name);
+        let selected = *value == *option;
+        if selected {
+            p.rect_filled(r, CornerRadius::same(4), t::BG_ACTIVE);
+        } else if resp.hovered() {
+            p.rect_filled(r, CornerRadius::same(4), t::BG_INPUT);
+        }
+        let color = if selected || resp.hovered() { t::TEXT } else { t::TEXT_2 };
+        icons::paint(&p, *icon, r.shrink(3.0), color);
+        if resp.clicked() && !selected {
+            *value = option.clone();
+            response.mark_changed();
+        }
+    }
+    response
+}
+
 // ---------------------------------------------------------------- toggle and checkbox
 
 /// A switch, for settings that take effect at once.

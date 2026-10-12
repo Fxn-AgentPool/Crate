@@ -39,6 +39,13 @@ pub enum Icon {
     Bake,
     GeoFill,
     Curve,
+    Triangle,
+    Island,
+    Part,
+    Grid,
+    SelectClick,
+    SelectCircle,
+    SelectBox,
 }
 
 enum Source {
@@ -80,6 +87,13 @@ impl Icon {
             Icon::Bake => Svg(include_bytes!("icons/mod_uvproject.svg")),
             Icon::GeoFill => Svg(include_bytes!("icons/facesel.svg")),
             Icon::Curve => Svg(include_bytes!("icons/curve_bezcurve.svg")),
+            Icon::Triangle => Svg(include_bytes!("icons/outliner_ob_mesh.svg")),
+            Icon::Island => Svg(include_bytes!("icons/uv_islandsel.svg")),
+            Icon::Part => Svg(include_bytes!("icons/mesh_cube.svg")),
+            Icon::Grid => Svg(include_bytes!("icons/mesh_grid.svg")),
+            Icon::SelectClick => Svg(include_bytes!("icons/restrict_select_off.svg")),
+            Icon::SelectCircle => Svg(include_bytes!("icons/mesh_circle.svg")),
+            Icon::SelectBox => Svg(include_bytes!("icons/select_set.svg")),
         }
     }
 }

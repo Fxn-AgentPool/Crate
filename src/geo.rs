@@ -11,7 +11,7 @@ use crate::camera::Camera;
 use crate::mesh::Mesh;
 
 /// What a Geo Fill click fills.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FillBy {
     Face,
     Island,
@@ -34,8 +34,38 @@ impl FillBy {
     }
 }
 
+/// How Geo Fill picks elements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectMode {
+    Click,
+    Brush,
+    Box,
+}
+
+impl SelectMode {
+    pub const ALL: [SelectMode; 3] = [SelectMode::Click, SelectMode::Brush, SelectMode::Box];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SelectMode::Click => "Click",
+            SelectMode::Brush => "Brush",
+            SelectMode::Box => "Box",
+        }
+    }
+}
+
+/// A screen region of a Brush stroke or Box, in pixels.
+#[derive(Clone, Copy, Debug)]
+pub enum Region {
+    Circle { center: Vec2, radius: f32 },
+    Rect { min: Vec2, max: Vec2 },
+}
+
+/// At most this many rays for one region in the 3D view.
+const MAX_SAMPLES: f32 = 16384.0;
+
 /// One element: the kind and its id (face, island, part, material index or UDIM number).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Element {
     pub by: FillBy,
     pub id: u32,
@@ -165,8 +195,15 @@ impl Geo {
     }
 
     /// The triangles of an element, in mesh order.
+    #[cfg(test)]
     pub fn triangles(&self, mesh: &Mesh, e: Element) -> Vec<u32> {
-        (0..(mesh.indices.len() / 3) as u32).filter(|&t| self.element(mesh, e.by, t) == e).collect()
+        self.triangles_of(mesh, &std::iter::once(e).collect())
+    }
+
+    /// The triangles of any of `elements`, in mesh order.
+    pub fn triangles_of(&self, mesh: &Mesh, elements: &std::collections::BTreeSet<Element>) -> Vec<u32> {
+        let Some(by) = elements.first().map(|e| e.by) else { return Vec::new() };
+        (0..(mesh.indices.len() / 3) as u32).filter(|&t| elements.contains(&self.element(mesh, by, t))).collect()
     }
 
     /// Outlines (docs/reference/brushes-tools-stencils.md#outlines-and-highlight): the edges of
@@ -242,6 +279,110 @@ pub fn element_at(p: &crate::project::Project, view: &crate::camera::View, scree
         }
     };
     Some(p.geo().element(mesh, by, tri))
+}
+
+/// The elements of kind `by` in a screen region of a view (docs/reference/brushes-tools-stencils.md#geo-fill):
+/// in 3D, the visible surface sampled every 4 pixels; in the UV view, every triangle (and, for
+/// UDIM tile, every used tile) that overlaps it.
+pub fn elements_in(p: &crate::project::Project, view: &crate::camera::View, screen: (u32, u32), region: Region, by: FillBy) -> std::collections::BTreeSet<Element> {
+    let mesh = &p.mesh;
+    let geo = p.geo();
+    let mut out = std::collections::BTreeSet::new();
+    match view {
+        crate::camera::View::Persp(camera) => {
+            let (lo, hi) = match region {
+                Region::Circle { center, radius } => (center - radius, center + radius),
+                Region::Rect { min, max } => (min, max),
+            };
+            let area = (hi - lo).max(Vec2::ONE);
+            let step = 4f32.max((area.x * area.y / MAX_SAMPLES).sqrt());
+            let inside = |q: Vec2| match region {
+                Region::Circle { center, radius } => q.distance(center) <= radius,
+                Region::Rect { .. } => true,
+            };
+            // Sample centers, and the region's center so a small circle still picks something.
+            let mid = (lo + hi) * 0.5;
+            let (nx, ny) = (((hi.x - lo.x) / step).floor() as i32, ((hi.y - lo.y) / step).floor() as i32);
+            let points = (-nx / 2..=nx / 2).flat_map(|i| (-ny / 2..=ny / 2).map(move |j| mid + Vec2::new(i as f32, j as f32) * step));
+            for q in points.filter(|q| inside(*q)) {
+                let (o, d) = camera_ray(camera, screen, q);
+                if let Some(hit) = geo.raycast(mesh, o, d) {
+                    out.insert(geo.element(mesh, by, hit.tri));
+                }
+            }
+        }
+        crate::camera::View::Uv(v) => {
+            let size = Vec2::new(screen.0 as f32, screen.1 as f32);
+            let shape = match region {
+                Region::Circle { center, radius } => UvShape::Circle(v.to_uv(center, size), radius / v.scale(size)),
+                Region::Rect { min, max } => {
+                    let (a, b) = (v.to_uv(min, size), v.to_uv(max, size));
+                    UvShape::Rect(a.min(b), a.max(b))
+                }
+            };
+            let uv_of = |i: u32| Vec2::from(mesh.vertices[i as usize].uv);
+            for (t, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+                if shape.overlaps(tri.map(uv_of)) {
+                    out.insert(geo.element(mesh, by, t as u32));
+                }
+            }
+            if by == FillBy::Tile {
+                for &udim in &mesh.tiles {
+                    let k = udim - 1001;
+                    let o = Vec2::new((k % 10) as f32, (k / 10) as f32);
+                    let square = [o, o + Vec2::X, o + Vec2::ONE];
+                    if shape.overlaps(square) || shape.overlaps([o, o + Vec2::ONE, o + Vec2::Y]) {
+                        out.insert(Element { by, id: udim });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A Brush circle or Box in UV space.
+enum UvShape {
+    Circle(Vec2, f32),
+    Rect(Vec2, Vec2),
+}
+
+impl UvShape {
+    fn overlaps(&self, t: [Vec2; 3]) -> bool {
+        let inside_tri = |q: Vec2| {
+            let cross = |p: Vec2, r: Vec2, s: Vec2| (r - p).perp_dot(s - p);
+            let (d0, d1, d2) = (cross(t[0], t[1], q), cross(t[1], t[2], q), cross(t[2], t[0], q));
+            (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0)
+        };
+        let edges = [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])];
+        match *self {
+            UvShape::Circle(c, r) => {
+                inside_tri(c)
+                    || edges.iter().any(|&(a, b)| {
+                        let ab = b - a;
+                        let k = ((c - a).dot(ab) / ab.length_squared().max(1e-20)).clamp(0.0, 1.0);
+                        (a + ab * k).distance(c) <= r
+                    })
+            }
+            UvShape::Rect(lo, hi) => {
+                let (tlo, thi) = (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]));
+                if thi.x < lo.x || thi.y < lo.y || tlo.x > hi.x || tlo.y > hi.y {
+                    return false;
+                }
+                let corners = [lo, Vec2::new(hi.x, lo.y), hi, Vec2::new(lo.x, hi.y)];
+                let in_rect = |q: Vec2| q.cmpge(lo).all() && q.cmple(hi).all();
+                if t.iter().any(|q| in_rect(*q)) || corners.iter().any(|q| inside_tri(*q)) {
+                    return true;
+                }
+                // Otherwise they overlap only if an edge of the triangle crosses one of the rectangle.
+                let crosses = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| {
+                    let side = |p: Vec2, q: Vec2, r: Vec2| (q - p).perp_dot(r - p);
+                    side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
+                };
+                edges.iter().any(|&(a, b)| (0..4).any(|k| crosses(a, b, corners[k], corners[(k + 1) % 4])))
+            }
+        }
+    }
 }
 
 /// The first triangle whose UVs contain `uv` (UDIM coordinates).
@@ -405,6 +546,19 @@ mod tests {
         assert_eq!(g.triangles(&m, g.element(&m, FillBy::Face, 1)), vec![1]);
         assert_eq!(g.element(&m, FillBy::Tile, 3).id, 1001);
         assert_eq!(g.triangles(&m, g.element(&m, FillBy::Material, 0)).len(), 4);
+    }
+
+    #[test]
+    fn uv_overlaps() {
+        let t = [Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
+        assert!(UvShape::Circle(Vec2::new(0.2, 0.2), 0.01).overlaps(t));
+        assert!(UvShape::Circle(Vec2::new(0.6, 0.6), 0.2).overlaps(t));
+        assert!(!UvShape::Circle(Vec2::new(0.8, 0.8), 0.2).overlaps(t));
+        // A rectangle inside the triangle, around it, crossing an edge only, and beside it.
+        assert!(UvShape::Rect(Vec2::splat(0.1), Vec2::splat(0.2)).overlaps(t));
+        assert!(UvShape::Rect(Vec2::splat(-1.0), Vec2::splat(2.0)).overlaps(t));
+        assert!(UvShape::Rect(Vec2::new(0.4, -0.5), Vec2::new(0.45, 1.5)).overlaps(t));
+        assert!(!UvShape::Rect(Vec2::new(0.6, 0.6), Vec2::new(0.9, 0.9)).overlaps(t));
     }
 
     #[test]

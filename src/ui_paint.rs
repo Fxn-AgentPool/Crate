@@ -134,9 +134,35 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine,
     if paint.tool == Tool::GeoFill {
         // Geo Fill uses none of the three: what a click fills instead
         // (docs/reference/brushes-tools-stencils.md#geo-fill).
+        use crate::geo::{FillBy, SelectMode};
+        ui.label(RichText::new("Select").color(t::TEXT_2));
+        let select = SelectMode::ALL.map(|s| {
+            let icon = match s {
+                SelectMode::Click => Icon::SelectClick,
+                SelectMode::Brush => Icon::SelectCircle,
+                SelectMode::Box => Icon::SelectBox,
+            };
+            (s, icon, s.name())
+        });
+        w::segmented_icons(&mut ui, &mut paint.select, &select);
+        ui.add_space(8.0);
         ui.label(RichText::new("Fill by").color(t::TEXT_2));
-        let options: Vec<_> = crate::geo::FillBy::ALL.iter().map(|f| (*f, f.name())).collect();
-        w::segmented_width(&mut ui, &mut paint.fill_by, &options, 420.0);
+        let fill_by = FillBy::ALL.map(|f| {
+            let icon = match f {
+                FillBy::Face => Icon::Triangle,
+                FillBy::Island => Icon::Island,
+                FillBy::Part => Icon::Part,
+                FillBy::Material => Icon::Material,
+                FillBy::Tile => Icon::Grid,
+            };
+            (f, icon, f.name())
+        });
+        w::segmented_icons(&mut ui, &mut paint.fill_by, &fill_by);
+        // The Brush circle's size, as for painting.
+        if paint.select == SelectMode::Brush {
+            ui.add_space(8.0);
+            ui.add(Field::new(&mut paint.brush.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));
+        }
     } else {
         let b = &mut paint.brush;
         ui.add(Field::new(&mut b.size, 1.0..=2000.0).label("Size").decimals(0).suffix(" px").speed(0.5).no_fill().width(128.0));

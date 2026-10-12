@@ -720,6 +720,9 @@ impl CrateApp {
             return;
         }
         // The Geo Fill element stays highlighted in both panes while the pointer is over either.
+        if self.paint.tool != Tool::GeoFill {
+            self.curve_tool.cancel_geo_drag();
+        }
         if self.paint.tool != Tool::GeoFill || self.hovered_pane(ui.ctx()).is_none() {
             self.curve_tool.clear_hover();
         }
@@ -821,6 +824,16 @@ impl CrateApp {
             // A curve point follows the pointer until the button is released.
             if let Some(m) = self.curve_tool.input(gpu, doc, &self.paint, &pane3, hover, false, buttons[0], mods.command) {
                 self.message = Some((m, time));
+            }
+        } else if self.curve_tool.geo_dragging() {
+            // A Geo Fill Brush stroke or Box, filled when the button is released.
+            let view = self.pane_view(pane);
+            let doc = self.doc.as_mut().unwrap();
+            let filled = self.curve_tool.geo_drag(gpu, doc, &self.paint, &view, pane as u8, rect, ppp, (w, h), hover, buttons[0]);
+            if let Some(elements) = filled {
+                if let Err(e) = self.paint.fill_elements(gpu, doc, &elements) {
+                    self.message = Some((e, time));
+                }
             }
         } else if self.paint.stroking() {
             // Strokes continue until the button is released, in the pane they started in.
@@ -932,8 +945,12 @@ impl CrateApp {
             if let Some(hp) = hover {
                 let view = self.pane_view(pane);
                 let doc = self.doc.as_mut().unwrap();
-                if let Err(e) = self.paint.geo_fill(gpu, doc, &view, (w, h), to_px(hp)) {
-                    self.message = Some((e, time));
+                if self.paint.select == crate::geo::SelectMode::Click {
+                    if let Err(e) = self.paint.geo_fill(gpu, doc, &view, (w, h), to_px(hp)) {
+                        self.message = Some((e, time));
+                    }
+                } else {
+                    self.curve_tool.geo_press(gpu, doc, &self.paint, &view, pane as u8, rect, ppp, (w, h), hp);
                 }
             }
         } else if tool_click {
@@ -1077,6 +1094,7 @@ impl CrateApp {
                 if let Some(hp) = hover.filter(|h| rect.contains(*h)) {
                     self.curve_tool.hover_label(ui, rect, hp);
                 }
+                self.curve_tool.geo_cursor(ui, &self.paint, pane as u8, rect, ppp, hover);
             }
             _ => {}
         }

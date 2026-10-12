@@ -86,7 +86,7 @@ icons; hovering an icon shows its name.
 | Select | Icon | Input | Fills |
 |---|---|---|---|
 | Click | arrow | Click | The element under the pointer. Default. |
-| Brush | circle | Drag | Every element the brush circle touches while dragging. The circle has the brush's **Size**, in screen pixels. The elements are highlighted as they are collected, and filled when the button is released. |
+| Brush | circle | Drag | Every element the brush circle touches while dragging. The circle has the brush's **Size**, in screen pixels, also shown in the toolbar after the icons. The elements are highlighted as they are collected, and filled when the button is released. |
 | Box | dashed box | Drag a rectangle | Every element with a part inside the rectangle, when the button is released. |
 
 **Fill by**: the kind of element.

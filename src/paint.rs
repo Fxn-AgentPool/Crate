@@ -327,8 +327,9 @@ struct Buffers {
 
 pub struct PaintEngine {
     pub tool: Tool,
-    /// What a Geo Fill click fills.
+    /// What Geo Fill fills, and how it picks it.
     pub fill_by: crate::geo::FillBy,
+    pub select: crate::geo::SelectMode,
     pub brush: Brush,
     pub values: BrushValues,
     pub mode: BakeMode,
@@ -499,6 +500,7 @@ impl PaintEngine {
         Self {
             tool: Tool::Paint,
             fill_by: crate::geo::FillBy::Island,
+            select: crate::geo::SelectMode::Click,
             brush: Brush::default(),
             values: BrushValues::default(),
             mode: BakeMode::Live,
@@ -1176,9 +1178,17 @@ impl PaintEngine {
     /// Geo Fill: fills the element under `pos` with the brush values, one undo step
     /// (docs/reference/brushes-tools-stencils.md#geo-fill).
     pub fn geo_fill(&mut self, gpu: &Gpu, p: &mut Project, view: &View, screen: (u32, u32), pos: Vec2) -> Result<(), String> {
-        let target = self.target(gpu, p)?;
         let element = crate::geo::element_at(p, view, screen, pos, self.fill_by).ok_or("Nothing to fill here.")?;
-        let tris = p.geo().triangles(&p.mesh, element);
+        self.fill_elements(gpu, p, &std::iter::once(element).collect())
+    }
+
+    /// Fills `elements` (all of one kind) with the brush values, one undo step.
+    pub fn fill_elements(&mut self, gpu: &Gpu, p: &mut Project, elements: &std::collections::BTreeSet<crate::geo::Element>) -> Result<(), String> {
+        if elements.is_empty() {
+            return Err("Nothing to fill here.".into());
+        }
+        let target = self.target(gpu, p)?;
+        let tris = p.geo().triangles_of(&p.mesh, elements);
         // The tiles the element's triangles reach.
         let mut tiles = std::collections::BTreeSet::new();
         for &t in &tris {
