@@ -128,6 +128,8 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `stencil-transform <dx> <dy> <degrees> <scale>` | Place the stencil (offset in viewport fractions). |
 | `fill-by face\|island\|part\|material\|tile` | Geo Fill's **Fill by**. |
 | `geo-fill <point>` | Fill the element under a screen point with the brush values, as a [Geo Fill](brushes-tools-stencils.md#geo-fill) click does, in the 3D or the UV view. Fails if nothing is under the point. |
+| `geo-fill-brush <point> <point>...` | Fill every element the brush circle touches along the points, as a Geo Fill Brush stroke does. |
+| `geo-fill-box <point> <point>` | Fill every element inside the rectangle between two corners, as a Geo Fill Box does. |
 
 ### Curves
 

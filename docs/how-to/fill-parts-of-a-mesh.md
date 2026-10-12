@@ -7,8 +7,8 @@ one click each.
 
 1. Select the Paint layer or paint mask effect to fill.
 2. Press `L` for the Geo Fill tool.
-3. In the viewport toolbar, choose what a click fills under **Fill by**: **Face**, **UV island**,
-   **Part**, **Material** or **UDIM tile**.
+3. In the viewport toolbar, choose what to fill under **Fill by** (the second row of icons):
+   **Face**, **UV island**, **Part**, **Material** or **UDIM tile**. Hover an icon for its name.
 4. In **Brush Values**, enable the channels to fill and set their values. For a mask, set
    **Mask value**.
 5. Lower **Opacity** in the **Brush** section for a partial fill.
@@ -18,7 +18,11 @@ one click each.
 1. Hover over the mesh. Red outlines show the borders between the elements you can fill, and
    the element a click would fill is tinted red and named next to the pointer.
 2. Click to fill it. Each click is one undo step (`Ctrl+Z`).
-3. To fill from the UV layout instead, switch to the UV view (`F3`) and click inside an island.
+3. To fill many elements at once, choose **Brush** or **Box** under **Select** (the first row of
+   icons). With Brush, drag over the elements: they turn red as the circle touches them, and are
+   filled when you release. With Box, drag a rectangle around them. Set the circle's size with
+   **Size** in the Brush section, or `[` and `]`.
+4. To fill from the UV layout instead, switch to the UV view (`F3`) and click inside an island.
    With **UDIM tile**, click anywhere in the tile.
 
 ## Change a fill

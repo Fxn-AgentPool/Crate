@@ -76,25 +76,35 @@ direction from the center: a full circle around it turns the brush once.
 
 ## Geo Fill
 
-Clicking with **Geo Fill** fills one element of the mesh, the one under the pointer, with the
-[brush values](#brush-values). **Fill by** chooses the kind of element. It is shown in the
-[viewport toolbar](windows-and-panels.md#viewport) instead of Size, Flow and Hardness while Geo
-Fill is the current tool.
+**Geo Fill** fills whole elements of the mesh with the [brush values](#brush-values). Two
+settings choose what it fills. While Geo Fill is the current tool, they are shown in the
+[viewport toolbar](windows-and-panels.md#viewport) instead of Size, Flow and Hardness, as rows of
+icons; hovering an icon shows its name.
 
-| Fill by | Element |
-|---|---|
-| Face | One triangle. Polygons are split into triangles on import, so a quad is two faces. |
-| UV island | The triangles connected to it by shared edges in UV space: edges whose two ends have the same position and UV in both triangles. Default. |
-| Part | Every triangle of the same part: glTF node or OBJ object, named as in [Match by name](mesh-maps.md#match-by-name). |
-| Material | Every triangle with the same material. |
-| UDIM tile | Every triangle in the same tile. |
+**Select**: how elements are picked.
 
-| View | Element under the pointer |
-|---|---|
-| 3D view | The element of the frontmost triangle under the pointer. |
-| UV view | The element of the triangle whose UVs contain the point; where several overlap, the first in the mesh. For UDIM tile, the tile under the pointer, if the mesh uses it. |
+| Select | Icon | Input | Fills |
+|---|---|---|---|
+| Click | arrow | Click | The element under the pointer. Default. |
+| Brush | circle | Drag | Every element the brush circle touches while dragging. The circle has the brush's **Size**, in screen pixels. The elements are highlighted as they are collected, and filled when the button is released. |
+| Box | dashed box | Drag a rectangle | Every element with a part inside the rectangle, when the button is released. |
 
-A click over nothing shows **Nothing to fill here** in the status bar.
+**Fill by**: the kind of element.
+
+| Fill by | Icon | Element |
+|---|---|---|
+| Face | triangle | One triangle. Polygons are split into triangles on import, so a quad is two faces. |
+| UV island | island | The triangles connected to it by shared edges in UV space: edges whose two ends have the same position and UV in both triangles. Default. |
+| Part | cube | Every triangle of the same part: glTF node or OBJ object, named as in [Match by name](mesh-maps.md#match-by-name). |
+| Material | sphere | Every triangle with the same material. |
+| UDIM tile | grid | Every triangle in the same tile. |
+
+| View | Element under the pointer | Brush and Box |
+|---|---|---|
+| 3D view | The element of the frontmost triangle under the pointer. | The elements of the surface visible inside the circle or rectangle, found every 4 screen pixels (or farther apart for large rectangles: at most 16 384 points). Hidden surfaces aren't selected. |
+| UV view | The element of the triangle whose UVs contain the point; where several overlap, the first in the mesh. For UDIM tile, the tile under the pointer, if the mesh uses it. | The elements of every triangle whose UVs overlap the circle or rectangle. For UDIM tile, also every used tile it overlaps. |
+
+A click, stroke or rectangle over nothing shows **Nothing to fill here** in the status bar.
 
 The fill covers the texels whose center is inside the element's triangles, and the
 [padding](mesh-maps.md#padding) texels whose nearest island texel is one of those, as ordinary
@@ -103,7 +113,7 @@ all. It is composited over the target's paint with coverage **Opacity** (from th
 Enabled channels get their brush value; a mask target gets **Mask value**. The brush's size,
 tip, flow, spacing, jitter and pressure aren't used.
 
-Each click is one undo step. The fill becomes ordinary paint: it can be painted over or erased,
+Each click, Brush stroke or Box is one undo step. The fill becomes ordinary paint: it can be painted over or erased,
 but not changed as a fill afterwards.
 
 ### Outlines and highlight
@@ -113,7 +123,9 @@ While Geo Fill is the current tool, both views show what a click can fill:
 | Item | Shown as |
 |---|---|
 | Outlines | Red lines along the borders between elements of the current **Fill by** kind, and along the mesh's open edges. Face: every triangle edge. UV island: the UV seams. Part, Material, UDIM tile: the edges where two parts, materials or tiles meet. |
-| Element under the pointer | Its triangles tinted red, and its name next to the pointer: **Face**, **UV island** with its number of triangles, **Part:** and **Material:** with their names, or **Tile** with its number. |
+| Element under the pointer | Its triangles tinted red, and its name next to the pointer: **Face**, **UV island** with its number of triangles, **Part:** and **Material:** with their names, or **Tile** with its number. With Brush, the elements collected so far are tinted too. |
+| Brush circle | With Brush: a circle of the brush's Size around the pointer. |
+| Rectangle | With Box: the rectangle being dragged. |
 
 In the 3D view, the mesh hides the outlines and highlight behind it, as it hides the
 [wireframe](keyboard-shortcuts.md#display). In the UV view, an edge that is a border is outlined
