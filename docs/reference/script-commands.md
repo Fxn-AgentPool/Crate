@@ -115,7 +115,7 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 
 | Command | Description |
 |---|---|
-| `tool paint\|erase\|paint-through` | Select the tool. |
+| `tool paint\|erase\|paint-through\|geo-fill\|curve` | Select the tool. |
 | `mode live\|manual` | Bake mode. |
 | `on-camera-move bake\|clear\|lock` | Manual mode camera policy. |
 | `brush key=value...` | `size`, `hardness`, `flow`, `opacity`, `spacing`, `angle`, `space=screen\|world`, `jitter_size`, `jitter_angle`, `jitter_position`, `jitter_flow`, `alpha=<library item or image>` (library folder `alphas`; `alpha=round` for the round tip). |
@@ -126,6 +126,26 @@ On a mask layer: `opacity`, `mode`, or a parameter of its node (e.g. a generator
 | `stencil-add <library item or image>` | Load a stencil (library folder `stencils`) and make it active. |
 | `stencil key=value...` | `opacity`, `visible`, `use_alpha`, `tile`, `flip`, `targets=base_color,roughness`. |
 | `stencil-transform <dx> <dy> <degrees> <scale>` | Place the stencil (offset in viewport fractions). |
+| `fill-by face\|island\|part\|material\|tile` | Geo Fill's **Fill by**. |
+| `geo-fill <point>` | Fill the element under a screen point with the brush values, as a [Geo Fill](brushes-tools-stencils.md#geo-fill) click does, in the 3D or the UV view. Fails if nothing is under the point. |
+
+### Curves
+
+[Curves](curves.md) of the selected layer or mask layer. Curve indices count from 0 at the bottom
+(the first curve drawn); point indices from 0 at the curve's start. Points are screen points, as
+for `stroke`, in the 3D view; each must hit the mesh.
+
+| Command | Description |
+|---|---|
+| `curve [closed] <point> <point>...` | Draw a curve through the points with the current brush and brush values, as the Curve tool does, and select it. `closed` closes it (3 or more points). |
+| `curve-select <index>` | Select a curve. |
+| `curve-set key=value...` | Set properties of the selected curve: `name`, `size` (world units), `hardness`, `flow`, `opacity`, `spacing`, `angle`, `jitter_size`, `jitter_angle`, `jitter_position`, `jitter_flow`, `alpha=<library item or image>` (`alpha=round` for the round tip), `closed=on\|off`, `<channel>=<value>\|off` as in `brush-values`, and `mask`. |
+| `curve-point <index> <point>` | Move a point of the selected curve. |
+| `curve-insert <index> <point>` | Insert a point before point `index`; `index` equal to the number of points appends one. |
+| `curve-delete-point <index>` | Delete a point of the selected curve; deleting one of its last two points deletes the curve. |
+| `curve-order up\|down` | Move the selected curve up (drawn later) or down. |
+| `curve-delete` | Delete the selected curve. |
+| `rasterize-curves` | [Rasterize](curves.md#rasterize) the layer's curves into its freehand paint. |
 
 ## Viewport and rendering
 
@@ -158,6 +178,7 @@ For tests; each fails the script when its condition does not hold.
 | `expect-color <file.png> <r,g,b> [tolerance]` | The image's center pixel has these 8-bit values, within `tolerance` per channel (default 2). |
 | `expect-error <command...>` | The command fails. |
 | `expect-unbaked true\|false` | Whether the paint buffer holds unbaked paint. |
+| `expect-curves <count>` | The selected layer or mask layer holds this many curves. |
 | `expect-misses <max percent>` | The last high-poly bake missed at most this share of texels. |
 | `expect-transfer <true\|false> [max percent]` | Whether the last reimport transferred paint, and, if given, that at most this percent of the new UV area found no old surface. |
 | `expect-library <folder> <name>...` | The Library lists exactly these items, in this order, for that library folder (e.g. `environments`). |

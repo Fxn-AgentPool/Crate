@@ -175,8 +175,8 @@ cannot be turned off. Their radius and strength are settings, the same for the w
 
 | Node | Inputs | Outputs | Settings |
 |---|---|---|---|
-| Paint | — | Out (Material) | Channels painted. Holds paint pages. |
-| Paint Mask | — | Out (Float) | Holds single-channel paint pages. |
+| Paint | — | Out (Material) | Channels painted. Holds paint pages and [curves](curves.md), drawn over the pages. |
+| Paint Mask | — | Out (Float) | Holds single-channel paint pages and curves. |
 | 2D Paint | — | Out (Material) | Like Paint, but read at its own texel between UV islands. See [2D paint](2d-paint.md). |
 | 2D Paint Mask | — | Out (Float) | Like Paint Mask, read at its own texel between UV islands. |
 | Fill | — | Out (Material) | Same as [Fill layer properties](layers.md#fill-layer-properties). |

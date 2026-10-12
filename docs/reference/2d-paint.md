@@ -39,6 +39,9 @@ its blend modes and masks combine with it exactly as on the islands.
 | UV view | Every texel of a used tile under the brush, at full strength. |
 | 3D view | The same texels as ordinary paint: the UV islands and their padding. |
 
+[Geo Fill](brushes-tools-stencils.md#geo-fill) and [curves](curves.md) reach the islands and their
+padding on 2D paint too, from either view.
+
 Everything else (brushes, stencils, Live and Manual mode, undo, the eraser) works as for ordinary
 paint.
 

@@ -7,12 +7,18 @@
 | Paint | `B` | Paints the brush color/material into the paint buffer. |
 | Erase | `E` | Reduces coverage in the buffer; on bake, removes paint from the target node. |
 | Paint Through | `P` | Paints pixels sampled from the active stencil into the buffer. |
+| Geo Fill | `L` | Fills a face, UV island, part, material or UDIM tile with the brush values. See [Geo Fill](#geo-fill). |
+| Curve | `K` | Draws editable strokes along smooth paths on the surface. See [Curves](curves.md). |
 | Color picker | hold `Alt+Shift`, click | Samples the current channel display at the cursor. |
 
-Paint, Erase and Paint Through are also chosen in the tool rail at the left edge of the window.
+Paint, Erase, Paint Through, Geo Fill and Curve are also chosen in the tool rail at the left edge
+of the window.
 
 The **target** of all tools is the selected Paint layer, or the selected Paint mask layer.
 If neither is selected, painting is disabled and the cursor shows ⊘.
+
+Geo Fill and Curve don't use the [paint buffer](paint-buffer.md): they write to the target
+directly, in Live and Manual mode alike, and leave unbaked paint in the buffer as it is.
 
 ## Brush properties
 
@@ -67,6 +73,43 @@ painting. The tip only shows Angle, not Follow stroke or jitter.
 During the interactive drags the cursor stays where the drag started, so the brush scales and
 turns around its center, and the new value shows below it. The angle follows the pointer's
 direction from the center: a full circle around it turns the brush once.
+
+## Geo Fill
+
+Clicking with **Geo Fill** fills one element of the mesh, the one under the pointer, with the
+[brush values](#brush-values). **Fill by** chooses the kind of element. It is shown in the
+[viewport toolbar](windows-and-panels.md#viewport) instead of Size, Flow and Hardness while Geo
+Fill is the current tool.
+
+| Fill by | Element |
+|---|---|
+| Face | One polygon. For OBJ files, the face as written in the file. glTF files store only triangles: a face is the triangle and the neighbor it was split from, which shares its longest edge, when that edge is also the neighbor's longest. |
+| UV island | The triangles connected to it by shared edges in UV space: edges whose two ends have the same position and UV in both triangles. Default. |
+| Part | Every triangle of the same part: glTF node or OBJ object, named as in [Match by name](mesh-maps.md#match-by-name). |
+| Material | Every triangle with the same material. |
+| UDIM tile | Every triangle in the same tile. |
+
+| View | Element under the pointer |
+|---|---|
+| 3D view | The element of the frontmost triangle under the pointer. |
+| UV view | The element of the triangle whose UVs contain the point; where several overlap, the first in the mesh. For UDIM tile, the tile under the pointer, if the mesh uses it. |
+
+A click over nothing shows **Nothing to fill here** in the status bar.
+
+The fill covers the texels whose center is inside the element's triangles, and the
+[padding](mesh-maps.md#padding) texels whose nearest island texel is one of those, as ordinary
+paint does; also on 2D paint layers. Its edges are hard: each texel is filled entirely or not at
+all. It is composited over the target's paint with coverage **Opacity** (from the Brush section).
+Enabled channels get their brush value; a mask target gets **Mask value**. The brush's size,
+tip, flow, spacing, jitter and pressure aren't used.
+
+Each click is one undo step. The fill becomes ordinary paint: it can be painted over or erased,
+but not changed as a fill afterwards.
+
+While the pointer is over the mesh, the element under it is named next to the pointer: **Face**
+with its number of sides, **UV island** with its number of triangles, **Part:** and
+**Material:** with their names, or **Tile** with its number. In the 3D view, elements of up to
+50 000 triangles are also highlighted (their triangles that face the camera).
 
 ## Stencils
 

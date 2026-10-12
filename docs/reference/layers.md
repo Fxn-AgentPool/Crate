@@ -7,7 +7,7 @@ stack is shown by default. Layers are composited bottom to top.
 
 | Type | Icon | Content |
 |---|---|---|
-| Paint layer | brush | A multi-channel Paint node. Receives baked paint from the paint buffer. |
+| Paint layer | brush | A multi-channel Paint node. Receives baked paint from the paint buffer and Geo Fill, and holds [curves](curves.md). |
 | 2D paint layer | brush with "2D" | A 2D Paint node: paint that reaches every texel from the UV view. See [2D paint](2d-paint.md). |
 | Fill layer | paint bucket | Per-channel constant values or images, projected by UV or triplanar mapping. |
 | Group | folder | A nested Stack node. Has its own layers, mask, opacity and blend modes. |
@@ -40,9 +40,11 @@ The Properties panel shows the selected layer in sections:
 | Channels | all | One row per project channel: a toggle with the channel name, the blend mode and the channel opacity. The toggle is lit when the layer affects the channel; the blend mode and opacity of a channel that is off are greyed out. The blend mode is amber when it isn't Normal. |
 | Projection | Fill | Type (UV or Triplanar), Scale, Offset (X, Y, Z) and Rotation. Triplanar blend is shown when Type is Triplanar. |
 | Values | Fill | One row per channel that is on in Channels: the channel name, its value (a color swatch, a number, or X, Y, Z for Normal, on a line of their own when the panel is too narrow; the image when the source is Image) and its source (Constant or Image). A row is greyed out when the Fill node's own output for the channel is off, e.g. after editing it in the Node Editor. |
+| Curves | Paint, 2D paint | The layer's [curves](curves.md#curves-in-the-properties-panel): their list, the selected curve's settings and values, and **Rasterize**. |
 | Exposed parameters | Group, Graph, Smart material | The parameters marked Expose in the layer's node graph. |
 
-A Paint layer shows a hint to paint with the Paint tool (B) below Channels.
+A Paint layer shows a hint to paint with the Paint tool (B) below Channels. Paint and 2D paint
+mask effects show their Curves section below their opacity and blend mode.
 
 On a Fill layer, the channel toggle also turns the Fill node's output for that channel on or off,
 so the two stay in step. A new Fill layer affects Base Color, Roughness and Metallic.
@@ -65,7 +67,7 @@ mask layers composited the same way as layers, producing a value from 0 to 1.
 
 | Mask layer type | Content |
 |---|---|
-| Paint | Single-channel paint. Painted with the same tools as layers. |
+| Paint | Single-channel paint. Painted with the same tools as layers, curves included. |
 | 2D paint | Single-channel [2D paint](2d-paint.md): reaches every texel from the UV view. |
 | Fill | Constant value or grayscale image. |
 | Generator | A node graph with a Float output, typically from the generator nodes. |

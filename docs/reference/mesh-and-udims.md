@@ -61,6 +61,8 @@ udim = 1001 + floor(u) + 10 * floor(v)
     GPU memory (see [Limits](limits.md)).
   - [2D paint](2d-paint.md#reimport) isn't transferred; its texels stay where they are in UV
     space.
+  - [Curves](curves.md#saving-and-copying) aren't transferred either: they are drawn again on
+    the new surface, from their points.
   - When done, the status bar (or the command line) reports **Paint transferred to the new UVs**
     and, if any texels found no old surface, the share of the new UV area they make up, as
     **N % of the UV area found no old surface**.

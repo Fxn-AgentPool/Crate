@@ -4,6 +4,9 @@ The paint buffer is a multi-channel 2D canvas aligned with the viewport. All bru
 drawn into the buffer. **Baking** projects the buffer's contents onto the selected Paint or Paint
 Mask node, through the camera, into UV space.
 
+The [Geo Fill](brushes-tools-stencils.md#geo-fill) and [Curve](curves.md) tools don't use the
+buffer.
+
 ## Buffer properties
 
 **Paint Buffer** panel:

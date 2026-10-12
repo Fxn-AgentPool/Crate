@@ -46,11 +46,28 @@ See [Controls](windows-and-panels.md#fields).
 | Paint | `B` |
 | Erase | `E` |
 | Paint Through | `P` |
+| Geo Fill | `L` |
+| Curve | `K` |
 | Smaller / larger brush | `[` / `]` |
 | Softer / harder brush | `Shift+[` / `Shift+]` |
 | Interactive size / flow | `Ctrl` + right-drag |
 | Interactive angle | `Ctrl+Shift` + left-drag |
 | Pick color | `Alt+Shift` + click |
+
+## Curves
+
+With the [Curve](curves.md) tool:
+
+| Action | Input |
+|---|---|
+| Add a point / start a curve | Click on the mesh |
+| Close and finish | Click the first point |
+| Finish | `Enter` or `Esc` |
+| Remove the last point | `Backspace` (while drawing) |
+| Select a curve | Click it |
+| Move a point | Drag it |
+| Insert / delete a point | `Ctrl` + click the line / the point |
+| Delete the selected curve | `Delete` |
 
 ## Paint buffer
 

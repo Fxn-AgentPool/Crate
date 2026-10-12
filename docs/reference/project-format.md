@@ -69,6 +69,35 @@ ids of its `nodes`; it's left out when there are none:
 "frames": [ { "label": "Rust", "nodes": ["n7", "n9"] } ]
 ```
 
+### Curves
+
+Paint, Paint Mask, 2D Paint and 2D Paint Mask nodes carry their [curves](curves.md) in `curves`,
+bottom to top; it's left out when there are none:
+
+```json
+"curves": [
+  {
+    "name": "Curve 1",
+    "points": [ { "pos": [0.1, 1.2, 0.3], "normal": [0.0, 0.0, 1.0] } ],
+    "closed": false,
+    "size": 0.05, "hardness": 0.8, "flow": 1.0, "opacity": 1.0, "spacing": 10.0,
+    "alpha": "", "angle": 0.0,
+    "jitter_size": 0.0, "jitter_angle": 0.0, "jitter_position": 0.0, "jitter_flow": 0.0,
+    "values": { "enabled": [true, true, true, false, false, false, false],
+                "values": [[0.8, 0.8, 0.8], …], "mask_value": 1.0 }
+  }
+]
+```
+
+| Key | Description |
+|---|---|
+| `points` | Object-space position and surface normal of each point. |
+| `size` | Width in world units. |
+| `alpha` | Image name in `images/`, or `""` for the round tip. |
+| `values` | Per channel, in channel order: whether it's painted, and its value (linear color; Normal encoded 0–1). `mask_value` for mask targets. |
+
+The other keys are the [curve properties](curves.md#curve-properties).
+
 ## Paint pages
 
 Paint data is stored sparsely in **pages** of 128 × 128 texels. A page file exists only if at
@@ -90,7 +119,7 @@ A `.smat` file is a zip archive containing:
 |---|---|
 | `material.json` | `format: "crate-smart-material"`, `version`, the layer slot, the subgraph's nodes, the list of exposed parameters, and the UDIM tiles the paint was made on. |
 | `paint/` | Paint pages of any Paint nodes in the subgraph, same layout as in a project. |
-| `images/` | Images used by Image and Fill nodes. |
+| `images/` | Images used by Image and Fill nodes, and by curves as alphas. |
 | `thumbnail.png` | 256 × 256 preview: the viewport at the time the material was saved. |
 
 ## Versioning
