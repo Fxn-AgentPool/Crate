@@ -1,0 +1,61 @@
+# Paint transfer on reimport (docs/reference/mesh-and-udims.md#reimport). The meshes come from
+# tests/data/make_transfer.py: the same cube with three UV layouts.
+new tests/data/transfer_a.obj 1024
+size 480x360
+camera 35 25
+add-fill
+set base_color=#808080 roughness=0.6
+add-paint
+tool paint
+brush-values base_color=#C03020 roughness=0.3
+brush size=50 hardness=0.6 flow=1
+stroke 0.25,0.3 0.5,0.5 0.75,0.7
+stroke 0.3,0.75 0.7,0.25
+render target/tests/transfer/a_painted.png
+# Same UVs: nothing to transfer, and nothing changes.
+reimport tests/data/transfer_a.obj
+expect-transfer false
+render target/tests/transfer/b_same.png
+expect-same target/tests/transfer/a_painted.png target/tests/transfer/b_same.png 0
+# New UVs: islands moved, rotated, mirrored, two of them to tile 1002. The paint stays put.
+reimport tests/data/transfer_b.obj
+expect-transfer true 0.1
+render target/tests/transfer/c_new_uvs.png
+expect-same target/tests/transfer/a_painted.png target/tests/transfer/c_new_uvs.png 12
+# Back to the first layout, transferred again.
+reimport tests/data/transfer_a.obj
+expect-transfer true 0.1
+render target/tests/transfer/d_back.png
+expect-same target/tests/transfer/a_painted.png target/tests/transfer/d_back.png 12
+# Without transfer, the texels stay in UV space: on the new layout, the paint moves.
+reimport tests/data/transfer_b.obj --no-transfer
+expect-transfer false
+render target/tests/transfer/e_no_transfer.png
+expect-different target/tests/transfer/a_painted.png target/tests/transfer/e_no_transfer.png
+# A face moved out beyond the search distance (1/6 of the UV area) finds no old surface.
+reimport tests/data/transfer_a.obj
+reimport tests/data/transfer_c.obj
+expect-error expect-transfer true 10
+expect-transfer true 17
+# Saved paint follows the transfer, and pages of tiles no longer used are deleted on save.
+new tests/data/transfer_b.obj 1024
+size 480x360
+camera 35 25
+add-paint
+tool paint
+brush-values base_color=#C03020 roughness=0.3
+brush size=50 hardness=0.6 flow=1
+stroke 0.25,0.3 0.5,0.5 0.75,0.7
+stroke 0.3,0.75 0.7,0.25
+# From below and behind, onto the -X and -Y faces in tile 1002.
+camera 215 -30
+stroke 0.25,0.3 0.5,0.5 0.75,0.7
+save target/tests/transfer/proj.crate
+expect-files target/tests/transfer/proj.crate/paint/n3 1001 1002
+render target/tests/transfer/f_on_b.png
+reimport tests/data/transfer_a.obj
+save
+expect-files target/tests/transfer/proj.crate/paint/n3 1001
+open target/tests/transfer/proj.crate
+render target/tests/transfer/g_reopened.png
+expect-same target/tests/transfer/f_on_b.png target/tests/transfer/g_reopened.png 12

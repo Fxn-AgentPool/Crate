@@ -137,6 +137,9 @@ pub enum Command {
         /// Do not rebake mesh maps that became out of date.
         #[arg(long)]
         no_bake: bool,
+        /// Keep paint where it is in UV space, even if the UVs changed.
+        #[arg(long)]
+        no_transfer: bool,
         /// Export textures to this directory afterwards.
         #[arg(long)]
         export: Option<PathBuf>,
@@ -192,6 +195,9 @@ pub enum Command {
         /// Mesh file to watch (the file your DCC exports).
         #[arg(long)]
         mesh: PathBuf,
+        /// Keep paint where it is in UV space, even if the UVs changed.
+        #[arg(long)]
+        no_transfer: bool,
         /// Export textures to this directory after each reimport.
         #[arg(long)]
         export: Option<PathBuf>,
@@ -263,10 +269,10 @@ pub fn run(cli: &Cli, cmd: &Command) -> Result<serde_json::Value> {
             let info = script::project_info(s.project.as_ref().unwrap());
             Ok(serde_json::json!({ "project": info }))
         }
-        Command::Reimport { project, mesh, no_bake, export, export_opts } => {
+        Command::Reimport { project, mesh, no_bake, no_transfer, export, export_opts } => {
             let mut s = session(Vec::new())?;
             s.run(&format!("open {}", q(project)))?;
-            s.run(&format!("reimport {}", q(mesh)))?;
+            s.run(&format!("reimport {}{}", q(mesh), if *no_transfer { " --no-transfer" } else { "" }))?;
             if !no_bake {
                 s.run("bake outdated")?;
             }
@@ -274,8 +280,9 @@ pub fn run(cli: &Cli, cmd: &Command) -> Result<serde_json::Value> {
             if let Some(dir) = export {
                 s.run(&format!("export {} {}", q(dir), export_opts.script_args().join(" ")))?;
             }
-            let info = script::project_info(s.project.as_ref().unwrap());
-            Ok(serde_json::json!({ "project": info }))
+            let p = s.project.as_ref().unwrap();
+            let info = script::project_info(p);
+            Ok(serde_json::json!({ "project": info, "transfer": transfer_json(p.last_transfer) }))
         }
         Command::Export { project, output, export_opts } => {
             let mut s = session(Vec::new())?;
@@ -345,8 +352,8 @@ pub fn run(cli: &Cli, cmd: &Command) -> Result<serde_json::Value> {
             }
             Ok(summary)
         }
-        Command::Watch { project, mesh, export, export_opts, interval, count } => {
-            watch(cli, project, mesh, export.as_deref(), export_opts, *interval, *count)
+        Command::Watch { project, mesh, no_transfer, export, export_opts, interval, count } => {
+            watch(cli, project, mesh, *no_transfer, export.as_deref(), export_opts, *interval, *count)
         }
         Command::Update { check } => update(*check),
         Command::Info { project } => {
@@ -435,10 +442,18 @@ fn modified(path: &Path) -> Option<(SystemTime, u64)> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The `transfer` field of reimport output (docs/reference/command-line.md "JSON output").
+fn transfer_json(t: Option<crate::transfer::Report>) -> serde_json::Value {
+    let t = t.unwrap_or_default();
+    serde_json::json!({ "transferred": t.transferred, "missed": t.missed })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn watch(
     cli: &Cli,
     project: &Path,
     mesh: &Path,
+    no_transfer: bool,
     export: Option<&Path>,
     export_opts: &ExportOpts,
     interval: u64,
@@ -466,7 +481,7 @@ fn watch(
         let t = Instant::now();
         script::report_reset();
         let r = (|| -> Result<()> {
-            s.run(&format!("reimport {}", q(mesh)))?;
+            s.run(&format!("reimport {}{}", q(mesh), if no_transfer { " --no-transfer" } else { "" }))?;
             s.run("bake outdated")?;
             s.run("save")?;
             if let Some(dir) = export {
@@ -484,6 +499,7 @@ fn watch(
                     "files": rep.files,
                     "warnings": rep.warnings,
                     "seconds": t.elapsed().as_secs_f32(),
+                    "transfer": transfer_json(rep.transfer),
                 }));
             }
             Err(e) => {

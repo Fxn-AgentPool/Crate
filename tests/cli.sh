@@ -52,6 +52,11 @@ check "export" bash -c "'$P' export $OUT/Crate.crate -o $OUT/export2 --preset 'U
 
 # reimport (same mesh: paint and layers must survive)
 check "reimport" bash -c "'$P' reimport $OUT/Crate.crate assets/crate.glb --json > $OUT/reimport.json && grep -q '\"name\":\"Base coat\"' $OUT/reimport.json"
+check "reimport, same UVs: no transfer" grep -q '"transfer":{"missed":0.0,"transferred":false}' "$OUT/reimport.json"
+# reimport with new UVs: paint is transferred (docs/reference/mesh-and-udims.md#reimport)
+check "new transfer project" bash -c "'$P' new tests/data/transfer_a.obj -o $OUT/Transfer.crate --tile-resolution 1024 --json > /dev/null"
+check "reimport new UVs" bash -c "'$P' reimport $OUT/Transfer.crate tests/data/transfer_b.obj --no-bake --json > $OUT/transfer.json && grep -q '\"transferred\":true' $OUT/transfer.json"
+check "reimport --no-transfer" bash -c "'$P' reimport $OUT/Transfer.crate tests/data/transfer_a.obj --no-bake --no-transfer --json > $OUT/notransfer.json && grep -q '\"transferred\":false' $OUT/notransfer.json"
 
 # watch: stops after one reimport triggered by rewriting the mesh
 cp assets/crate.glb "$OUT/watched.glb"

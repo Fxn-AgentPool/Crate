@@ -82,6 +82,10 @@ pub struct Project {
     redo: Vec<UndoStep>,
     pub undo_limit: usize,
     pub undo_bytes: usize,
+    /// What the last reimport did with the paint.
+    pub last_transfer: Option<crate::transfer::Report>,
+    /// Paint was transferred to new UVs: the next save deletes pages of tiles no longer used.
+    pub prune_tiles: bool,
 }
 
 impl Project {
@@ -133,6 +137,8 @@ impl Project {
             redo: Vec::new(),
             undo_limit: UNDO_LIMIT,
             undo_bytes: UNDO_BYTES,
+            last_transfer: None,
+            prune_tiles: false,
         };
         p.graph_changed(gpu);
         p
@@ -361,9 +367,12 @@ impl Project {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Replaces the mesh, keeping layers and paint (paint follows the UVs). Paint of tiles
-    /// that no longer exist is dropped from memory; mesh maps are marked out of date.
-    pub fn reimport(&mut self, gpu: &Gpu, path: &std::path::Path) -> anyhow::Result<()> {
+    /// Replaces the mesh, keeping layers and paint. If the UVs changed, paint is transferred to
+    /// the new UVs by matching the surface, unless `transfer` is off; otherwise it stays where it
+    /// is in UV space (paint of tiles that no longer exist is dropped from memory). Mesh maps are
+    /// marked out of date and the undo history is cleared. See
+    /// docs/reference/mesh-and-udims.md#reimport.
+    pub fn reimport(&mut self, gpu: &Gpu, path: &std::path::Path, transfer: bool) -> anyhow::Result<crate::transfer::Report> {
         let mesh = crate::mesh::import(path, &self.import_settings)?;
         if mesh.has_errors() {
             anyhow::bail!("the mesh has import errors; see the Import Log");
@@ -371,8 +380,39 @@ impl Project {
         let old_tiles = self.mesh.tiles.clone();
         let new_tiles = mesh.tiles.clone();
         let res = self.tile_resolution();
-        // Remap pool layers when the tile set changed.
-        if old_tiles != new_tiles {
+        // The new surface, which transfer reads and painting needs anyway.
+        let gpu_mesh = crate::viewport::GpuMesh::new(gpu, &mesh);
+        let mut maps = MeshMaps::new(gpu, &mesh, res);
+        maps.settings = self.maps.settings;
+        maps.high_poly = self.maps.high_poly.clone();
+        maps.bake_blocking(gpu, &gpu_mesh, res, &[MeshMap::Position, MeshMap::WorldNormal]);
+        let transfer = transfer && !crate::transfer::same_uvs(&self.mesh, &mesh);
+        let mut report = crate::transfer::Report::default();
+        if transfer {
+            let nt = new_tiles.len() as u32;
+            let fresh = |slots: u32| crate::scene::Pool::new(gpu, "paint plane", crate::scene::PAINT_FORMAT, res, (slots * nt).max(1).next_power_of_two());
+            let slots = if self.scene.paint[0].res == res { self.next_paint_slot } else { 0 };
+            let mslots = if self.scene.mask.res == res { self.mask_slots.len() as u32 } else { 0 };
+            let paint: Vec<crate::scene::Pool> = (0..self.scene.paint.len()).map(|_| fresh(slots)).collect();
+            let mask = fresh(mslots);
+            let (pos, _) = maps.texture(MeshMap::Position);
+            let (nrm, _) = maps.texture(MeshMap::WorldNormal);
+            let planes = [
+                crate::transfer::Planes { src: self.scene.paint.iter().collect(), dst: paint.iter().collect(), slots },
+                crate::transfer::Planes { src: vec![&self.scene.mask], dst: vec![&mask], slots: mslots },
+            ];
+            report = crate::transfer::run(gpu, &self.mesh, &mesh, res, pos, nrm, &planes);
+            if slots > 0 {
+                self.scene.paint = paint;
+            }
+            if mslots > 0 {
+                self.scene.mask = mask;
+            }
+            self.scene.mark_dirty();
+            self.caches = Default::default();
+            self.prune_tiles = true;
+        } else if old_tiles != new_tiles {
+            // Remap pool layers when the tile set changed.
             let (ot, nt) = (old_tiles.len() as u32, new_tiles.len() as u32);
             let remap = |pools: &mut Vec<&mut crate::scene::Pool>, slots: u32| {
                 for pool in pools.iter_mut() {
@@ -406,16 +446,11 @@ impl Project {
             self.scene.mark_dirty();
             self.caches = Default::default();
         }
-        let settings = self.maps.settings;
-        let high_poly = self.maps.high_poly.clone();
         let statuses: Vec<_> = crate::meshmaps::MeshMap::ALL.iter().map(|m| self.maps.status(*m)).collect();
         self.original_mesh = path.to_path_buf();
-        self.gpu_mesh = crate::viewport::GpuMesh::new(gpu, &mesh);
-        self.maps = MeshMaps::new(gpu, &mesh, res);
-        self.maps.settings = settings;
-        self.maps.high_poly = high_poly;
+        self.gpu_mesh = gpu_mesh;
+        self.maps = maps;
         self.mesh = mesh;
-        self.maps.bake_blocking(gpu, &self.gpu_mesh, res, &[MeshMap::Position, MeshMap::WorldNormal]);
         // Other maps keep their old data in name only: they must be rebaked.
         for (m, st) in crate::meshmaps::MeshMap::ALL.iter().zip(statuses) {
             if !matches!(m, MeshMap::Position | MeshMap::WorldNormal) && st != crate::meshmaps::MapStatus::Missing {
@@ -424,8 +459,12 @@ impl Project {
         }
         self.saved_maps.clear();
         self.paint_epoch += 1;
+        // Undo steps hold texels of the old pools.
+        self.clear_history();
+        self.edit_version += 1;
+        self.last_transfer = Some(report);
         self.graph_changed(gpu);
-        Ok(())
+        Ok(report)
     }
 
     /// Reserves a slot in the material paint pools (paint nodes and material caches).

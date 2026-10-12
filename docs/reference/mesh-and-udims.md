@@ -57,6 +57,8 @@ udim = 1001 + floor(u) + 10 * floor(v)
     coverage). Where nothing is found, the texel is left unpainted.
   - Paint in tiles the new mesh no longer uses is transferred like the rest, and their pages are
     deleted from the project on the next save.
+  - While it runs, the old and the new paint are both on the GPU: paint takes twice its usual
+    GPU memory (see [Limits](limits.md)).
   - When done, the status bar (or the command line) reports **Paint transferred to the new UVs**
     and, if any texels found no old surface, the share of the new UV area they make up, as
     **N % of the UV area found no old surface**.

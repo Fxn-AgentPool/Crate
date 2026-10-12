@@ -29,6 +29,7 @@ mod smartmat;
 mod script;
 mod stencil;
 mod thumbs;
+mod transfer;
 mod ui_library;
 mod ui_bake_preview;
 mod ui_export;

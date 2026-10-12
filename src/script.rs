@@ -27,6 +27,8 @@ pub struct Report {
     pub files: Vec<String>,
     pub warnings: Vec<String>,
     pub saved: Vec<String>,
+    /// What the last reimport did with the paint.
+    pub transfer: Option<crate::transfer::Report>,
 }
 
 pub static REPORT: Mutex<Option<Report>> = Mutex::new(None);
@@ -300,6 +302,21 @@ impl Session {
                 crate::meshmaps::save_png(&gpu, &p.maps, m, layer as u32, &out)?;
                 say!("  wrote {}", out.display());
                 report(|r| r.files.push(norm(&out)));
+            }
+            "expect-transfer" => {
+                let want: bool = rest.first().context("expect-transfer <true|false> [max percent]")?.parse()?;
+                let p = self.project()?;
+                let got = p.last_transfer.context("no reimport has run")?;
+                if got.transferred != want {
+                    bail!("the last reimport {} paint", if got.transferred { "transferred" } else { "didn't transfer" });
+                }
+                if let Some(max) = rest.get(1) {
+                    let max: f32 = max.parse()?;
+                    if got.missed > max {
+                        bail!("{:.2}% of the UV area found no old surface (at most {max}% expected)", got.missed);
+                    }
+                }
+                say!("  transferred {}, {:.2}% found no old surface", got.transferred, got.missed);
             }
             "expect-misses" => {
                 let max: f32 = rest.first().context("expect-misses <max percent>")?.parse()?;
@@ -674,9 +691,18 @@ impl Session {
                 report(|r| r.saved.push(norm(&dir)));
             }
             "reimport" => {
-                let path = self.path(rest.first().context("reimport <mesh>")?);
+                let path = self.path(rest.first().context("reimport <mesh> [--no-transfer]")?);
+                let transfer = match rest.get(1).map(String::as_str) {
+                    None => true,
+                    Some("--no-transfer") => false,
+                    Some(other) => bail!("reimport <mesh> [--no-transfer]: unknown option {other}"),
+                };
                 let p = self.project.as_mut().context("no project")?;
-                p.reimport(&gpu, &path)?;
+                let t = p.reimport(&gpu, &path, transfer)?;
+                if let Some(msg) = t.message() {
+                    say!("  {}", msg[..1].to_lowercase() + &msg[1..]);
+                }
+                report(|r| r.transfer = Some(t));
                 for d in &p.mesh.diagnostics {
                     say!("  [{:?}] {}: {}", d.severity, d.code, d.message);
                     if d.severity >= crate::mesh::Severity::Warning {

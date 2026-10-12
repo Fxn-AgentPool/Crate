@@ -33,7 +33,7 @@ longer to scan and thumbnail.
 | Layers | No fixed limit. Bounded by memory. |
 | Layer groups in the Node Editor | Layers up to the 4096th of a Stack, in Stacks with a node id below 524 288. The nodes of other layers are shown ungrouped. |
 | Undo history | 64 steps or 2 GB of page data, whichever comes first (configurable) |
-| Paint layers | Each painted layer holds its full tiles on the GPU: 40 bytes per texel (about 168 MB per 2048² tile). |
+| Paint layers | Each painted layer holds its full tiles on the GPU: 40 bytes per texel (about 168 MB per 2048² tile). A reimport that [transfers paint](mesh-and-udims.md#reimport) needs twice that while it runs. |
 
 ## Memory budgets
 

@@ -472,8 +472,11 @@ impl CrateApp {
                     if ui.add_enabled(self.doc.is_some(), egui::Button::new("Reimport Mesh…")).clicked() {
                         if let Some(path) = rfd::FileDialog::new().add_filter("Mesh", &["glb", "gltf", "obj"]).pick_file() {
                             if let Some(doc) = &mut self.doc {
-                                match doc.reimport(&self.gpu, &path) {
-                                    Ok(()) => {
+                                match doc.reimport(&self.gpu, &path, true) {
+                                    Ok(t) => {
+                                        if let Some(msg) = t.message() {
+                                            self.message = Some((msg, ui.input(|i| i.time)));
+                                        }
                                         self.viewport = Viewport::new(&self.gpu, &doc.scene.layout);
                                         self.viewport.set_mesh(&self.gpu, &doc.gpu_mesh);
                                         self.viewport_material = u64::MAX;

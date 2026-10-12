@@ -425,6 +425,16 @@ fn save_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<usize> {
         }
         let node_dir = dir.join(id_str(node));
         keep_dirs.push(node_dir.clone());
+        // After a transfer, pages of tiles the mesh no longer uses hold paint of the old UVs.
+        if p.prune_tiles {
+            let tiles: Vec<String> = p.mesh.tiles.iter().map(|t| t.to_string()).collect();
+            for e in std::fs::read_dir(&node_dir).into_iter().flatten().flatten() {
+                if !tiles.contains(&e.file_name().to_string_lossy().into_owned()) {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+            saved.retain(|(n, udim, _, _), _| *n != node || p.mesh.tiles.contains(udim));
+        }
         let planes = crate::paint::pool_textures(p, mask);
         for (t, udim) in p.mesh.tiles.clone().iter().enumerate() {
             let pages: Vec<(u32, u32, u32)> =
@@ -458,6 +468,7 @@ fn save_paint(gpu: &Gpu, p: &mut Project, dir: &Path) -> Result<usize> {
         }
     }
     p.saved_pages = saved;
+    p.prune_tiles = false;
     // Remove paint of nodes that no longer exist.
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {

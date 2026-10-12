@@ -577,8 +577,8 @@ impl MeshMaps {
         }
     }
 
-    /// Reads one tile of a map back as stored: position in object space, World Normal in
-    /// -1..1, Normal encoded 0..1, ID colors 0..1 and scalar maps as gray with alpha 1.
+    /// Reads one tile of a map back as stored: position in object space, World Normal encoded
+    /// 0..1 (n * 0.5 + 0.5), Normal encoded 0..1, ID colors 0..1 and scalar maps as gray with alpha 1.
     pub fn read(&self, gpu: &Gpu, map: MeshMap, layer: u32) -> Vec<[f32; 4]> {
         let (tex, bpp) = self.texture(map);
         let bytes = gpu.read_texture(tex, layer, bpp);
