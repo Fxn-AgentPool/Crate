@@ -7,13 +7,16 @@
 //! scratch "base", and the bake writes base + buffer into the target. Live mode re-bakes
 //! the whole stroke every frame from that base, so a stroke painted live and the same
 //! stroke baked manually produce identical texels.
+//!
+//! In the UV view (docs/reference/uv-view.md#painting) the buffer belongs to a UV view instead
+//! of a camera: the bake places texels by their UV, with no depth pass or angle falloff.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
-use crate::camera::Camera;
+use crate::camera::{Camera, View};
 use crate::channels::Channel;
 use crate::gpu::{self, Gpu};
 use crate::graph::NodeId;
@@ -210,12 +213,16 @@ struct BakeParams {
     inv_row1: [f32; 4],
     proj: [f32; 4],
     target: [u32; 4],
+    /// UV view: x = screen pixels per UV unit, y, z = UDIM coordinate at the center, w = 1.
+    uv: [f32; 4],
+    /// x, y: the tile's UDIM offset.
+    uv_tile: [f32; 4],
 }
 
-/// The camera a buffer belongs to.
+/// The view a buffer belongs to.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BakeCamera {
-    pub camera: Camera,
+    pub view: View,
     pub view_proj: Mat4,
     pub screen: (u32, u32),
 }
@@ -562,12 +569,27 @@ impl PaintEngine {
     }
 
     /// Sets the bake camera, rendering a new depth pass when it changed.
-    fn set_bake_camera(&mut self, gpu: &Gpu, p: &Project, camera: &Camera, screen: (u32, u32)) {
-        let view_proj = crate::viewport::Viewport::view_proj(camera, &p.mesh, screen.0, screen.1);
-        let bc = BakeCamera { camera: *camera, view_proj, screen };
+    fn set_bake_camera(&mut self, gpu: &Gpu, p: &Project, view: &View, screen: (u32, u32)) {
+        let view_proj = match view {
+            View::Persp(camera) => crate::viewport::Viewport::view_proj(camera, &p.mesh, screen.0, screen.1),
+            View::Uv(uv) => uv.view_proj(Vec2::new(screen.0 as f32, screen.1 as f32)),
+        };
+        let bc = BakeCamera { view: *view, view_proj, screen };
         if self.bake_camera != Some(bc) {
-            self.render_depth(gpu, p, &bc);
+            match view {
+                View::Persp(_) => self.render_depth(gpu, p, &bc),
+                // No depth in UV space: world-size brushes fall back to screen pixels.
+                View::Uv(_) => self.buffers.as_mut().unwrap().depth_cpu = None,
+            }
             self.bake_camera = Some(bc);
+        }
+    }
+
+    /// The camera of the buffer's view, unless it is the UV view.
+    fn bake_persp(&self) -> Option<Camera> {
+        match self.bake_camera?.view {
+            View::Persp(c) => Some(c),
+            View::Uv(_) => None,
         }
     }
 
@@ -578,7 +600,7 @@ impl PaintEngine {
             return None;
         }
         self.ensure_buffers(gpu, screen);
-        self.set_bake_camera(gpu, p, camera, screen);
+        self.set_bake_camera(gpu, p, &View::Persp(*camera), screen);
         let depth = self.depth_at(gpu, pos)?;
         let ndc = Vec2::new(pos.x / screen.0 as f32 * 2.0 - 1.0, 1.0 - pos.y / screen.1 as f32 * 2.0);
         let aspect = screen.0 as f32 / screen.1.max(1) as f32;
@@ -603,7 +625,7 @@ impl PaintEngine {
         &mut self,
         gpu: &Gpu,
         p: &mut Project,
-        camera: &Camera,
+        view: &View,
         screen: (u32, u32),
         pos: Vec2,
         pressure: f32,
@@ -611,7 +633,7 @@ impl PaintEngine {
         let target = self.target(gpu, p)?;
         self.ensure_buffers(gpu, screen);
         if !(self.mode == BakeMode::Manual && self.unbaked) {
-            self.set_bake_camera(gpu, p, camera, screen);
+            self.set_bake_camera(gpu, p, view, screen);
         }
         let b = self.buffers.as_ref().unwrap();
         self.clear_textures(gpu, &[&b.stroke]);
@@ -644,11 +666,12 @@ impl PaintEngine {
         if self.brush.pressure_size {
             size *= pressure.clamp(0.05, 1.0);
         }
-        if self.brush.size_space == SizeSpace::World {
+        if self.brush.size_space == SizeSpace::World && !matches!(self.bake_camera.map(|c| c.view), Some(View::Uv(_))) {
             // Size is in world units; convert using the depth under the dab.
             let (fov, h) = self
-                .bake_camera
-                .map(|c| (c.camera.fov_y, c.screen.1 as f32))
+                .bake_persp()
+                .zip(self.bake_camera)
+                .map(|(c, bc)| (c.fov_y, bc.screen.1 as f32))
                 .unwrap_or((40f32.to_radians(), 720.0));
             if let Some(depth) = self.depth_at(gpu, pos) {
                 let world_per_px = 2.0 * depth * (fov * 0.5).tan() / h;
@@ -880,8 +903,12 @@ impl PaintEngine {
         let d = &gpu.device;
         let tiles = p.tile_count();
         let res = p.tile_resolution();
-        let eye = bc.camera.eye();
+        let (eye, fov_y) = self.bake_persp().map_or((Vec3::ZERO, 1.0), |c| (c.eye(), c.fov_y));
         let screen = Vec2::new(bc.screen.0 as f32, bc.screen.1 as f32);
+        let uv = match bc.view {
+            View::Uv(v) => [v.scale(screen), v.center.x, v.center.y, 1.0],
+            View::Persp(_) => [0.0; 4],
+        };
         let (inv0, inv1) = self.transform.inverse_rows(screen * 0.5);
         let pr = &self.projection;
         let (scratch, _, _) = self.scratch.as_ref().unwrap();
@@ -903,7 +930,7 @@ impl PaintEngine {
         for tile in 0..tiles {
             let params = BakeParams {
                 view_proj: bc.view_proj.to_cols_array_2d(),
-                eye: eye.extend(2.0 * (bc.camera.fov_y * 0.5).tan() / b.size.1 as f32).into(),
+                eye: eye.extend(2.0 * (fov_y * 0.5).tan() / b.size.1 as f32).into(),
                 screen: [screen.x, screen.y, self.buffer_scale, pr.depth_tolerance],
                 inv_row0: inv0,
                 inv_row1: inv1,
@@ -914,6 +941,11 @@ impl PaintEngine {
                     pr.project_through as u8 as f32,
                 ],
                 target: [tile, target.slot * tiles + tile, target.mask as u32, res / PAGE],
+                uv,
+                uv_tile: {
+                    let k = p.mesh.tiles[tile as usize].saturating_sub(1001);
+                    [(k % 10) as f32, (k / 10) as f32, 0.0, 0.0]
+                },
             };
             let ubuf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("bake params"),

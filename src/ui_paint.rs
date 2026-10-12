@@ -116,7 +116,7 @@ pub fn brush_cursor(ui: &egui::Ui, gpu: &Gpu, p: &Project, brush: &Brush, previe
 
 /// The strip above the viewport: Size, Flow and Hardness, and Bake Mesh Maps on the right.
 /// `mesh_maps` is whether the Mesh Maps window is open.
-pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine, mesh_maps: &mut bool) {
+pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine, mesh_maps: &mut bool, layout: &mut crate::camera::Layout) {
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, t::BG_PANEL);
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, t::DIVIDER));
@@ -141,6 +141,10 @@ pub fn viewport_toolbar(ui: &mut egui::Ui, p: &Project, paint: &mut PaintEngine,
         if bake_button(ui, *mesh_maps, outdated > 0).on_hover_text(hint).clicked() {
             *mesh_maps = !*mesh_maps;
         }
+        // Right to left: the layout control sits left of Bake Mesh Maps (docs/reference/uv-view.md).
+        use crate::camera::Layout;
+        let options = [(Layout::ThreeD, "3D"), (Layout::Split, "Split"), (Layout::Uv, "UV")];
+        crate::ui_widgets::segmented_width(ui, layout, &options, 150.0).on_hover_text("3D (F2), Split (F1) or UV view (F3)");
     });
 }
 

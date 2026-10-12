@@ -27,8 +27,8 @@ the display mode is shared.
 | Part | Contents |
 |---|---|
 | Background | The viewport background. |
-| UDIM grid | Every tile from 1001 to the highest tile in use, as unit squares with U to the right and V up. Used tiles are outlined in the border color and labeled with their number in their top-left corner; unused tiles only as faint lines. |
-| Material | Each triangle drawn at its UVs, shaded with the same material and display mode as the 3D view. Islands that overlap in UV space overlap here too; the one drawn last shows. |
+| UDIM grid | Every tile from 1001 to the highest tile in use, as unit squares with U to the right and V up. Used tiles are outlined in the border color and labeled with their number in their bottom-left corner; unused tiles only as faint lines. |
+| Material | Each triangle drawn at its UVs, shaded with the same material and display mode as the 3D view. Where islands overlap in UV space, the triangle that comes first in the mesh shows. |
 | UV edges | The triangles' edges, always shown, dark at 35 % opacity. |
 | Display switcher | As in the 3D view: **Material** and one button per enabled channel. |
 

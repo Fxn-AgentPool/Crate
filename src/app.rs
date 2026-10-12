@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use egui::{Key, Modifiers, PointerButton, Sense};
 use glam::Vec2;
 
-use crate::camera::Camera;
+use crate::camera::{Camera, Layout, UvView, View};
 use crate::channels::Channel;
 use crate::gpu::Gpu;
 use crate::mesh::{self, Diagnostic, ImportSettings, Severity, TangentMode, UpAxis};
@@ -32,6 +32,19 @@ pub struct CrateApp {
     renderer: std::sync::Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>,
     viewport: Viewport,
     viewport_texture: Option<(egui::TextureId, u32, u32)>,
+    /// The UV view's renderer (docs/reference/uv-view.md).
+    uv_pane: UvPane,
+    /// Incremented when the project's mesh changes, so the UV renderer follows.
+    mesh_version: u64,
+    layout: Layout,
+    /// The UV view's pan and zoom; framed on first show.
+    uv_view: Option<UvView>,
+    /// The pane the paint buffer belongs to.
+    paint_pane: Pane,
+    /// Screen rectangles of the panes drawn last frame.
+    pane_rects: Vec<(Pane, egui::Rect)>,
+    /// A brush gesture (Ctrl + right or Ctrl + Shift + left drag) continued in some pane this frame.
+    gesture_live: bool,
     doc: Option<Project>,
     camera: Camera,
     view: ViewSettings,
@@ -92,6 +105,7 @@ impl CrateApp {
         let rs = cc.wgpu_render_state.as_ref().expect("Crate requires the wgpu renderer");
         let gpu = Gpu { device: rs.device.clone(), queue: rs.queue.clone() };
         let viewport = Viewport::new(&gpu, &crate::scene::layout(&gpu));
+        let uv_viewport = Viewport::new(&gpu, &crate::scene::layout(&gpu));
         let paint = PaintEngine::new(&gpu);
         let paint_gpu = gpu.clone();
         let prefs_for_bindings = crate::prefs::Preferences::load();
@@ -100,6 +114,13 @@ impl CrateApp {
             renderer: rs.renderer.clone(),
             viewport,
             viewport_texture: None,
+            uv_pane: UvPane { viewport: uv_viewport, texture: None, material: u64::MAX, mesh: u64::MAX, environment: None },
+            mesh_version: 0,
+            layout: Layout::default(),
+            uv_view: None,
+            paint_pane: Pane::ThreeD,
+            pane_rects: Vec::new(),
+            gesture_live: false,
             doc: None,
             camera: Camera::default(),
             bake_pane: crate::ui_bake_preview::BakePane::new(),
@@ -180,6 +201,8 @@ impl CrateApp {
         self.paint = PaintEngine::new(&self.gpu);
         self.viewport = Viewport::new(&self.gpu, &project.scene.layout);
         self.viewport.set_mesh(&self.gpu, &project.gpu_mesh);
+        self.mesh_version += 1;
+        (self.layout, self.uv_view, self.paint_pane) = (Layout::default(), None, Pane::ThreeD);
         self.view.height_scale = project.channels.height_scale;
         self.bake_selection = MeshMap::ALL.map(|m| project.maps.status(m) != MapStatus::UpToDate);
         self.doc = Some(project);
@@ -204,6 +227,8 @@ impl CrateApp {
         if let Some(project) = session.project.take() {
             self.viewport = Viewport::new(&self.gpu, &project.scene.layout);
             self.viewport.set_mesh(&self.gpu, &project.gpu_mesh);
+            self.mesh_version += 1;
+            (self.layout, self.uv_view, self.paint_pane) = (session.layout, session.uv.or(session.saved_uv), Pane::ThreeD);
             self.view = session.view;
             self.view.height_scale = project.channels.height_scale;
             self.camera = session.camera;
@@ -338,6 +363,12 @@ impl CrateApp {
                 _ => {}
             }
         }
+        // F frames the pane under the pointer: the mesh in 3D, the tiles in UV.
+        let frame_uv = match self.hovered_pane(ctx) {
+            Some(p) => p == Pane::Uv,
+            None => self.layout == Layout::Uv,
+        };
+        let uv_rect = self.pane_rects.iter().find(|(p, _)| *p == Pane::Uv).map(|(_, r)| *r);
         if let Some(doc) = &mut self.doc {
             let gpu = &self.gpu;
             let (flip, reset_s, toggle_s) = stencil_key;
@@ -398,7 +429,18 @@ impl CrateApp {
                         }
                     }
                     A::ToggleNodeEditor => self.node_editor.toggle(doc.selection.map(|s| s.layer())),
-                    A::FrameMesh => self.camera.frame(doc.mesh.center(), doc.mesh.radius()),
+                    A::FrameMesh => {
+                        match (frame_uv, uv_rect) {
+                            (true, Some(r)) => {
+                                let size = Vec2::new(r.width(), r.height());
+                                self.uv_view.get_or_insert_default().frame(&doc.mesh.tiles, size);
+                            }
+                            _ => self.camera.frame(doc.mesh.center(), doc.mesh.radius()),
+                        }
+                    }
+                    A::ViewSplit => self.layout = Layout::Split,
+                    A::View3D => self.layout = Layout::ThreeD,
+                    A::ViewUv => self.layout = Layout::Uv,
                     A::TileGrid => self.view.show_tiles = !self.view.show_tiles,
                     A::Wireframe => self.view.wireframe = !self.view.wireframe,
                     A::MaterialView => self.view.display = DisplayMode::Material,
@@ -479,6 +521,7 @@ impl CrateApp {
                                         }
                                         self.viewport = Viewport::new(&self.gpu, &doc.scene.layout);
                                         self.viewport.set_mesh(&self.gpu, &doc.gpu_mesh);
+                                        self.mesh_version += 1;
                                         self.viewport_material = u64::MAX;
                                         self.paint = PaintEngine::new(&self.gpu);
                                         self.thumbs.clear();
@@ -628,17 +671,19 @@ impl CrateApp {
         });
     }
 
+    /// The viewport: the toolbar, then the 3D view, the UV view or both side by side.
+    /// See docs/reference/uv-view.md#layouts.
     fn viewport_ui(&mut self, ui: &mut egui::Ui) {
         let mut rect = ui.available_rect_before_wrap();
         if let Some(doc) = self.doc.as_mut() {
             let (bar, rest) = rect.split_top_bottom_at_y(rect.top() + 40.0);
             ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
-                crate::ui_paint::viewport_toolbar(ui, doc, &mut self.paint, &mut self.show_mesh_maps);
+                crate::ui_paint::viewport_toolbar(ui, doc, &mut self.paint, &mut self.show_mesh_maps, &mut self.layout);
             });
             rect = rest;
         }
-        let response = ui.allocate_rect(rect, Sense::click_and_drag());
-        let Some(doc) = self.doc.as_mut() else {
+        if self.doc.is_none() {
+            ui.allocate_rect(rect, Sense::hover());
             ui.painter().rect_filled(rect, 0.0, egui::Color32::from_gray(40));
             ui.painter().text(
                 rect.center(),
@@ -648,12 +693,54 @@ impl CrateApp {
                 egui::Color32::from_gray(160),
             );
             return;
-        };
+        }
+        self.pane_rects.clear();
+        self.gesture_live = false;
+        match self.layout {
+            Layout::ThreeD => self.pane_ui(ui, rect, Pane::ThreeD),
+            Layout::Uv => self.pane_ui(ui, rect, Pane::Uv),
+            Layout::Split => {
+                let mid = rect.center().x.round();
+                let left = egui::Rect::from_min_max(rect.min, egui::pos2(mid - 0.5, rect.max.y));
+                let right = egui::Rect::from_min_max(egui::pos2(mid + 0.5, rect.min.y), rect.max);
+                self.pane_ui(ui, left, Pane::ThreeD);
+                self.pane_ui(ui, right, Pane::Uv);
+                ui.painter().vline(mid, rect.y_range(), egui::Stroke::new(1.0, crate::ui_theme::BORDER_STRONG));
+            }
+        }
+        if !self.gesture_live {
+            self.brush_gesture = None;
+        }
+    }
 
+    /// The pane under the pointer, if any (Split has two).
+    fn hovered_pane(&self, ctx: &egui::Context) -> Option<Pane> {
+        let pos = ctx.input(|i| i.pointer.hover_pos())?;
+        self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(p, _)| *p)
+    }
+
+    /// What a pane shows.
+    fn pane_view(&self, pane: Pane) -> View {
+        match pane {
+            Pane::ThreeD => View::Persp(self.camera),
+            Pane::Uv => View::Uv(self.uv_view.unwrap_or_default()),
+        }
+    }
+
+    /// One viewport pane: navigation, painting, rendering and overlays.
+    fn pane_ui(&mut self, ui: &mut egui::Ui, rect: egui::Rect, pane: Pane) {
+        let response = ui.interact(rect, ui.id().with(("viewport pane", pane as u8)), Sense::click_and_drag());
+        self.pane_rects.push((pane, rect));
         let ppp = ui.ctx().pixels_per_point();
         let (w, h) = ((rect.width() * ppp) as u32, (rect.height() * ppp) as u32);
         if w == 0 || h == 0 {
             return;
+        }
+        let size = Vec2::new(w as f32, h as f32);
+        if pane == Pane::Uv && self.uv_view.is_none() {
+            let mut v = UvView::default();
+            v.frame(&self.doc.as_ref().unwrap().mesh.tiles, size);
+            self.uv_view = Some(v);
         }
         let gpu_owned = self.gpu.clone();
         let gpu = &gpu_owned;
@@ -686,19 +773,25 @@ impl CrateApp {
             )
         });
         let (mods, delta, buttons, scroll, pressure, pressed, released, hover, v_down, time, s_down) = input;
+        let doc = self.doc.as_mut().unwrap();
         let stencil = doc.stencils.sample(|n| doc.scene.image_layer(n), (w, h));
         let d = Vec2::new(delta.x, delta.y);
         let to_px = |p: egui::Pos2| Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
         let active = response.dragged() || response.is_pointer_button_down_on();
+        // The buffer belongs to one pane: moving that pane's view applies On camera move, the
+        // other pane moves freely (docs/reference/uv-view.md#painting).
+        let owns_buffer = self.paint_pane == pane;
 
         let mut gesture_live = false;
         if self.paint.stroking() {
-            // Strokes continue until the button is released.
-            if let Some(hp) = hover {
-                self.paint.stroke_to(gpu, to_px(hp), pressure);
-            }
-            if released || !buttons[0] {
-                self.paint.end_stroke(gpu, doc, stencil);
+            // Strokes continue until the button is released, in the pane they started in.
+            if owns_buffer {
+                if let Some(hp) = hover {
+                    self.paint.stroke_to(gpu, to_px(hp), pressure);
+                }
+                if released || !buttons[0] {
+                    self.paint.end_stroke(gpu, doc, stencil);
+                }
             }
         } else if active && s_down && buttons[0] {
             // Hold S: move, Shift rotates, Ctrl scales the active stencil.
@@ -712,7 +805,7 @@ impl CrateApp {
                     s.offset += d * ppp;
                 }
             }
-        } else if active && v_down && self.paint.mode == BakeMode::Manual && buttons[0] {
+        } else if active && v_down && self.paint.mode == BakeMode::Manual && buttons[0] && owns_buffer {
             // Hold V: move, Shift rotates, Ctrl scales the buffer.
             let t = &mut self.paint.transform;
             if mods.shift {
@@ -757,20 +850,32 @@ impl CrateApp {
             b.flow = (b.flow - d.y * 0.005).clamp(0.0, 1.0);
         } else if response.clicked() && mods.alt && mods.shift {
             if let Some(hp) = hover {
-                self.pick_color(to_px(hp), (w, h));
+                self.pick_color(pane, to_px(hp), (w, h));
             }
         } else if active && (mods.alt || buttons[1]) {
             // Navigation: Alt + left/middle/right drag; middle drag also pans.
             let moves = (mods.alt && (buttons[0] || buttons[2])) || buttons[1];
             if moves && d != Vec2::ZERO {
                 let doc = self.doc.as_mut().unwrap();
-                if self.paint.camera_moving(gpu, doc) {
-                    if mods.alt && buttons[0] {
-                        self.camera.orbit(d);
-                    } else if buttons[1] {
-                        self.camera.pan(d, rect.height());
-                    } else if mods.alt && buttons[2] {
-                        self.camera.dolly((1.0 + (d.x - d.y) * -0.005).clamp(0.5, 2.0));
+                if !owns_buffer || self.paint.camera_moving(gpu, doc) {
+                    match pane {
+                        Pane::ThreeD => {
+                            if mods.alt && buttons[0] {
+                                self.camera.orbit(d);
+                            } else if buttons[1] {
+                                self.camera.pan(d, rect.height());
+                            } else if mods.alt && buttons[2] {
+                                self.camera.dolly((1.0 + (d.x - d.y) * -0.005).clamp(0.5, 2.0));
+                            }
+                        }
+                        Pane::Uv => {
+                            let uv = self.uv_view.as_mut().unwrap();
+                            if mods.alt && buttons[2] {
+                                uv.zoom_at((1.0 - (d.x - d.y) * -0.005).clamp(0.5, 2.0), size * 0.5, size);
+                            } else {
+                                uv.pan(d * ppp, size);
+                            }
+                        }
                     }
                 } else {
                     self.message = Some((CAMERA_LOCKED.into(), time));
@@ -779,93 +884,119 @@ impl CrateApp {
         } else if pressed && response.hovered() && !mods.alt && !v_down && !s_down {
             if let Some(hp) = hover {
                 let doc = self.doc.as_mut().unwrap();
-                if self.paint.tool == Tool::PaintThrough && stencil.is_none() {
+                // A Manual-mode buffer of the other pane is handled like a camera move first.
+                let free = owns_buffer || !self.paint.unbaked || self.paint.camera_moving(gpu, doc);
+                if !free {
+                    self.message = Some((CAMERA_LOCKED.into(), time));
+                } else if self.paint.tool == Tool::PaintThrough && stencil.is_none() {
                     self.message = Some(("Paint Through needs a stencil: + in the Stencils section.".into(), time));
-                } else if let Err(e) = self.paint.begin_stroke(gpu, doc, &self.camera, (w, h), to_px(hp), pressure) {
-                    self.message = Some((e, time));
+                } else {
+                    self.paint_pane = pane;
+                    let view = self.pane_view(pane);
+                    let doc = self.doc.as_mut().unwrap();
+                    if let Err(e) = self.paint.begin_stroke(gpu, doc, &view, (w, h), to_px(hp), pressure) {
+                        self.message = Some((e, time));
+                    }
                 }
             }
         }
-        if !gesture_live {
-            self.brush_gesture = None;
-        }
+        self.gesture_live |= gesture_live;
         let frame_cursor = self.bindings.get(crate::shortcuts::Action::FrameCursor);
         if response.hovered() && ui.input(|i| i.key_pressed(frame_cursor.logical_key) && i.modifiers.matches_exact(frame_cursor.modifiers)) {
             if let Some(hp) = hover {
                 let doc = self.doc.as_mut().unwrap();
-                if let Some(point) = self.paint.pick(gpu, doc, &self.camera, (w, h), to_px(hp)) {
-                    let dist = self.camera.distance.min((point - self.camera.eye()).length());
-                    self.camera.target = point;
-                    self.camera.distance = dist.max(doc.mesh.radius() * 0.05);
+                match pane {
+                    Pane::ThreeD => {
+                        if let Some(point) = self.paint.pick(gpu, doc, &self.camera, (w, h), to_px(hp)) {
+                            let dist = self.camera.distance.min((point - self.camera.eye()).length());
+                            self.camera.target = point;
+                            self.camera.distance = dist.max(doc.mesh.radius() * 0.05);
+                        }
+                    }
+                    Pane::Uv => {
+                        if !owns_buffer || self.paint.camera_moving(gpu, doc) {
+                            let uv = self.uv_view.as_mut().unwrap();
+                            uv.center = uv.to_uv(to_px(hp), size);
+                        }
+                    }
                 }
             }
         }
         let doc = self.doc.as_mut().unwrap();
         if response.hovered() && scroll != 0.0 {
-            if self.paint.camera_moving(gpu, doc) {
-                self.camera.dolly(0.999f32.powf(scroll));
+            if !owns_buffer || self.paint.camera_moving(gpu, doc) {
+                match pane {
+                    Pane::ThreeD => self.camera.dolly(0.999f32.powf(scroll)),
+                    Pane::Uv => {
+                        let at = hover.map(to_px).unwrap_or(size * 0.5);
+                        self.uv_view.as_mut().unwrap().zoom_at(1.001f32.powf(scroll), at, size);
+                    }
+                }
             } else {
                 self.message = Some((CAMERA_LOCKED.into(), time));
             }
         }
-        self.paint.flush(gpu, doc, stencil);
-        let doc = &*doc;
+        if owns_buffer {
+            self.paint.flush(gpu, doc, stencil);
+        }
 
-        if doc.material_version != self.viewport_material {
-            if let Err(e) = self.viewport.set_material(&self.gpu, doc.viewport_code()) {
+        // Render with this pane's renderer; the UV renderer follows the 3D one's mesh and
+        // environment lazily.
+        let view_of = self.pane_view(pane);
+        let doc = self.doc.as_ref().unwrap();
+        if pane == Pane::Uv {
+            if self.uv_pane.mesh != self.mesh_version {
+                self.uv_pane.viewport = Viewport::new(&self.gpu, &doc.scene.layout);
+                self.uv_pane.viewport.set_mesh(&self.gpu, &doc.gpu_mesh);
+                self.uv_pane.mesh = self.mesh_version;
+                self.uv_pane.material = u64::MAX;
+                self.uv_pane.environment = None;
+            }
+            if self.uv_pane.environment.as_ref() != Some(&self.environment) {
+                let _ = self.uv_pane.viewport.set_environment(&self.gpu, self.environment.as_deref());
+                self.uv_pane.environment = Some(self.environment.clone());
+            }
+        }
+        let (viewport, material, texture) = match pane {
+            Pane::ThreeD => (&mut self.viewport, &mut self.viewport_material, &mut self.viewport_texture),
+            Pane::Uv => (&mut self.uv_pane.viewport, &mut self.uv_pane.material, &mut self.uv_pane.texture),
+        };
+        if doc.material_version != *material {
+            if let Err(e) = viewport.set_material(&self.gpu, doc.viewport_code()) {
                 log::error!("Material shader failed to compile:
 {e}");
                 self.error = Some("Material shader failed to compile; see the log.".into());
             }
-            self.viewport_material = doc.material_version;
+            *material = doc.material_version;
         }
-        self.viewport.render(
-            &self.gpu,
-            &self.camera,
-            &doc.mesh,
-            &doc.gpu_mesh,
-            doc.scene.bind_group.as_ref().unwrap(),
-            &self.view,
-            w,
-            h,
-        );
+        viewport.render(&self.gpu, &view_of, &doc.mesh, &doc.gpu_mesh, doc.scene.bind_group.as_ref().unwrap(), &self.view, w, h);
 
-        let view = self.viewport.output_view().unwrap();
-        self.paint.draw_overlay(&self.gpu, view, (w, h));
+        let out = viewport.output_view().unwrap();
+        if owns_buffer {
+            self.paint.draw_overlay(&self.gpu, out, (w, h));
+        }
         let layer = doc.stencils.active().map(|s| doc.scene.image_layer(&s.image)).unwrap_or(-1);
-        self.stencil_overlay.draw(&self.gpu, view, (w, h), &doc.stencils, &doc.scene.images, layer);
-        let tex_id = match self.viewport_texture {
+        self.stencil_overlay.draw(&self.gpu, out, (w, h), &doc.stencils, &doc.scene.images, layer);
+        let tex_id = match *texture {
             Some((id, tw, th)) if tw == w && th == h => id,
             Some((id, _, _)) => {
-                self.renderer.write().update_egui_texture_from_wgpu_texture(
-                    &self.gpu.device,
-                    view,
-                    wgpu::FilterMode::Nearest,
-                    id,
-                );
-                self.viewport_texture = Some((id, w, h));
+                self.renderer.write().update_egui_texture_from_wgpu_texture(&self.gpu.device, out, wgpu::FilterMode::Nearest, id);
+                *texture = Some((id, w, h));
                 id
             }
             None => {
-                let id = self.renderer.write().register_native_texture(
-                    &self.gpu.device,
-                    view,
-                    wgpu::FilterMode::Nearest,
-                );
-                self.viewport_texture = Some((id, w, h));
+                let id = self.renderer.write().register_native_texture(&self.gpu.device, out, wgpu::FilterMode::Nearest);
+                *texture = Some((id, w, h));
                 id
             }
         };
-        ui.painter().image(
-            tex_id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-        if self.view.show_tiles {
-            self.tile_overlay(ui, rect);
+        ui.painter().image(tex_id, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        match pane {
+            Pane::ThreeD if self.view.show_tiles => self.tile_overlay(ui, rect),
+            Pane::Uv => self.uv_grid(ui, rect, size / ppp),
+            _ => {}
         }
-        if self.paint.unbaked {
+        if self.paint.unbaked && owns_buffer {
             let orange = crate::ui_theme::ATTENTION;
             ui.painter().rect_stroke(rect.shrink(1.5), 0.0, egui::Stroke::new(3.0, orange), egui::StrokeKind::Inside);
         }
@@ -873,7 +1004,7 @@ impl CrateApp {
         let r = self.paint.brush.size * 0.5 / ppp;
         let b = &self.paint.brush;
         match (self.brush_gesture, hover) {
-            (Some(g), hp) => {
+            (Some(g), hp) if hp.is_some_and(|p| rect.contains(p)) || response.dragged() => {
                 let (BrushGesture::Resize { anchor } | BrushGesture::Rotate { anchor, .. }) = g;
                 crate::ui_paint::brush_cursor(ui, &self.gpu, doc, b, &mut self.tip_preview, anchor, r);
                 let readout = match g {
@@ -896,9 +1027,40 @@ impl CrateApp {
             }
             _ => {}
         }
-        display_switcher(ui, rect, &mut self.view.display, &self.doc.as_ref().unwrap().channels);
+        let id = ui.id().with(("display switcher", pane as u8));
+        ui.push_id(id, |ui| display_switcher(ui, rect, &mut self.view.display, &self.doc.as_ref().unwrap().channels));
         if response.dragged() || response.hovered() {
             ui.ctx().request_repaint();
+        }
+    }
+
+    /// The UV view's UDIM grid: every tile up to the highest in use, used ones outlined and
+    /// labeled (docs/reference/uv-view.md "What the UV view shows").
+    fn uv_grid(&self, ui: &egui::Ui, rect: egui::Rect, size_pt: Vec2) {
+        let Some(v) = self.uv_view else { return };
+        let doc = self.doc.as_ref().unwrap();
+        let tiles = &doc.mesh.tiles;
+        let max_u = tiles.iter().map(|t| (t - 1001) % 10).max().unwrap_or(0) + 1;
+        let max_v = tiles.iter().map(|t| (t - 1001) / 10).max().unwrap_or(0) + 1;
+        let p = ui.painter_at(rect);
+        let at = |u: f32, w: f32| {
+            let s = v.to_screen(Vec2::new(u, w), size_pt);
+            rect.min + egui::vec2(s.x, s.y)
+        };
+        let faint = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(18));
+        for k in 0..=max_u {
+            p.line_segment([at(k as f32, 0.0), at(k as f32, max_v as f32)], faint);
+        }
+        for k in 0..=max_v {
+            p.line_segment([at(0.0, k as f32), at(max_u as f32, k as f32)], faint);
+        }
+        for t in tiles {
+            let k = t - 1001;
+            let (u, w) = ((k % 10) as f32, (k / 10) as f32);
+            let r = egui::Rect::from_two_pos(at(u, w), at(u + 1.0, w + 1.0));
+            p.rect_stroke(r, 0.0, egui::Stroke::new(1.0, crate::ui_theme::BORDER_STRONG), egui::StrokeKind::Middle);
+            // Bottom left: the display switcher covers the view's top-left corner.
+            p.text(r.left_bottom() + egui::vec2(6.0, -4.0), egui::Align2::LEFT_BOTTOM, t.to_string(), crate::ui_theme::value(), crate::ui_theme::TEXT_2);
         }
     }
 
@@ -923,8 +1085,12 @@ impl CrateApp {
     }
 
     /// Samples the displayed color under the cursor into the brush values.
-    fn pick_color(&mut self, px: Vec2, size: (u32, u32)) {
-        let Some(tex) = self.viewport.output_texture() else { return };
+    fn pick_color(&mut self, pane: Pane, px: Vec2, size: (u32, u32)) {
+        let viewport = match pane {
+            Pane::ThreeD => &self.viewport,
+            Pane::Uv => &self.uv_pane.viewport,
+        };
+        let Some(tex) = viewport.output_texture() else { return };
         let bytes = self.gpu.read_texture(tex, 0, 4);
         let (x, y) = (px.x as u32, px.y as u32);
         if x >= size.0 || y >= size.1 {
@@ -953,6 +1119,8 @@ impl CrateApp {
             env_rotation: self.view.env_rotation,
             environment: self.environment.as_ref().map(|p| p.display().to_string()),
             ambient_occlusion: self.view.ambient_occlusion,
+            layout: self.layout,
+            uv_view: self.uv_view,
         }
     }
 
@@ -1000,6 +1168,8 @@ impl CrateApp {
                 self.paint = PaintEngine::new(&self.gpu);
                 self.viewport = Viewport::new(&self.gpu, &project.scene.layout);
                 self.viewport.set_mesh(&self.gpu, &project.gpu_mesh);
+                self.mesh_version += 1;
+                (self.layout, self.uv_view, self.paint_pane) = (loaded.viewport.layout, loaded.viewport.uv_view, Pane::ThreeD);
                 self.view = ViewSettings { height_scale: project.channels.height_scale, ..Default::default() };
                 self.view.exposure = loaded.viewport.exposure;
                 self.view.view_transform =
@@ -1651,6 +1821,22 @@ fn paint_target_label(doc: &Project) -> String {
 
 /// 12317 → "12,317".
 /// A Ctrl + drag on the brush, centered where it started.
+/// A viewport pane (docs/reference/uv-view.md#layouts).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pane {
+    ThreeD,
+    Uv,
+}
+
+/// The UV view's renderer and what it was last set up with.
+struct UvPane {
+    viewport: Viewport,
+    texture: Option<(egui::TextureId, u32, u32)>,
+    material: u64,
+    mesh: u64,
+    environment: Option<Option<PathBuf>>,
+}
+
 #[derive(Clone, Copy)]
 enum BrushGesture {
     /// Ctrl + right drag: size and flow.

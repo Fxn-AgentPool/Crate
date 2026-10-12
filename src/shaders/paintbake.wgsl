@@ -19,6 +19,11 @@ struct Params {
     // x: tile layer in mesh maps, y: target base layer (slot * tiles + tile), z: 1 = mask target,
     // w: pages per row
     dest: vec4u,
+    // UV view (docs/reference/uv-view.md#painting): x = screen px per UV unit, y, z = UDIM
+    // coordinate at the screen's center, w = 1 in the UV view.
+    uv: vec4f,
+    // x, y: this tile's UDIM offset
+    uv_tile: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -78,7 +83,19 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var strength = 0.0;
     let pos = textureLoad(mm_pos, mxy, tl, 0);
     var suv = vec2f(0.0);
-    if pos.a > 0.0 {
+    if pos.a > 0.0 && params.uv.w > 0.5 {
+        // The texel's UDIM coordinate (row 0 is the top of the tile, V up), placed by the view.
+        let res_f = f32(res);
+        let uv = params.uv_tile.xy + vec2f((f32(xy.x) + 0.5) / res_f, 1.0 - (f32(xy.y) + 0.5) / res_f);
+        let d = (uv - params.uv.yz) * params.uv.x;
+        let screen = vec2f(params.screen.x * 0.5 + d.x, params.screen.y * 0.5 - d.y);
+        let sp = vec2f(dot(params.inv_row0.xyz, vec3f(screen, 1.0)), dot(params.inv_row1.xyz, vec3f(screen, 1.0)));
+        suv = sp / params.screen.xy;
+        let inside = all(suv >= vec2f(0.0)) && all(suv <= vec2f(1.0)) && all(screen >= vec2f(0.0)) && all(screen <= params.screen.xy);
+        if inside {
+            strength = 1.0;
+        }
+    } else if pos.a > 0.0 {
         let clip = params.view_proj * vec4f(pos.xyz, 1.0);
         if clip.w > 0.0 {
             let ndc = clip.xyz / clip.w;

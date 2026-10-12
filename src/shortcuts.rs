@@ -32,6 +32,9 @@ pub enum Action {
     ToggleNodeEditor,
     FrameMesh,
     FrameCursor,
+    ViewSplit,
+    View3D,
+    ViewUv,
     MaterialView,
     CycleChannels,
     CycleMeshMaps,
@@ -46,7 +49,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 34] = [
+    pub const ALL: [Action; 37] = [
         Action::NewProject,
         Action::OpenProject,
         Action::Save,
@@ -72,6 +75,9 @@ impl Action {
         Action::ToggleNodeEditor,
         Action::FrameMesh,
         Action::FrameCursor,
+        Action::ViewSplit,
+        Action::View3D,
+        Action::ViewUv,
         Action::MaterialView,
         Action::CycleChannels,
         Action::CycleMeshMaps,
@@ -110,6 +116,9 @@ impl Action {
             Action::ToggleNodeEditor => "Open or close the Node Editor",
             Action::FrameMesh => "Frame mesh",
             Action::FrameCursor => "Frame cursor",
+            Action::ViewSplit => "View: Split",
+            Action::View3D => "View: 3D",
+            Action::ViewUv => "View: UV",
             Action::MaterialView => "Material view",
             Action::CycleChannels => "Cycle channels",
             Action::CycleMeshMaps => "Cycle mesh maps",
@@ -153,6 +162,9 @@ impl Action {
             Action::ToggleNodeEditor => (c, Key::Space),
             Action::FrameMesh => (n, Key::F),
             Action::FrameCursor => (s, Key::F),
+            Action::ViewSplit => (n, Key::F1),
+            Action::View3D => (n, Key::F2),
+            Action::ViewUv => (n, Key::F3),
             Action::MaterialView => (n, Key::M),
             Action::CycleChannels => (n, Key::C),
             Action::CycleMeshMaps => (s, Key::C),

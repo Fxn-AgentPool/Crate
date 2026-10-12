@@ -1,0 +1,45 @@
+# The UV view (docs/reference/uv-view.md), on tests/data/transfer_a.obj: a cube whose six faces
+# are 0.3-wide UV islands in tile 1001; the +X face's island spans U and V 0.03..0.33. Points are
+# chosen inside triangles, off the UV edges the UV view draws.
+new tests/data/transfer_a.obj 1024
+size 400x400
+add-fill
+set base_color=#808080 roughness=0.6
+add-paint
+tool paint
+brush-values base_color=#C03020 roughness=0.3
+brush size=100 hardness=0.8 flow=1
+# Before painting: the +X face's center, in 3D (camera on +X) and in UV.
+camera 90 0
+render target/tests/uv_view/a_3d_before.png
+uv-view 0.189375 0.208125 3
+render target/tests/uv_view/b_uv_before.png
+# A dab near the center of the +X island, painted in the UV view...
+stroke 0.5,0.5
+render target/tests/uv_view/c_uv_painted.png
+expect-different target/tests/uv_view/b_uv_before.png target/tests/uv_view/c_uv_painted.png
+# ...shows at the center of the +X face in 3D.
+camera 90 0
+render target/tests/uv_view/d_3d_painted.png
+expect-different target/tests/uv_view/a_3d_before.png target/tests/uv_view/d_3d_painted.png
+view base_color
+render target/tests/uv_view/e_3d_base_color.png
+expect-color target/tests/uv_view/e_3d_base_color.png 192,48,32 6
+uv-view 0.189375 0.208125 3
+render target/tests/uv_view/f_uv_base_color.png
+expect-color target/tests/uv_view/f_uv_base_color.png 192,48,32 6
+view material
+# The whole layout, framed as F does.
+uv-view
+render target/tests/uv_view/g_framed.png
+# Manual mode in the UV view: the buffer bakes into the same texels.
+mode manual
+brush-values base_color=#2040C0
+uv-view 0.509375 0.208125 3
+stroke 0.5,0.5
+expect-unbaked true
+bake-buffer
+expect-unbaked false
+view base_color
+render target/tests/uv_view/h_manual.png
+expect-color target/tests/uv_view/h_manual.png 32,64,192 6

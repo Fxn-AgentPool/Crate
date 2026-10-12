@@ -38,6 +38,12 @@ pub struct ViewportState {
     /// Viewport → Ambient occlusion (docs/reference/viewport-lighting.md).
     #[serde(default = "yes")]
     pub ambient_occlusion: bool,
+    /// 3D, Split or UV (docs/reference/uv-view.md#layouts).
+    #[serde(default)]
+    pub layout: crate::camera::Layout,
+    /// The UV view's center and zoom, once it has been shown.
+    #[serde(default, rename = "uvView", skip_serializing_if = "Option::is_none")]
+    pub uv_view: Option<crate::camera::UvView>,
 }
 
 fn yes() -> bool {
@@ -46,7 +52,16 @@ fn yes() -> bool {
 
 impl Default for ViewportState {
     fn default() -> Self {
-        Self { camera: None, exposure: 0.0, view_transform: None, env_rotation: 0.0, environment: None, ambient_occlusion: true }
+        Self {
+            camera: None,
+            exposure: 0.0,
+            view_transform: None,
+            env_rotation: 0.0,
+            environment: None,
+            ambient_occlusion: true,
+            layout: Default::default(),
+            uv_view: None,
+        }
     }
 }
 

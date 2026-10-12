@@ -79,6 +79,11 @@ pub struct Session {
     /// Renders the bake preview (`render-bake-preview`), created on first use.
     pub bake_view: Option<crate::bakeview::BakeView>,
     pub camera: Camera,
+    /// Renders and strokes use the UV view while set (`uv-view`); `camera` clears it.
+    pub uv: Option<crate::camera::UvView>,
+    /// Layout and UV view of the opened project, saved back unchanged.
+    pub layout: crate::camera::Layout,
+    pub saved_uv: Option<crate::camera::UvView>,
     pub view: ViewSettings,
     pub base_dir: PathBuf,
     pub size: (u32, u32),
@@ -108,6 +113,9 @@ impl Session {
             viewport: None,
             bake_view: None,
             camera: Camera::default(),
+            uv: None,
+            layout: Default::default(),
+            saved_uv: None,
             view: ViewSettings::default(),
             base_dir,
             size: (960, 720),
@@ -189,6 +197,7 @@ impl Session {
                 say!("  tiles {:?}, materials {:?}", mesh.tiles, mesh.materials);
                 self.camera = Camera::default();
                 self.camera.frame(mesh.center(), mesh.radius());
+                (self.uv, self.saved_uv, self.layout) = (None, None, Default::default());
                 let p = Project::new(&gpu, mesh, settings);
                 let mut vp = Viewport::new(&gpu, &p.scene.layout);
                 vp.set_mesh(&gpu, &p.gpu_mesh);
@@ -462,6 +471,23 @@ impl Session {
                 self.camera.pitch = pitch.to_radians();
                 self.camera.frame(c, r);
                 self.camera.distance /= zoom;
+                self.uv = None;
+            }
+            "uv-view" => {
+                let p = self.project.as_mut().context("no project")?;
+                if !self.paint.camera_moving(&gpu, p) {
+                    bail!("camera is locked (unbaked paint, On camera move = Lock camera)");
+                }
+                let mut v = crate::camera::UvView::default();
+                match rest.len() {
+                    0 => v.frame(&p.mesh.tiles, Vec2::new(self.size.0 as f32, self.size.1 as f32)),
+                    3 => {
+                        v.center = Vec2::new(rest[0].parse()?, rest[1].parse()?);
+                        v.zoom = rest[2].parse::<f32>()?.clamp(crate::camera::UvView::MIN_ZOOM, crate::camera::UvView::MAX_ZOOM);
+                    }
+                    _ => bail!("uv-view [<u> <v> <zoom>]"),
+                }
+                self.uv = Some(v);
             }
             "tool" => {
                 self.paint.tool = match rest.first().map(String::as_str) {
@@ -542,6 +568,7 @@ impl Session {
                     })
                     .collect::<Result<_>>()?;
                 anyhow::ensure!(!pts.is_empty(), "stroke needs points");
+                let view_of = self.view_of();
                 let p = self.project.as_mut().context("no project")?;
                 p.finish_background_work(&gpu);
                 if !self.paint.camera_moving(&gpu, p) {
@@ -552,7 +579,7 @@ impl Session {
                     bail!("Paint Through needs a stencil");
                 }
                 self.paint
-                    .begin_stroke(&gpu, p, &self.camera, self.size, pts[0].0, pts[0].1)
+                    .begin_stroke(&gpu, p, &view_of, self.size, pts[0].0, pts[0].1)
                     .map_err(|e| anyhow::anyhow!(e))?;
                 for &(pt, pr) in &pts[1..] {
                     self.paint.stroke_to(&gpu, pt, pr);
@@ -682,6 +709,8 @@ impl Session {
                     exposure: self.view.exposure,
                     view_transform: Some(self.view.view_transform.key().into()),
                     ambient_occlusion: self.view.ambient_occlusion,
+                    layout: self.layout,
+                    uv_view: self.uv.or(self.saved_uv),
                     ..Default::default()
                 };
                 let p = self.project.as_mut().context("no project")?;
@@ -727,6 +756,7 @@ impl Session {
                 if let Some(c) = loaded.viewport.camera {
                     self.camera = c;
                 }
+                (self.uv, self.saved_uv, self.layout) = (None, loaded.viewport.uv_view, loaded.viewport.layout);
                 self.view.exposure = loaded.viewport.exposure;
                 self.view.view_transform =
                     loaded.viewport.view_transform.as_deref().and_then(crate::viewport::ViewTransform::from_key).unwrap_or_default();
@@ -962,6 +992,14 @@ impl Session {
         Ok(())
     }
 
+    /// What renders and strokes show: the UV view after `uv-view`, otherwise the 3D camera.
+    fn view_of(&self) -> crate::camera::View {
+        match self.uv {
+            Some(v) => crate::camera::View::Uv(v),
+            None => crate::camera::View::Persp(self.camera),
+        }
+    }
+
     fn var(&self, name: &str) -> Result<crate::graph::NodeId> {
         self.vars.get(name).copied().with_context(|| format!("unknown node variable {name}"))
     }
@@ -995,6 +1033,7 @@ impl Session {
 
     pub fn render(&mut self, out: &Path) -> Result<()> {
         let gpu = self.gpu.clone();
+        let view_of = self.view_of();
         let p = self.project.as_mut().context("no project")?;
         p.finish_background_work(&gpu);
         let vp = self.viewport.as_mut().unwrap();
@@ -1003,7 +1042,7 @@ impl Session {
         }
         vp.render(
             &gpu,
-            &self.camera,
+            &view_of,
             &p.mesh,
             &p.gpu_mesh,
             p.scene.bind_group.as_ref().unwrap(),

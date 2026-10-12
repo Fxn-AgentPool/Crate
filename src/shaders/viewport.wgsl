@@ -21,6 +21,20 @@ const MODE_MESH_MAP: u32 = 2u;
 const FLAG_TILES: u32 = 1u;
 const FLAG_HDRI: u32 = 2u;
 const FLAG_AO: u32 = 4u;
+// The UV view: triangles drawn at their UVs, viewed along the surface normal.
+const FLAG_UV: u32 = 8u;
+
+fn uv_view() -> bool {
+    return (frame.mode.z & FLAG_UV) != 0u;
+}
+
+// Where a vertex is drawn: its position, or (u, v, 0) in the UV view.
+fn placed(v_pos: vec3f, v_uv: vec2f) -> vec4f {
+    if uv_view() {
+        return vec4f(v_uv, 0.0, 1.0);
+    }
+    return vec4f(v_pos, 1.0);
+}
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // UDIM slot (floor(u) + 10 * floor(v)) -> texture array layer, 0xffffffff when unused.
@@ -51,7 +65,7 @@ struct VsOut {
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
     var o: VsOut;
-    o.clip = frame.view_proj * vec4f(v.pos, 1.0);
+    o.clip = frame.view_proj * placed(v.pos, v.uv);
     o.pos = v.pos;
     o.normal = v.normal;
     o.tangent = v.tangent;
@@ -238,7 +252,8 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f 
     s.pos = in.pos;
     s.pos_norm = (in.pos - frame.bbox_min.xyz) / max(frame.bbox_size.xyz, vec3f(1e-6));
     var ng = normalize(in.normal);
-    if !front { ng = -ng; }
+    // Mirrored islands face away in the UV view; their surface doesn't.
+    if !front && !uv_view() { ng = -ng; }
     s.normal = ng;
     s.uv = in.uv;
     s.tile_uv = fract(in.uv);
@@ -254,7 +269,8 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4f 
     let height_scale = bitcast<f32>(frame.mode.w);
     n = bump(n, in.pos, m.height * height_scale);
 
-    let v = normalize(frame.eye.xyz - in.pos);
+    var v = normalize(frame.eye.xyz - in.pos);
+    if uv_view() { v = ng; }
     var c: vec3f;
     switch frame.mode.x {
         case MODE_CHANNEL: {
@@ -297,7 +313,7 @@ struct LineOut {
 @vertex
 fn vs_line(v: VsIn) -> LineOut {
     var o: LineOut;
-    o.clip = frame.view_proj * vec4f(v.pos, 1.0);
+    o.clip = frame.view_proj * placed(v.pos, v.uv);
     o.clip.z -= 2e-4 * o.clip.w;
     return o;
 }

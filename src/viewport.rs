@@ -540,10 +540,11 @@ impl Viewport {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Renders `view`: the 3D camera, or the mesh laid out at its UVs (docs/reference/uv-view.md).
     pub fn render(
         &mut self,
         gpu: &Gpu,
-        camera: &Camera,
+        view_of: &crate::camera::View,
         mesh: &Mesh,
         gpu_mesh: &GpuMesh,
         scene_bind: &wgpu::BindGroup,
@@ -556,21 +557,34 @@ impl Viewport {
         if self.mesh_pipeline.is_none() {
             self.set_material(gpu, DEFAULT_MATERIAL_WGSL).expect("default material compiles");
         }
-        let view_proj = Self::view_proj(camera, mesh, width, height);
+        let uv = matches!(view_of, crate::camera::View::Uv(_));
+        let (view_proj, eye, key) = match view_of {
+            crate::camera::View::Persp(camera) => (
+                Self::view_proj(camera, mesh, width, height),
+                camera.eye().extend(1.0),
+                (camera.right() * 0.5 + camera.up() * 0.9 - camera.forward() * 0.6).normalize(),
+            ),
+            crate::camera::View::Uv(v) => (v.view_proj(glam::Vec2::new(width as f32, height as f32)), glam::Vec4::ZERO, Vec3::new(0.3, 0.9, 0.3).normalize()),
+        };
         let size = mesh.bbox_max - mesh.bbox_min;
         let (mode, index) = match view.display {
             DisplayMode::Material => (0, 0),
             DisplayMode::Channel(c) => (1, c),
             DisplayMode::MeshMap(m) => (2, m),
         };
-        let key = (camera.right() * 0.5 + camera.up() * 0.9 - camera.forward() * 0.6).normalize();
         let uniform = FrameUniform {
             view_proj: view_proj.to_cols_array_2d(),
-            eye: camera.eye().extend(1.0).into(),
+            eye: eye.into(),
             bbox_min: mesh.bbox_min.extend(0.0).into(),
             bbox_size: size.max(Vec3::splat(1e-6)).extend(0.0).into(),
             viewport: [width as f32, height as f32, view.exposure, view.env_rotation],
-            mode: [mode, index, view.show_tiles as u32 | (view.hdri as u32) << 1 | (view.ambient_occlusion as u32) << 2, view.height_scale.to_bits()],
+            // The tile grid toggle is the 3D view's; the UV view draws its own grid.
+            mode: [
+                mode,
+                index,
+                (view.show_tiles && !uv) as u32 | (view.hdri as u32) << 1 | (view.ambient_occlusion as u32) << 2 | (uv as u32) << 3,
+                view.height_scale.to_bits(),
+            ],
             light: [key.x, key.y, key.z, 0.35],
         };
         gpu.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -614,7 +628,8 @@ impl Viewport {
                 pass.set_pipeline(self.mesh_pipeline.as_ref().unwrap());
                 pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-                if view.wireframe {
+                // The UV view always shows its edges.
+                if view.wireframe || uv {
                     pass.set_pipeline(self.line_pipeline.as_ref().unwrap());
                     pass.set_index_buffer(gpu_mesh.edge_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..gpu_mesh.edge_count, 0, 0..1);
