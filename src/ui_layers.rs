@@ -549,7 +549,9 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
         ParamKind::Image => {
             let cur = v.as_str().to_string();
             let label = if cur.is_empty() { "(none)".to_string() } else { cur.clone() };
-            if ui.add(crate::ui_widgets::secondary(label)).on_hover_text("Choose an image").clicked() {
+            // As high as the Ui's controls, so it scales on a node.
+            let button = crate::ui_widgets::secondary(label).min_size(egui::vec2(0.0, ui.spacing().interact_size.y));
+            if ui.add(button).on_hover_text("Choose an image").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Image", &["png", "jpg", "jpeg", "tga", "tif", "tiff", "exr"])
                     .pick_file()

@@ -221,7 +221,7 @@ pub fn compile_target(g: &Graph, ch: &ChannelSettings, env: &Env, target: &Targe
             let e = cx.input_expr(&mut f, link, *t);
             match t {
                 SocketType::Float => (format!("vec4f(vec3f({e}), {e})"), "mat_defaults()".into()),
-                SocketType::Color => (format!("vec4f({e}, luminance({e}))"), "mat_defaults()".into()),
+                SocketType::Color | SocketType::Vector => (format!("vec4f({e}, luminance({e}))"), "mat_defaults()".into()),
                 SocketType::Material => ("vec4f(0.0)".into(), e),
             }
         }
@@ -235,6 +235,7 @@ pub fn cacheable(n: &Node) -> bool {
     let outs = n.def().outputs;
     let count = |t| outs.iter().filter(|(_, x)| *x == t).count();
     !outs.is_empty()
+        && count(SocketType::Vector) == 0
         && !matches!(n.ty.as_str(), "material_output" | "paint" | "paint_mask")
         && ((count(SocketType::Material) == 1 && outs.len() == 1)
             || (count(SocketType::Color) <= 1 && count(SocketType::Float) <= 1 && count(SocketType::Material) == 0))
@@ -248,12 +249,14 @@ fn convert(expr: String, from: SocketType, to: SocketType) -> String {
     use SocketType::*;
     match (from, to) {
         (a, b) if a == b => expr,
-        (Float, Color) => format!("vec3f({expr})"),
+        (Float, Color | Vector) => format!("vec3f({expr})"),
         (Color, Float) => format!("luminance({expr})"),
+        (Vector, Float) => format!("dot({expr}, vec3f(1.0 / 3.0))"),
+        (Color, Vector) | (Vector, Color) => expr,
         // Material conversions are not implicit; fall back to defaults.
         (_, Material) => "mat_defaults()".into(),
         (Material, Float) => "0.0".into(),
-        (Material, Color) => "vec3f(0.0)".into(),
+        (Material, Color | Vector) => "vec3f(0.0)".into(),
         _ => expr,
     }
 }
@@ -261,7 +264,7 @@ fn convert(expr: String, from: SocketType, to: SocketType) -> String {
 fn default_for(t: SocketType) -> &'static str {
     match t {
         SocketType::Float => "0.0",
-        SocketType::Color => "vec3f(0.0)",
+        SocketType::Color | SocketType::Vector => "vec3f(0.0)",
         SocketType::Material => "mat_defaults()",
     }
 }
@@ -355,12 +358,18 @@ impl<'a> Ctx<'a> {
                 Some(slot) => lines.push(format!("let {} = paint_mask_sample({slot}u, s).x;", o("out"))),
                 None => lines.push(format!("let {} = 0.0;", o("out"))),
             },
-            "constant" => {
-                lines.push(format!("let {} = {};", o("float"), self.p(n, "value")));
-                lines.push(format!("let {} = {};", o("color"), self.p(n, "color")));
+            "value" => lines.push(format!("let {} = {};", o("value"), self.p(n, "value"))),
+            "color" => lines.push(format!("let {} = {};", o("color"), self.p(n, "color"))),
+            "vector" => lines.push(format!("let {} = {};", o("vector"), self.p(n, "vector"))),
+            "uv" => lines.push(format!("let {} = vec3f(s.tile_uv, 0.0);", o("uv"))),
+            "geometry" => {
+                lines.push(format!("let {} = s.pos;", o("position")));
+                lines.push(format!("let {} = s.pos_norm;", o("generated")));
+                lines.push(format!("let {} = s.normal;", o("normal")));
             }
             "image" => {
-                let sample = self.image_sample(n, "image");
+                let uv = n.inputs.contains_key("vector").then(|| self.input(f, n, "vector", SocketType::Vector, "vec3f(0.0)"));
+                let sample = self.image_sample(n, "image", uv);
                 lines.push(format!("let {}_raw = {sample};", o("img")));
                 lines.push(format!(
                     "let {} = select({img}_raw.rgb, srgb_to_linear({img}_raw.rgb), {} > 0.5);",
@@ -398,8 +407,9 @@ impl<'a> Ctx<'a> {
             }
             "noise" => {
                 let kind = graph::NOISE_TYPES.iter().position(|t| *t == n.param("type").as_str()).unwrap_or(0);
+                let p = self.input(f, n, "vector", SocketType::Vector, "s.pos_norm");
                 lines.push(format!(
-                    "let {} = fbm(s.pos_norm * {}, {kind}u, {}, {}, {}, {});",
+                    "let {} = fbm({p} * {}, {kind}u, {}, {}, {}, {});",
                     o("out"),
                     self.p(n, "scale"),
                     self.p(n, "octaves"),
@@ -410,8 +420,9 @@ impl<'a> Ctx<'a> {
             }
             "cellular" => {
                 let manhattan = n.param("metric").as_str() == "Manhattan";
+                let p = self.input(f, n, "vector", SocketType::Vector, "s.pos_norm");
                 lines.push(format!(
-                    "let {}_c = cellular(s.pos_norm * {}, {}, {manhattan}, {});",
+                    "let {}_c = cellular({p} * {}, {}, {manhattan}, {});",
                     o("cell"),
                     self.p(n, "scale"),
                     self.p(n, "jitter"),
@@ -428,10 +439,11 @@ impl<'a> Ctx<'a> {
             "gradient" => {
                 let axis_off = self.off(n, "axis");
                 let space_off = self.off(n, "space");
-                lines.push(format!(
-                    "let {}_p = select(s.pos_norm, s.pos, params[{space_off}].x > 0.5);",
-                    o("g")
-                ));
+                let p = match n.inputs.contains_key("vector") {
+                    true => self.input(f, n, "vector", SocketType::Vector, "vec3f(0.0)"),
+                    false => format!("select(s.pos_norm, s.pos, params[{space_off}].x > 0.5)"),
+                };
+                lines.push(format!("let {}_p = {p};", o("g")));
                 lines.push(format!(
                     "let {} = clamp((dot({g}_p, normalize(params[{axis_off}].xyz)) - {start}) / max({end} - {start}, 1e-5), 0.0, 1.0);",
                     o("out"),
@@ -562,6 +574,72 @@ impl<'a> Ctx<'a> {
                 };
                 lines.push(format!("let {} = {expr};", o("out")));
             }
+            "uv_transform" => {
+                let v = self.input(f, n, "vector", SocketType::Vector, "vec3f(s.tile_uv, 0.0)");
+                let r = o("vector");
+                lines.push(format!("let {r}_in = {v};"));
+                lines.push(format!(
+                    "let {r} = vec3f(rot2({r}_in.xy - 0.5, {}) * vec2f({}, {}) + 0.5 + vec2f({}, {}), {r}_in.z);",
+                    self.p(n, "rotation"),
+                    self.p(n, "tile_u"),
+                    self.p(n, "tile_v"),
+                    self.p(n, "offset_u"),
+                    self.p(n, "offset_v")
+                ));
+            }
+            "mapping" => {
+                let v = self.input(f, n, "vector", SocketType::Vector, "vec3f(s.tile_uv, 0.0)");
+                lines.push(format!(
+                    "let {} = euler_xyz({}) * ({v} * {}) + {};",
+                    o("vector"),
+                    self.p(n, "rotation"),
+                    self.p(n, "scale"),
+                    self.p(n, "location")
+                ));
+            }
+            "vector_math" => {
+                let a = self.input(f, n, "a", SocketType::Vector, "vec3f(0.0)");
+                let bdef = self.p(n, "b_value");
+                let b = self.input(f, n, "b", SocketType::Vector, &bdef);
+                let r = o("vm");
+                lines.push(format!("let {r}_a = {a};"));
+                lines.push(format!("let {r}_b = {b};"));
+                let (a, b) = (format!("{r}_a"), format!("{r}_b"));
+                let zero = "vec3f(0.0)".to_string();
+                let (vector, value) = match n.param("op").as_str() {
+                    "Subtract" => (format!("{a} - {b}"), "0.0".into()),
+                    "Multiply" => (format!("{a} * {b}"), "0.0".into()),
+                    "Divide" => (format!("select({a} / {b}, vec3f(0.0), {b} == vec3f(0.0))"), "0.0".into()),
+                    "Scale" => (format!("{a} * {}", self.p(n, "scale")), "0.0".into()),
+                    "Dot Product" => (zero, format!("dot({a}, {b})")),
+                    "Cross Product" => (format!("cross({a}, {b})"), "0.0".into()),
+                    "Length" => (zero, format!("length({a})")),
+                    "Distance" => (zero, format!("distance({a}, {b})")),
+                    "Normalize" => (format!("select(normalize({a}), vec3f(0.0), dot({a}, {a}) == 0.0)"), "0.0".into()),
+                    "Absolute" => (format!("abs({a})"), "0.0".into()),
+                    "Floor" => (format!("floor({a})"), "0.0".into()),
+                    "Fraction" => (format!("fract({a})"), "0.0".into()),
+                    "Minimum" => (format!("min({a}, {b})"), "0.0".into()),
+                    "Maximum" => (format!("max({a}, {b})"), "0.0".into()),
+                    _ => (format!("{a} + {b}"), "0.0".into()),
+                };
+                lines.push(format!("let {} = {vector};", o("vector")));
+                lines.push(format!("let {} = {value};", o("value")));
+            }
+            "combine_xyz" => {
+                let [x, y, z] = ["x", "y", "z"].map(|c| {
+                    let d = self.p(n, c);
+                    self.input(f, n, c, SocketType::Float, &d)
+                });
+                lines.push(format!("let {} = vec3f({x}, {y}, {z});", o("vector")));
+            }
+            "separate_xyz" => {
+                let v = self.input(f, n, "vector", SocketType::Vector, "vec3f(0.0)");
+                lines.push(format!("let {}_in = {v};", o("xyz")));
+                for c in ["x", "y", "z"] {
+                    lines.push(format!("let {} = {}_in.{c};", o(c), o("xyz")));
+                }
+            }
             "merge" => {
                 let a = self.input(f, n, "a", SocketType::Color, "vec3f(0.0)");
                 let b = self.input(f, n, "b", SocketType::Color, "vec3f(0.0)");
@@ -634,10 +712,13 @@ impl<'a> Ctx<'a> {
         f.lines.extend(lines);
     }
 
-    fn image_sample(&self, n: &Node, image_param: &str) -> String {
+    /// An Image node's (or Fill channel's) sample; `uv` is the Image node's Vector input.
+    fn image_sample(&self, n: &Node, image_param: &str, uv: Option<String>) -> String {
         let layer = format!("i32({})", self.p(n, image_param));
         let (scale, rot, offset) = (self.p(n, "scale"), self.p(n, "rotation"), self.p(n, "offset"));
-        if n.param("projection").as_str() == "Triplanar" {
+        if let Some(uv) = uv {
+            format!("image_vec({layer}, ({uv}).xy, {scale}, {rot}, {offset})")
+        } else if n.param("projection").as_str() == "Triplanar" {
             format!("image_triplanar({layer}, s, {scale}, {rot}, {offset}, {})", self.p(n, "triplanar_blend"))
         } else {
             format!("image_uv({layer}, s, {scale}, {rot}, {offset})")
@@ -653,7 +734,7 @@ impl<'a> Ctx<'a> {
             }
             let (on, val, src, img) = graph::fill_param_names(c);
             let value = if n.param(src).as_str() == "Image" {
-                let sample = self.image_sample(n, img);
+                let sample = self.image_sample(n, img, None);
                 match c {
                     Channel::BaseColor | Channel::Emissive => format!("srgb_to_linear(({sample}).rgb)"),
                     Channel::Normal => format!("normalize(({sample}).rgb * 2.0 - 1.0)"),
@@ -781,5 +862,41 @@ impl<'a> Ctx<'a> {
         }
         f.lines.push("return m;".into());
         self.funcs.push(function(&format!("fn mstack_{id}(s: Surface) -> f32"), &f.lines));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn code(g: &Graph, preview: &Link) -> String {
+        let env = Env { image_layer: &|_| 0, paint_slot: &|_| None, cache: &|_| None, preview: Some(preview) };
+        let c = compile(g, &ChannelSettings::default(), &env);
+        assert!(c.errors.is_empty(), "{:?}", c.errors);
+        c.code
+    }
+
+    #[test]
+    fn image_reads_its_vector_input_as_uv() {
+        let mut g = Graph::new();
+        let img = g.add("image");
+        let link = Link { node: img, output: "color".into() };
+        assert!(code(&g, &link).contains("image_uv("));
+        let uv = g.add("uv");
+        g.connect(uv, "uv", img, "vector");
+        let c = code(&g, &link);
+        assert!(c.contains(&format!("let n{uv}_uv = vec3f(s.tile_uv, 0.0);")));
+        assert!(c.contains(&format!("image_vec(i32(params[")) && c.contains(&format!("(n{uv}_uv).xy")), "{c}");
+    }
+
+    #[test]
+    fn vector_nodes_are_not_cacheable() {
+        let mut g = Graph::new();
+        for ty in ["uv", "geometry", "vector", "uv_transform", "mapping", "vector_math", "combine_xyz"] {
+            let n = g.add(ty);
+            assert!(!cacheable(g.node(n)), "{ty}");
+        }
+        let n = g.add("separate_xyz");
+        assert!(!cacheable(g.node(n)), "three Float outputs");
     }
 }

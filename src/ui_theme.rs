@@ -34,6 +34,7 @@ pub fn accent(alpha: f32) -> Color32 {
 pub const SOCK_COLOR: Color32 = Color32::from_rgb(233, 180, 82);
 pub const SOCK_FLOAT: Color32 = Color32::from_rgb(0x8a, 0x8e, 0x98);
 pub const SOCK_MATERIAL: Color32 = Color32::from_rgb(124, 213, 145);
+pub const SOCK_VECTOR: Color32 = Color32::from_rgb(0x63, 0x63, 0xc7);
 
 // States.
 /// Good (cached, up to date): oklch(0.84 0.11 150).

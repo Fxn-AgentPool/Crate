@@ -10,6 +10,16 @@ use egui::{Align2, Color32, CornerRadius, Rect, Response, RichText, Sense, Strok
 use crate::icons::{self, Icon};
 use crate::ui_theme as t;
 
+/// How much larger than usual this Ui draws its controls: the Node Editor scales a node's
+/// style with the zoom, and the controls here follow its control height.
+pub fn scale(ui: &Ui) -> f32 {
+    ui.spacing().interact_size.y / t::H_CONTROL
+}
+
+fn scaled(font: egui::FontId, s: f32) -> egui::FontId {
+    egui::FontId::new(font.size * s, font.family)
+}
+
 // ---------------------------------------------------------------- field
 
 /// A number with its label inside: drag to change it, click to type it.
@@ -77,8 +87,10 @@ struct Typing {
 
 impl<T: Numeric> Widget for Field<'_, T> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let width = self.width.unwrap_or_else(|| ui.available_width()).max(40.0);
-        let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, t::H_CONTROL), Sense::click_and_drag());
+        let s = scale(ui);
+        let (body, value) = (scaled(t::body(), s), scaled(t::value(), s));
+        let width = self.width.unwrap_or_else(|| ui.available_width()).max(40.0 * s);
+        let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, t::H_CONTROL * s), Sense::click_and_drag());
         let id = response.id;
         let (min, max) = (self.range.start().to_f64(), self.range.end().to_f64());
         let clamp = |v: f64| {
@@ -101,17 +113,17 @@ impl<T: Numeric> Widget for Field<'_, T> {
             p.rect_filled(rect, r, t::BG_INPUT);
             let mut edit_rect = rect;
             if !self.label.is_empty() {
-                let label = p.text(egui::pos2(rect.min.x + 9.0, rect.center().y), Align2::LEFT_CENTER, &self.label, t::body(), t::TEXT);
-                edit_rect.min.x = (label.max.x + 8.0).min(rect.max.x - 40.0);
+                let label = p.text(egui::pos2(rect.min.x + 9.0 * s, rect.center().y), Align2::LEFT_CENTER, &self.label, body.clone(), t::TEXT);
+                edit_rect.min.x = (label.max.x + 8.0 * s).min(rect.max.x - 40.0 * s);
             }
             let edit_id = id.with("typing");
             // A custom frame replaces TextEdit's margin, so the padding goes on the frame.
             let edit = egui::TextEdit::singleline(&mut ty.text)
                 .id(edit_id)
-                .font(t::value())
+                .font(value)
                 .horizontal_align(egui::Align::RIGHT)
                 .vertical_align(egui::Align::Center)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 9, top: 0, bottom: 0 }));
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: (9.0 * s).round() as i8, top: 0, bottom: 0 }));
             let out = ui.put(edit_rect, edit);
             ui.painter().rect_stroke(rect, r, Stroke::new(1.0, t::accent(0.6)), StrokeKind::Inside);
             if !ty.started {
@@ -184,10 +196,14 @@ impl<T: Numeric> Widget for Field<'_, T> {
                 p.rect_stroke(rect, r, Stroke::new(1.0, t::accent(0.6)), StrokeKind::Inside);
             }
             let y = rect.center().y;
+            // A long label gives way to the value rather than running under it.
+            let text = p.layout_no_wrap(self.text(v), value, t::TEXT);
+            let value_x = rect.max.x - 9.0 * s - text.size().x;
             if !self.label.is_empty() {
-                p.text(egui::pos2(rect.min.x + 9.0, y), Align2::LEFT_CENTER, &self.label, t::body(), t::TEXT);
+                let clip = Rect::from_x_y_ranges(rect.min.x..=value_x - 4.0 * s, rect.y_range()).intersect(p.clip_rect());
+                p.with_clip_rect(clip).text(egui::pos2(rect.min.x + 9.0 * s, y), Align2::LEFT_CENTER, &self.label, body, t::TEXT);
             }
-            p.text(egui::pos2(rect.max.x - 9.0, y), Align2::RIGHT_CENTER, self.text(v), t::value(), t::TEXT);
+            p.galley(egui::pos2(value_x, y - text.size().y / 2.0), text, t::TEXT);
         }
         response
     }
@@ -438,6 +454,11 @@ pub fn segmented<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, options: &[(V
 }
 
 pub fn segmented_width<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, options: &[(V, &str)], width: f32) -> Response {
+    segmented_enabled(ui, value, options, width, &[])
+}
+
+/// A segmented control whose options can be disabled: `enabled[k]` (missing = enabled).
+pub fn segmented_enabled<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, options: &[(V, &str)], width: f32, enabled: &[bool]) -> Response {
     let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, t::H_CONTROL), Sense::hover());
     let p = ui.painter().clone();
     p.rect(rect, CornerRadius::same(6), t::BG_APP, Stroke::new(1.0, t::BORDER), StrokeKind::Inside);
@@ -446,16 +467,18 @@ pub fn segmented_width<V: PartialEq + Clone>(ui: &mut Ui, value: &mut V, options
     let w = (inner.width() - 2.0 * (n - 1.0)) / n;
     for (k, (option, label)) in options.iter().enumerate() {
         let r = Rect::from_min_size(egui::pos2(inner.min.x + k as f32 * (w + 2.0), inner.min.y), Vec2::new(w, inner.height()));
-        let resp = ui.interact(r, response.id.with(k), Sense::click());
+        let on = enabled.get(k).copied().unwrap_or(true);
+        let resp = ui.interact(r, response.id.with(k), if on { Sense::click() } else { Sense::hover() });
         let selected = *value == *option;
         if selected {
             p.rect_filled(r, CornerRadius::same(4), t::BG_ACTIVE);
-        } else if resp.hovered() {
+        } else if resp.hovered() && on {
             p.rect_filled(r, CornerRadius::same(4), t::BG_INPUT);
         }
         let font = if label.starts_with(|c: char| c.is_ascii_digit()) { t::value() } else { t::body() };
-        p.text(r.center(), Align2::CENTER_CENTER, *label, font, if selected { t::TEXT } else { t::TEXT_2 });
-        if resp.clicked() && !selected {
+        let color = if selected { t::TEXT } else if on { t::TEXT_2 } else { t::TEXT_3 };
+        p.text(r.center(), Align2::CENTER_CENTER, *label, font, color);
+        if resp.clicked() && !selected && on {
             *value = option.clone();
             response.mark_changed();
         }
@@ -470,8 +493,9 @@ pub struct Toggle<'a>(pub &'a mut bool);
 
 impl Widget for Toggle<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let (row, _) = ui.allocate_exact_size(Vec2::new(26.0, t::H_CONTROL), Sense::hover());
-        let rect = Rect::from_center_size(row.center(), Vec2::new(26.0, 15.0));
+        let s = scale(ui);
+        let (row, _) = ui.allocate_exact_size(Vec2::new(26.0, t::H_CONTROL) * s, Sense::hover());
+        let rect = Rect::from_center_size(row.center(), Vec2::new(26.0, 15.0) * s);
         let mut response = ui.interact(rect, ui.next_auto_id().with("toggle"), Sense::click());
         if response.clicked() {
             *self.0 = !*self.0;
@@ -481,8 +505,8 @@ impl Widget for Toggle<'_> {
         let p = ui.painter();
         let track = lerp_color(t::BORDER_STRONG, t::ACCENT, on);
         p.rect_filled(rect, CornerRadius::same(8), track);
-        let x = egui::lerp(rect.min.x + 7.5..=rect.max.x - 7.5, on);
-        p.circle_filled(egui::pos2(x, rect.center().y), 5.5, lerp_color(t::TEXT_2, Color32::WHITE, on));
+        let x = egui::lerp(rect.min.x + 7.5 * s..=rect.max.x - 7.5 * s, on);
+        p.circle_filled(egui::pos2(x, rect.center().y), 5.5 * s, lerp_color(t::TEXT_2, Color32::WHITE, on));
         response
     }
 }
@@ -501,29 +525,30 @@ impl<'a> Check<'a> {
 
 impl Widget for Check<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
+        let s = scale(ui);
         let galley = (!self.label.is_empty()).then(|| {
-            ui.painter().layout_no_wrap(self.label.clone(), t::body(), t::TEXT)
+            ui.painter().layout_no_wrap(self.label.clone(), scaled(t::body(), s), t::TEXT)
         });
-        let text_w = galley.as_ref().map_or(0.0, |g| g.size().x + 8.0);
-        let (rect, mut response) = ui.allocate_exact_size(Vec2::new(14.0 + text_w, t::H_CONTROL), Sense::click());
+        let text_w = galley.as_ref().map_or(0.0, |g| g.size().x + 8.0 * s);
+        let (rect, mut response) = ui.allocate_exact_size(Vec2::new(14.0 * s + text_w, t::H_CONTROL * s), Sense::click());
         if response.clicked() {
             *self.value = !*self.value;
             response.mark_changed();
         }
         let p = ui.painter();
-        let b = Rect::from_min_size(egui::pos2(rect.min.x, rect.center().y - 7.0), Vec2::splat(14.0));
+        let b = Rect::from_min_size(egui::pos2(rect.min.x, rect.center().y - 7.0 * s), Vec2::splat(14.0 * s));
         let r = CornerRadius::same(t::R_CHECK);
         if *self.value {
             p.rect_filled(b, r, t::ACCENT);
-            let pts = [b.min + Vec2::new(3.5, 7.2), b.min + Vec2::new(6.0, 9.8), b.min + Vec2::new(10.5, 4.5)];
-            p.line(pts.to_vec(), Stroke::new(1.6, t::BG_APP));
+            let pts = [b.min + Vec2::new(3.5, 7.2) * s, b.min + Vec2::new(6.0, 9.8) * s, b.min + Vec2::new(10.5, 4.5) * s];
+            p.line(pts.to_vec(), Stroke::new(1.6 * s, t::BG_APP));
         } else {
             let stroke = if response.hovered() { t::TEXT_3 } else { Color32::from_rgb(0x44, 0x47, 0x4e) };
             p.rect_stroke(b, r, Stroke::new(1.0, stroke), StrokeKind::Inside);
         }
         if let Some(g) = galley {
             let color = if *self.value { t::TEXT } else { t::TEXT_2 };
-            p.galley_with_override_text_color(egui::pos2(b.max.x + 8.0, rect.center().y - g.size().y / 2.0), g, color);
+            p.galley_with_override_text_color(egui::pos2(b.max.x + 8.0 * s, rect.center().y - g.size().y / 2.0), g, color);
         }
         response
     }

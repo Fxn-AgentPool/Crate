@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn align_edges_moves_one_coordinate() {
         let mut g = Graph::new();
-        let (a, b) = (g.add("noise"), g.add("levels"));
+        let (a, b) = (g.add("cellular"), g.add("levels"));
         g.node_mut(a).pos = [0.0, 50.0];
         g.node_mut(b).pos = [300.0, 10.0];
         align_edges(&mut g, &[a, b], Edge::Top);

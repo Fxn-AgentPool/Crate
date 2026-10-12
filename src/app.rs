@@ -299,6 +299,8 @@ impl CrateApp {
             return;
         }
         let bindings = self.bindings.clone();
+        // Before any widget can take Tab for keyboard focus.
+        self.node_editor.intercept_tab(ctx);
         let (actions, time, stencil_key, buffer_key) = ctx.input_mut(|i| {
             let s_key = bindings.key(A::StencilKey);
             let v_key = bindings.key(A::BufferKey);

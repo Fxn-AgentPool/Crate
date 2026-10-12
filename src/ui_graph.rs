@@ -7,6 +7,10 @@
 //!
 //! Nodes show their outputs, then their parameters (edited in place), then their inputs, and
 //! can be collapsed to their header. See docs/reference/node-editor.md "Nodes".
+//!
+//! Every layer of a Stack is drawn as one virtual "layer group" node (an id with GROUP_BIT set,
+//! encoding the slot) instead of the nodes behind it. See docs/reference/node-editor.md
+//! "Layer groups".
 
 use std::collections::BTreeSet;
 
@@ -21,14 +25,20 @@ mod wrangler;
 use wrangler::{Edge, MergeOp};
 
 const SINK: NodeId = u32::MAX;
+/// Layer group ids: this bit, the Stack's id in bits 12..31 and the slot index in bits 0..12.
+const GROUP_BIT: NodeId = 1 << 31;
 const NODE_W: f32 = 200.0;
 /// Below this zoom, parameters are shown as text and can't be edited.
 const EDIT_ZOOM: f32 = 0.5;
-const HEADER: f32 = 22.0;
-const ROW: f32 = 20.0;
+/// Header and row height: a control (ui_theme::H_CONTROL) and a gap.
+const HEADER: f32 = 26.0;
+const ROW: f32 = 26.0;
+/// Header color of layer groups (docs/reference/node-editor.md "Layer groups").
+const GROUP_COLOR: Color32 = Color32::from_rgb(0x3b, 0x59, 0x59);
 /// The editor's inputs, listed under "? All shortcuts" (docs/reference/node-editor.md).
 const SHORTCUTS: &[(&str, &str)] = &[
     ("Tab, right-click", "Add menu"),
+    ("Double-click a layer group", "Open the layer"),
     ("Drag from output", "Connect"),
     ("Drag empty space", "Box select (Shift adds)"),
     ("Right-drag, Alt+drag", "Pan"),
@@ -139,6 +149,10 @@ pub struct NodeEditor {
     param_rects: Vec<(NodeId, Rect)>,
     auto_layout_needed: bool,
     frame_needed: bool,
+    /// Tab was pressed over the canvas this frame (taken before any widget saw it).
+    tab_pressed: bool,
+    /// Screen area of the canvas last frame.
+    canvas_rect: Rect,
 }
 
 impl Default for NodeEditor {
@@ -161,6 +175,8 @@ impl Default for NodeEditor {
             param_rects: Vec::new(),
             auto_layout_needed: false,
             frame_needed: false,
+            tab_pressed: false,
+            canvas_rect: Rect::NOTHING,
         }
     }
 }
@@ -169,12 +185,34 @@ fn type_color(t: SocketType) -> Color32 {
     match t {
         SocketType::Float => crate::ui_theme::SOCK_FLOAT,
         SocketType::Color => crate::ui_theme::SOCK_COLOR,
+        SocketType::Vector => crate::ui_theme::SOCK_VECTOR,
         SocketType::Material => crate::ui_theme::SOCK_MATERIAL,
     }
 }
 
+/// Float, Color and Vector convert into each other; Material only connects to Material.
 fn compatible(from: SocketType, to: SocketType) -> bool {
-    from == to || matches!((from, to), (SocketType::Float, SocketType::Color) | (SocketType::Color, SocketType::Float))
+    from == to || (from != SocketType::Material && to != SocketType::Material)
+}
+
+/// The layer group node of a Stack slot, if the slot fits the id encoding (docs/reference/limits.md).
+fn group_id(l: LayerRef) -> Option<NodeId> {
+    (l.stack < 1 << 19 && l.index < 1 << 12).then_some(GROUP_BIT | l.stack << 12 | l.index as NodeId)
+}
+
+/// The layer a layer group node shows.
+fn group_of(id: NodeId) -> Option<LayerRef> {
+    (id != SINK && id & GROUP_BIT != 0).then_some(LayerRef { stack: (id & !GROUP_BIT) >> 12, index: (id & 0xfff) as usize })
+}
+
+/// The sink and layer groups: drawn like nodes, but not nodes of the graph.
+fn is_virtual(id: NodeId) -> bool {
+    id == SINK || id & GROUP_BIT != 0
+}
+
+/// A layer group's slot, if the layer still exists.
+fn group_slot(g: &Graph, id: NodeId) -> Option<&Slot> {
+    group_of(id).and_then(|l| ops::slot(g, l))
 }
 
 /// Input sockets of a node, including slot sockets of stacks.
@@ -184,6 +222,9 @@ fn inputs(g: &Graph, id: NodeId) -> Vec<(String, String, SocketType)> {
             ("content".into(), "Content".into(), SocketType::Material),
             ("mask".into(), "Mask".into(), SocketType::Float),
         ];
+    }
+    if is_virtual(id) {
+        return vec![];
     }
     let n = g.node(id);
     let mut v: Vec<_> = n.def().inputs.iter().map(|(name, t)| (name.to_string(), pretty(name), *t)).collect();
@@ -209,6 +250,17 @@ fn outputs(g: &Graph, id: NodeId) -> Vec<(String, SocketType)> {
     if id == SINK {
         return vec![];
     }
+    if is_virtual(id) {
+        let Some(s) = group_slot(g, id) else { return vec![] };
+        let mut v = Vec::new();
+        if s.content.is_some_and(|c| g.get(c).is_some()) {
+            v.push(("content".to_string(), SocketType::Material));
+        }
+        if s.mask.is_some_and(|m| g.get(m).is_some()) {
+            v.push(("mask".to_string(), SocketType::Float));
+        }
+        return v;
+    }
     g.node(id).def().outputs.iter().map(|(n, t)| (n.to_string(), *t)).collect()
 }
 
@@ -220,20 +272,73 @@ fn pretty(s: &str) -> String {
     out
 }
 
+/// Rows a parameter takes: a Vector its name and one row per component, others one.
+fn param_span(pd: &graph::ParamDef) -> usize {
+    if pd.kind == graph::ParamKind::Vec3 { 4 } else { 1 }
+}
+
+/// The parameters shown as parameter rows, not on an input's row.
+fn own_params(g: &Graph, id: NodeId) -> Vec<&'static graph::ParamDef> {
+    if is_virtual(id) {
+        return vec![];
+    }
+    let def = g.node(id).def();
+    def.params.iter().filter(|p| !def.is_input_param(p.name)).collect()
+}
+
+/// The parameter whose field an input shows while unconnected.
+fn input_value(g: &Graph, id: NodeId, input: &str) -> Option<&'static graph::ParamDef> {
+    if is_virtual(id) {
+        return None;
+    }
+    let n = g.node(id);
+    n.def().input_param(input).filter(|_| !n.inputs.contains_key(input))
+}
+
+/// Rows an input takes: its value's rows while unconnected, otherwise one.
+fn input_span(g: &Graph, id: NodeId, input: &str) -> usize {
+    input_value(g, id, input).map_or(1, param_span)
+}
+
 fn param_rows(g: &Graph, id: NodeId) -> usize {
-    if id == SINK { 0 } else { g.node(id).def().params.len() }
+    own_params(g, id).iter().map(|p| param_span(p)).sum()
+}
+
+/// The row an input starts on (0 = first row below the header).
+fn input_row(g: &Graph, id: NodeId, input: &str) -> Option<usize> {
+    let mut row = outputs(g, id).len() + param_rows(g, id);
+    for (name, _, _) in inputs(g, id) {
+        if name == input {
+            return Some(row);
+        }
+        row += input_span(g, id, &name);
+    }
+    None
 }
 
 fn is_collapsed(g: &Graph, id: NodeId) -> bool {
-    id != SINK && g.node(id).collapsed
+    !is_virtual(id) && g.node(id).collapsed
 }
 
-/// Height in canvas units: the header, then outputs, parameters and inputs (one row each).
+/// Height in canvas units: the header, then the rows of outputs, parameters and inputs.
 fn node_height(g: &Graph, id: NodeId) -> f32 {
     if is_collapsed(g, id) {
         return HEADER;
     }
-    HEADER + (outputs(g, id).len() + param_rows(g, id) + inputs(g, id).len()).max(1) as f32 * ROW + 6.0
+    let ins: usize = inputs(g, id).iter().map(|(name, _, _)| input_span(g, id, name)).sum();
+    HEADER + (outputs(g, id).len() + param_rows(g, id) + ins).max(1) as f32 * ROW + 6.0
+}
+
+/// Header color: the category's, the group color, or Output for the Layer sink.
+fn header_color(g: &Graph, id: NodeId) -> Color32 {
+    let [r, gr, b] = if id == SINK {
+        graph::Category::Output.color()
+    } else if is_virtual(id) {
+        return GROUP_COLOR;
+    } else {
+        g.node(id).def().category.color()
+    };
+    Color32::from_rgb(r, gr, b)
 }
 
 /// The default output used when a node is referenced without an output name (slots).
@@ -244,6 +349,9 @@ fn main_output(g: &Graph, id: NodeId) -> String {
 /// All links into `id`: (input socket, source node, source output).
 fn links_into(g: &Graph, layer: Option<LayerRef>, id: NodeId) -> Vec<(String, NodeId, String)> {
     let mut v = Vec::new();
+    if is_virtual(id) && id != SINK {
+        return v;
+    }
     if id == SINK {
         if let Some(s) = layer.and_then(|l| ops::slot(g, l)) {
             if let Some(c) = s.content.filter(|c| g.get(*c).is_some()) {
@@ -275,6 +383,71 @@ fn links_into(g: &Graph, layer: Option<LayerRef>, id: NodeId) -> Vec<(String, No
         }
     }
     v
+}
+
+/// The links drawn into `id`: as `links_into`, but a Stack's layers come from their groups.
+fn shown_links(g: &Graph, layer: Option<LayerRef>, id: NodeId) -> Vec<(String, NodeId, String)> {
+    let mut v = links_into(g, layer, id);
+    if id != SINK && g.get(id).is_some_and(|n| n.ty == "stack") {
+        for (input, src, out) in &mut v {
+            let Some(rest) = input.strip_prefix("slot") else { continue };
+            let (idx, mask) = match rest.strip_suffix(".mask") {
+                Some(i) => (i, true),
+                None => (rest, false),
+            };
+            let Ok(index) = idx.parse::<usize>() else { continue };
+            if let Some(gid) = group_id(LayerRef { stack: id, index }) {
+                *src = gid;
+                *out = if mask { "mask" } else { "content" }.into();
+            }
+        }
+    }
+    v
+}
+
+/// The nodes and layer groups shown from `start`: everything it reads, but a Stack's layers
+/// as their groups instead of the nodes behind them.
+fn shown_from(g: &Graph, start: NodeId, out: &mut BTreeSet<NodeId>) {
+    let mut todo = vec![start];
+    while let Some(n) = todo.pop() {
+        let Some(node) = g.get(n) else { continue };
+        if !out.insert(n) {
+            continue;
+        }
+        todo.extend(node.inputs.values().map(|l| l.node));
+        for m in &node.mask_slots {
+            if let MaskSource::Node(c) = m.source {
+                todo.push(c);
+            }
+        }
+        for (index, s) in node.slots.iter().enumerate() {
+            match group_id(LayerRef { stack: n, index }) {
+                Some(gid) => {
+                    out.insert(gid);
+                }
+                None => todo.extend(s.content.into_iter().chain(s.mask)),
+            }
+        }
+    }
+}
+
+/// Moves a node or a layer group (the sink isn't stored).
+fn set_pos(g: &mut Graph, id: NodeId, pos: [f32; 2]) {
+    if id == SINK {
+        return;
+    }
+    match group_of(id) {
+        Some(l) => {
+            if let Some(s) = ops::slot_mut(g, l) {
+                s.node_pos = pos;
+            }
+        }
+        None => {
+            if let Some(n) = g.nodes.get_mut(&id) {
+                n.pos = pos;
+            }
+        }
+    }
 }
 
 /// Wraps a Float-producing node in a Mask Stack so it can be a layer mask.
@@ -550,6 +723,26 @@ impl NodeEditor {
         }
     }
 
+    /// Tab over the canvas opens the add menu. egui moves the keyboard focus to the next control
+    /// on Tab, and a focused control then keeps the editor's keys from working, so this runs
+    /// before any widget: it takes the key and cancels the focus move. Typing in a text field
+    /// keeps its Tab. See docs/reference/node-editor.md "Keys".
+    pub fn intercept_tab(&mut self, ctx: &egui::Context) {
+        if !self.open || ctx.text_edit_focused() || self.has_popup() {
+            return;
+        }
+        let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| self.canvas_rect.contains(p));
+        if over && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+            ctx.memory_mut(|m| {
+                m.move_focus(egui::FocusDirection::None);
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            self.tab_pressed = true;
+        }
+    }
+
     /// Whether one of the editor's menus is open (Esc closes it rather than the editor).
     pub fn has_popup(&self) -> bool {
         self.add_menu.is_some() || self.node_menu.is_some() || self.lazy_menu.is_some() || self.param_popup.is_some()
@@ -576,27 +769,25 @@ impl NodeEditor {
         }
     }
 
-    /// Nodes shown, without the sink.
+    /// Nodes and layer groups shown, without the sink.
     fn visible(&self, g: &Graph) -> Vec<NodeId> {
         let mut set = BTreeSet::new();
         match self.focus {
             Focus::Layer(l) => {
                 if let Some(s) = ops::slot(g, l) {
                     for root in [s.content, s.mask].into_iter().flatten() {
-                        set.extend(g.subgraph(root));
+                        shown_from(g, root, &mut set);
                     }
                 }
             }
             Focus::Root => {
                 if let Some(out) = g.output_node() {
-                    set.extend(g.subgraph(out));
+                    shown_from(g, out, &mut set);
                 }
             }
         }
         for e in &self.extra {
-            if g.get(*e).is_some() {
-                set.extend(g.subgraph(*e));
-            }
+            shown_from(g, *e, &mut set);
         }
         set.into_iter().collect()
     }
@@ -642,32 +833,27 @@ impl NodeEditor {
             Focus::Root => g.output_node(),
             Focus::Layer(_) => None,
         };
-        let unplaced: Vec<NodeId> = nodes.iter().copied().filter(|n| Some(*n) != anchor && g.node(*n).pos == [0.0, 0.0]).collect();
+        let unplaced: Vec<NodeId> = nodes.iter().copied().filter(|n| Some(*n) != anchor && self.node_pos(g, *n) == [0.0, 0.0]).collect();
         if unplaced.is_empty() {
             return;
         }
+        let layer = self.layer();
         // Depth = longest path to the sink (or the Material Output): readers are placed first.
         let mut depth: std::collections::BTreeMap<NodeId, usize> = Default::default();
-        fn walk(g: &Graph, n: NodeId, d: usize, depth: &mut std::collections::BTreeMap<NodeId, usize>) {
+        fn walk(g: &Graph, layer: Option<LayerRef>, n: NodeId, d: usize, depth: &mut std::collections::BTreeMap<NodeId, usize>) {
             if depth.get(&n).is_some_and(|x| *x >= d) || d > 64 {
                 return;
             }
             depth.insert(n, d);
-            for c in g.dependencies(n) {
-                walk(g, c, d + 1, depth);
+            for (_, c, _) in shown_links(g, layer, n) {
+                walk(g, layer, c, d + 1, depth);
             }
         }
         match self.focus {
-            Focus::Layer(l) => {
-                if let Some(s) = ops::slot(g, l) {
-                    for r in [s.content, s.mask].into_iter().flatten() {
-                        walk(g, r, 1, &mut depth);
-                    }
-                }
-            }
+            Focus::Layer(_) => walk(g, layer, SINK, 0, &mut depth),
             Focus::Root => {
                 if let Some(out) = g.output_node() {
-                    walk(g, out, 0, &mut depth);
+                    walk(g, layer, out, 0, &mut depth);
                 }
             }
         }
@@ -678,14 +864,12 @@ impl NodeEditor {
         for n in order {
             // The first placed node reading `n`, and the row of the socket it reads it on.
             let reader = placed.iter().copied().find_map(|r| {
-                let i = links_into(g, self.layer(), r).iter().position(|(_, src, _)| *src == n)?;
-                let input = &links_into(g, self.layer(), r)[i].0;
-                let row = outputs(g, r).len() + param_rows(g, r) + inputs(g, r).iter().position(|(name, _, _)| name == input).unwrap_or(0);
-                Some((r, row))
+                let (input, _, _) = shown_links(g, layer, r).into_iter().find(|(_, src, _)| *src == n)?;
+                Some((r, input_row(g, r, &input).unwrap_or(0)))
             });
             let (x, mut y) = match reader {
                 Some((r, row)) => {
-                    let rp = g.node(r).pos;
+                    let rp = self.node_pos(g, r);
                     (rp[0] - NODE_W - 50.0, rp[1] + row as f32 * ROW)
                 }
                 None => {
@@ -696,25 +880,30 @@ impl NodeEditor {
             let h = height(g, n);
             // Move down past anything in the way.
             loop {
-                let hit = placed.iter().copied().find(|o| {
-                    let op = g.node(*o).pos;
+                let hit = placed.iter().copied().filter(|o| *o != SINK).find(|o| {
+                    let op = self.node_pos(g, *o);
                     (op[0] - x).abs() < NODE_W + 20.0 && y < op[1] + height(g, *o) + 20.0 && op[1] < y + h + 20.0
                 });
                 match hit {
-                    Some(o) => y = g.node(o).pos[1] + height(g, o) + 20.0,
+                    Some(o) => y = self.node_pos(g, o)[1] + height(g, o) + 20.0,
                     None => break,
                 }
             }
-            g.node_mut(n).pos = [x, y];
+            // Exactly [0, 0] means unplaced.
+            set_pos(g, n, if [x, y] == [0.0, 0.0] { [0.0, 0.01] } else { [x, y] });
             placed.push(n);
         }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
-        // A deleted layer falls back to the whole graph instead of closing the editor.
+        // The Selected layer view follows the Layers panel; a deleted or deselected layer falls
+        // back to the whole graph instead of closing the editor.
         if let Focus::Layer(l) = self.focus {
-            if ops::slot(&p.graph, l).is_none() {
-                self.set_focus(Focus::Root);
+            match p.selection.map(|s| s.layer()) {
+                _ if ops::slot(&p.graph, l).is_none() => self.set_focus(Focus::Root),
+                Some(sel) if sel != l => self.set_focus(Focus::Layer(sel)),
+                None => self.set_focus(Focus::Root),
+                _ => {}
             }
         }
         self.rect = ui.max_rect();
@@ -744,23 +933,18 @@ impl NodeEditor {
         let ui = &mut ui;
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.label(egui::RichText::new("NODE EDITOR").font(t::section()).color(t::TEXT_2).extra_letter_spacing(0.6));
-        ui.label(egui::RichText::new("/").color(t::TEXT_3));
-        match self.focus {
-            Focus::Layer(l) => {
-                let name = ops::slot(&p.graph, l).map(|s| s.name.clone()).unwrap_or_default();
-                ui.label(egui::RichText::new(name).font(t::body_strong()).color(t::TEXT));
-                if ui.add(w::ghost("Whole graph")).on_hover_text("Show the whole project graph").clicked() {
-                    self.set_focus(Focus::Root);
-                }
+        let selected = p.selection.map(|s| s.layer());
+        let mut layer_view = self.layer().is_some();
+        let views = [(false, "Whole graph"), (true, "Selected layer")];
+        if w::segmented_enabled(ui, &mut layer_view, &views, 220.0, &[true, selected.is_some()]).changed() {
+            match (layer_view, selected) {
+                (true, Some(l)) => self.set_focus(Focus::Layer(l)),
+                _ => self.set_focus(Focus::Root),
             }
-            Focus::Root => {
-                ui.label(egui::RichText::new("Whole project").font(t::body_strong()).color(t::TEXT));
-                if let Some(sel) = p.selection {
-                    if ui.add(w::ghost("Selected layer")).on_hover_text("Show only the selected layer's graph (G)").clicked() {
-                        self.set_focus(Focus::Layer(sel.layer()));
-                    }
-                }
-            }
+        }
+        if let Focus::Layer(l) = self.focus {
+            let name = ops::slot(&p.graph, l).map(|s| s.name.clone()).unwrap_or_default();
+            ui.label(egui::RichText::new(name).font(t::body_strong()).color(t::TEXT));
         }
         if let Some(l) = p.preview.clone() {
             let title = p.graph.get(l.node).map(|n| n.title().to_string()).unwrap_or_default();
@@ -811,7 +995,13 @@ impl NodeEditor {
     }
 
     fn node_pos(&self, g: &Graph, id: NodeId) -> [f32; 2] {
-        if id == SINK { self.sink_pos(g) } else { g.node(id).pos }
+        if id == SINK {
+            self.sink_pos(g)
+        } else if is_virtual(id) {
+            group_slot(g, id).map_or([0.0, 0.0], |s| s.node_pos)
+        } else {
+            g.node(id).pos
+        }
     }
 
     fn node_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
@@ -822,11 +1012,10 @@ impl NodeEditor {
     /// the header's left edge.
     fn input_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
         let r = self.node_rect(g, origin, id);
-        let i = inputs(g, id).iter().position(|(n, _, _)| n == name)?;
+        let row = input_row(g, id, name)?;
         if is_collapsed(g, id) {
             return Some(r.left_center());
         }
-        let row = outputs(g, id).len() + param_rows(g, id) + i;
         Some(Pos2::new(r.left(), r.top() + (HEADER + ROW * (row as f32 + 0.5)) * self.zoom))
     }
 
@@ -843,6 +1032,21 @@ impl NodeEditor {
     fn arrow_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
         let r = self.node_rect(g, origin, id);
         Rect::from_min_size(r.min, Vec2::new(18.0, HEADER) * self.zoom)
+    }
+
+    /// The open button at the right of a layer group's header (screen).
+    fn open_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
+        let r = self.node_rect(g, origin, id);
+        Rect::from_min_size(Pos2::new(r.right() - HEADER * self.zoom, r.top()), Vec2::splat(HEADER * self.zoom))
+    }
+
+    /// Opens a layer group: selects its layer and shows it.
+    fn open_group(&mut self, p: &mut Project, id: NodeId) {
+        if let Some(l) = group_of(id).filter(|l| ops::slot(&p.graph, *l).is_some()) {
+            p.selection = Some(ops::Selection::Layer(l));
+            p.multi.clear();
+            self.set_focus(Focus::Layer(l));
+        }
     }
 
     /// The socket under a screen point: (socket, is output). Collapsed nodes have none.
@@ -881,6 +1085,7 @@ impl NodeEditor {
 
     fn canvas(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         let rect = ui.available_rect_before_wrap();
+        self.canvas_rect = rect;
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, crate::ui_theme::BG_CANVAS);
@@ -943,14 +1148,14 @@ impl NodeEditor {
 
         // Links.
         for &n in &all {
-            for (input, src, out) in links_into(&p.graph, layer, n) {
+            for (input, src, out) in shown_links(&p.graph, layer, n) {
                 if !all.contains(&src) {
                     continue;
                 }
                 let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, src, &out), self.input_pos(&p.graph, origin, n, &input)) else {
                     continue;
                 };
-                let ty = p.graph.output_type(&graph::Link { node: src, output: out.clone() }).unwrap_or(SocketType::Float);
+                let ty = outputs(&p.graph, src).into_iter().find(|(o, _)| *o == out).map_or(SocketType::Float, |(_, t)| t);
                 draw_link(&painter, a, b, type_color(ty), self.zoom);
             }
         }
@@ -968,19 +1173,27 @@ impl NodeEditor {
             let selected = self.selected.contains(&n);
             let (title, cached) = if n == SINK {
                 (format!("Layer: {}", layer.and_then(|l| ops::slot(&p.graph, l)).map(|s| s.name.as_str()).unwrap_or("")), false)
+            } else if is_virtual(n) {
+                (group_slot(&p.graph, n).map(|s| s.name.clone()).unwrap_or_default(), false)
             } else {
                 let node = p.graph.node(n);
                 (node.title().to_string(), node.cached)
             };
             painter.rect_filled(r, 6.0, crate::ui_theme::BG_PANEL);
             let header = Rect::from_min_size(r.min, Vec2::new(r.width(), HEADER * self.zoom));
-            let header_fill = if n == SINK { crate::ui_theme::accent(0.22) } else { Color32::from_rgb(0x1c, 0x1d, 0x21) };
-            painter.rect_filled(header, egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, header_fill);
-            if !collapsed {
-                painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, crate::ui_theme::DIVIDER));
+            let round = if collapsed { egui::CornerRadius::same(6) } else { egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 } };
+            painter.rect_filled(header, round, header_color(&p.graph, n));
+            let mut title_x = 8.0;
+            if is_virtual(n) && n != SINK {
+                // Layer group: the open button.
+                let o = self.open_rect(&p.graph, origin, n);
+                let hot = pointer.is_some_and(|q| o.contains(q));
+                if hot {
+                    painter.rect_filled(o.shrink(3.0 * self.zoom), 4.0, Color32::from_white_alpha(28));
+                }
+                crate::icons::paint(&painter, crate::icons::Icon::Nodes, o.shrink(6.0 * self.zoom), if hot { crate::ui_theme::TEXT } else { crate::ui_theme::TEXT_2 });
             }
-            let mut title_x = 6.0;
-            if n != SINK {
+            if !is_virtual(n) {
                 // Collapse arrow: pointing down when expanded, right when collapsed.
                 let c = self.arrow_rect(&p.graph, origin, n).center();
                 let s = 4.0 * self.zoom;
@@ -989,7 +1202,7 @@ impl NodeEditor {
                 } else {
                     vec![c + Vec2::new(-s, -s * 0.6), c + Vec2::new(s, -s * 0.6), c + Vec2::new(0.0, s * 0.8)]
                 };
-                painter.add(egui::Shape::convex_polygon(pts, crate::ui_theme::TEXT_3, Stroke::NONE));
+                painter.add(egui::Shape::convex_polygon(pts, crate::ui_theme::TEXT_2, Stroke::NONE));
                 title_x = 18.0;
             }
             let title_font = egui::FontId::new(font.size, egui::FontFamily::Name(crate::ui_theme::MEDIUM.into()));
@@ -1020,7 +1233,7 @@ impl NodeEditor {
             if collapsed {
                 // Only connected sockets, on the header's edges.
                 let linked_in = !links_into(&p.graph, layer, n).is_empty();
-                let linked_out = all.iter().any(|m| links_into(&p.graph, layer, *m).iter().any(|(_, src, _)| *src == n));
+                let linked_out = all.iter().any(|m| shown_links(&p.graph, layer, *m).iter().any(|(_, src, _)| *src == n));
                 if linked_in {
                     painter.circle_filled(r.left_center(), 5.0 * self.zoom, crate::ui_theme::SOCK_FLOAT);
                 }
@@ -1040,10 +1253,14 @@ impl NodeEditor {
                 let ok = link_ty.is_none_or(|lt| compatible(lt, ty));
                 let c = if ok { type_color(ty) } else { type_color(ty).gamma_multiply(0.25) };
                 painter.circle_filled(pos, 5.0 * self.zoom, c);
-                let text = if name == NEW_LAYER || name == NEW_EFFECT { crate::ui_theme::TEXT_3 } else { crate::ui_theme::TEXT };
-                painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), text);
+                // An unconnected input with a number value shows its name inside the field.
+                let in_field = input_value(&p.graph, n, &name).is_some_and(|pd| param_span(pd) == 1);
+                if !in_field {
+                    let text = if name == NEW_LAYER || name == NEW_EFFECT { crate::ui_theme::TEXT_3 } else { crate::ui_theme::TEXT };
+                    painter.text(pos + Vec2::new(10.0 * self.zoom, 0.0), egui::Align2::LEFT_CENTER, label, font.clone(), text);
+                }
             }
-            if n != SINK {
+            if !is_virtual(n) {
                 // Drawn before the next node, so a node on top covers these.
                 self.node_params(ui, gpu, p, n, r, rect, &rects[k + 1..]);
             }
@@ -1052,12 +1269,14 @@ impl NodeEditor {
         if pressed && ctrl && shift && resp.hovered() && self.drag.is_none() && !menus_open {
             pressed = false;
             let hit = pointer.and_then(|ptr| self.node_at(&p.graph, origin, &all, ptr));
-            self.cycle_preview(gpu, p, hit);
+            if !hit.is_some_and(is_virtual) {
+                self.cycle_preview(gpu, p, hit);
+            }
         }
         if secondary_pressed && resp.hovered() && self.drag.is_none() && !menus_open {
             if let Some(ptr) = pointer {
                 if alt {
-                    if let Some(n) = self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK) {
+                    if let Some(n) = self.node_at(&p.graph, origin, &all, ptr).filter(|n| !is_virtual(*n)) {
                         self.drag = Some(Drag::Lazy { from: n, menu: shift });
                     }
                 } else if ctrl {
@@ -1077,23 +1296,40 @@ impl NodeEditor {
                 self.primary = Some(n);
             }
         }
-        // The collapse arrow in a node's header.
+        // The collapse arrow in a node's header, and a layer group's open button.
         if pressed && resp.hovered() && self.drag.is_none() && !menus_open {
             if let Some(ptr) = pointer {
                 let top = self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK);
-                if let Some(n) = top.filter(|n| self.arrow_rect(&p.graph, origin, *n).contains(ptr)) {
+                if let Some(n) = top.filter(|n| !is_virtual(*n) && self.arrow_rect(&p.graph, origin, *n).contains(ptr)) {
                     pressed = false;
                     p.checkpoint("Collapse nodes");
                     let node = p.graph.node_mut(n);
                     node.collapsed = !node.collapsed;
+                } else if let Some(n) = top.filter(|n| is_virtual(*n) && self.open_rect(&p.graph, origin, *n).contains(ptr)) {
+                    self.open_group(p, n);
+                    return;
                 }
+            }
+        }
+        if resp.double_clicked() && !menus_open {
+            if let Some(n) = pointer.and_then(|ptr| self.node_at(&p.graph, origin, &all, ptr)).filter(|n| group_of(*n).is_some()) {
+                self.drag = None;
+                self.open_group(p, n);
+                return;
             }
         }
 
         // Start a drag with the left button (unless a menu is taking the click).
         if pressed && resp.hovered() && self.drag.is_none() && !menus_open {
             if let Some(ptr) = pointer {
-                if let Some((sock, is_output)) = self.socket_at(&p.graph, origin, &all, ptr) {
+                // Group outputs, and the links they feed, belong to the layer: they aren't dragged.
+                let sock = self.socket_at(&p.graph, origin, &all, ptr).filter(|(s, is_output)| {
+                    !is_virtual(s.node) || (s.node == SINK && !is_output)
+                });
+                let sock = sock.filter(|(s, is_output)| {
+                    *is_output || !shown_links(&p.graph, layer, s.node).iter().any(|(i, src, _)| *i == s.name && is_virtual(*src))
+                });
+                if let Some((sock, is_output)) = sock {
                     if is_output {
                         let ty = p.graph.output_type(&graph::Link { node: sock.node, output: sock.name.clone() }).unwrap_or(SocketType::Float);
                         self.drag = Some(Drag::Link { from: sock, ty });
@@ -1141,10 +1377,8 @@ impl NodeEditor {
                         }
                         let d = delta / self.zoom;
                         for n in self.selected.iter().copied().filter(|n| *n != SINK) {
-                            if let Some(node) = p.graph.nodes.get_mut(&n) {
-                                node.pos[0] += d.x;
-                                node.pos[1] += d.y;
-                            }
+                            let q = self.node_pos(&p.graph, n);
+                            set_pos(&mut p.graph, n, [q[0] + d.x, q[1] + d.y]);
                         }
                     }
                 }
@@ -1224,7 +1458,7 @@ impl NodeEditor {
 
         // Keys apply over the canvas, including its parameter rows, but not while typing.
         let over_params = pointer.is_some_and(|q| self.param_rects.iter().any(|(_, r)| r.contains(q)));
-        let keys = (resp.hovered() || over_params) && !menus_open && !ui.ctx().egui_wants_keyboard_input();
+        let keys = (resp.hovered() || over_params) && !menus_open && !ui.ctx().text_edit_focused() && !egui::Popup::is_any_open(ui.ctx());
         if keys {
             if let Some(op) = ui.input(Self::shortcut_op) {
                 self.apply(ui.ctx(), gpu, p, op);
@@ -1248,8 +1482,9 @@ impl NodeEditor {
         ui.ctx().options_mut(|o| o.zoom_with_keyboard = !over);
 
         // Keyboard: Tab adds a node, Delete removes the selected nodes.
-        let (tab, del) = ui.input(|i| (i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Delete)));
-        if keys && tab {
+        let tab = std::mem::take(&mut self.tab_pressed);
+        let del = ui.input(|i| i.key_pressed(egui::Key::Delete));
+        if tab && !menus_open {
             let at = self.to_canvas(origin, pointer.unwrap_or(rect.center()));
             self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
         }
@@ -1259,7 +1494,7 @@ impl NodeEditor {
                 .selected
                 .iter()
                 .copied()
-                .filter(|n| *n != SINK && *n != root && p.graph.get(*n).is_some_and(|x| x.ty != "material_output"))
+                .filter(|n| !is_virtual(*n) && *n != root && p.graph.get(*n).is_some_and(|x| x.ty != "material_output"))
                 .collect();
             if !doomed.is_empty() {
                 p.edit(gpu, "Delete nodes", |g| {
@@ -1318,7 +1553,8 @@ impl NodeEditor {
         }
         if resp.secondary_clicked() && !menus_open && !ctrl && !alt {
             let ptr = pointer.unwrap_or(rect.center());
-            match self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK) {
+            match self.node_at(&p.graph, origin, &all, ptr) {
+                Some(n) if is_virtual(n) => {}
                 // Right-click on a node: its Node Wrangler menu.
                 Some(n) => {
                     if !self.selected.contains(&n) {
@@ -1339,73 +1575,119 @@ impl NodeEditor {
         self.param_popup_ui(ui, gpu, p);
     }
 
-    /// A node's parameter rows: editable widgets, or text when zoomed out or covered by a node
-    /// drawn on top (`above`).
+    /// A node's editable rows: its own parameters, and the values of unconnected inputs. Each is
+    /// an editable widget, or text when zoomed out or covered by a node drawn on top (`above`).
     #[allow(clippy::too_many_arguments)]
     fn node_params(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId, r: Rect, canvas: Rect, above: &[Rect]) {
-        let def = p.graph.node(n).def();
-        let first = outputs(&p.graph, n).len();
+        // (first row, parameter, label) for every field shown.
+        let mut fields: Vec<(usize, &'static graph::ParamDef, String)> = Vec::new();
+        let mut row = outputs(&p.graph, n).len();
+        for pd in own_params(&p.graph, n) {
+            fields.push((row, pd, pretty(pd.name)));
+            row += param_span(pd);
+        }
+        for (name, label, _) in inputs(&p.graph, n) {
+            if let (Some(pd), Some(at)) = (input_value(&p.graph, n, &name), input_row(&p.graph, n, &name)) {
+                fields.push((at, pd, label));
+            }
+        }
         let z = self.zoom;
-        for (k, pd) in def.params.iter().enumerate() {
-            let top = r.top() + (HEADER + ROW * (first + k) as f32) * z;
-            let row = Rect::from_min_size(Pos2::new(r.left() + 8.0 * z, top + 1.0 * z), Vec2::new(NODE_W - 16.0, ROW - 2.0) * z);
-            if !canvas.intersects(row) {
-                continue;
+        let row_rect = |k: usize| {
+            let top = r.top() + (HEADER + ROW * k as f32) * z;
+            Rect::from_min_size(Pos2::new(r.left() + 10.0 * z, top + (ROW - crate::ui_theme::H_CONTROL) * 0.5 * z), Vec2::new(NODE_W - 20.0, crate::ui_theme::H_CONTROL) * z)
+        };
+        for (first, pd, label) in fields {
+            // A Vector's name on the first row, its components below.
+            let parts: Vec<(Rect, Option<usize>)> = if pd.kind == graph::ParamKind::Vec3 {
+                let name_row = row_rect(first);
+                if canvas.intersects(name_row) {
+                    ui.painter_at(canvas).text(name_row.left_center(), egui::Align2::LEFT_CENTER, &label, egui::FontId::proportional(12.0 * z), crate::ui_theme::TEXT_2);
+                }
+                (0..3).map(|k| (row_rect(first + 1 + k), Some(k))).collect()
+            } else {
+                vec![(row_rect(first), None)]
+            };
+            for (rr, component) in parts {
+                if !canvas.intersects(rr) {
+                    continue;
+                }
+                let v = p.graph.node(n).param(pd.name);
+                if z < EDIT_ZOOM || above.iter().any(|o| o.intersects(rr)) {
+                    let text = match component {
+                        Some(k) => format!("{}: {}", ["X", "Y", "Z"][k], value_text(&Value::Float(v.as_vec3()[k]))),
+                        None => format!("{label}: {}", value_text(&v)),
+                    };
+                    ui.painter_at(canvas).text(rr.left_center(), egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.0 * z), crate::ui_theme::TEXT_3);
+                    continue;
+                }
+                self.param_rects.push((n, rr));
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rr)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .id_salt(("node param", n, pd.name, component)),
+                );
+                child.set_clip_rect(rr.expand(1.0).intersect(canvas));
+                let s = child.style_mut();
+                for f in s.text_styles.values_mut() {
+                    f.size *= z;
+                }
+                s.spacing.interact_size *= z;
+                s.spacing.item_spacing *= z;
+                s.spacing.button_padding *= z;
+                s.spacing.icon_width *= z;
+                s.spacing.icon_width_inner *= z;
+                s.spacing.icon_spacing *= z;
+                s.spacing.combo_width = rr.width();
+                self.param_editor(&mut child, gpu, p, n, pd, &label, component, rr);
             }
-            if z < EDIT_ZOOM || above.iter().any(|o| o.intersects(row)) {
-                let text = format!("{}: {}", pretty(pd.name), value_text(&p.graph.node(n).param(pd.name)));
-                ui.painter_at(canvas).text(row.left_center(), egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.0 * z), Color32::from_gray(150));
-                continue;
-            }
-            self.param_rects.push((n, row));
-            let mut child = ui.new_child(
-                egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("node param", n, pd.name)),
-            );
-            child.set_clip_rect(row.intersect(canvas));
-            let s = child.style_mut();
-            for f in s.text_styles.values_mut() {
-                f.size *= z;
-            }
-            s.spacing.interact_size *= z;
-            s.spacing.item_spacing *= z;
-            s.spacing.button_padding *= z;
-            s.spacing.icon_width *= z;
-            s.spacing.icon_width_inner *= z;
-            s.spacing.icon_spacing *= z;
-            s.spacing.combo_width = row.width();
-            self.param_editor(&mut child, gpu, p, n, pd, row);
         }
     }
 
-    /// One parameter, edited in place. See docs/reference/node-editor.md "Parameters".
-    fn param_editor(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId, pd: &'static graph::ParamDef, row: Rect) {
+    /// One parameter (or one component of a Vector), edited in place with the Properties
+    /// panel's controls. See docs/reference/node-editor.md "Parameters".
+    #[allow(clippy::too_many_arguments)]
+    fn param_editor(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, n: NodeId, pd: &'static graph::ParamDef, label: &str, component: Option<usize>, row: Rect) {
         use crate::ui_layers::{param_value, track};
+        use crate::ui_widgets::{Check, Field};
         let name = pd.name;
-        let label = pretty(name);
         let v = p.graph.node(n).param(name);
         let size = row.size();
+        let full = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
+            ui.allocate_ui_with_layout(size, egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| add(ui));
+        };
         match pd.kind {
+            graph::ParamKind::Vec3 => {
+                let k = component.unwrap_or(0);
+                let mut c = v.as_vec3();
+                let r = ui.add(Field::new(&mut c[k], -1.0e6..=1.0e6).label(["X", "Y", "Z"][k]).decimals(3).speed(0.01).no_fill().width(size.x));
+                track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Vec3(c)));
+            }
             graph::ParamKind::Float { min, max } => {
                 let mut x = v.as_f32();
-                let speed = ((max - min) * 0.002).max(0.001);
-                let r = ui.add_sized(size, egui::DragValue::new(&mut x).range(min..=max).speed(speed).prefix(format!("{label}: ")));
+                let field = Field::new(&mut x, min..=max).label(label).width(size.x);
+                let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002).max(0.001) as f64) };
+                let r = ui.add(field);
                 track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Float(x)));
             }
             graph::ParamKind::Int { min, max } => {
                 let mut x = v.as_f32() as i32;
-                let r = ui.add_sized(size, egui::DragValue::new(&mut x).range(min..=max).prefix(format!("{label}: ")));
+                let r = ui.add(Field::new(&mut x, min..=max).label(label).no_fill().speed(0.1).width(size.x));
                 track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Float(x as f32)));
             }
             graph::ParamKind::Bool => {
                 let mut b = v.as_bool();
-                let r = ui.checkbox(&mut b, label);
+                let r = ui.add(Check::new(&mut b, label));
                 track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Bool(b)));
             }
-            graph::ParamKind::Color | graph::ParamKind::Vec3 | graph::ParamKind::Image => {
-                ui.label(label);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| param_value(ui, gpu, p, n, pd, name));
+            graph::ParamKind::Color => {
+                let (text, _) = ui.allocate_exact_size(Vec2::new(size.x * 0.5, size.y), Sense::hover());
+                ui.painter().text(text.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(crate::ui_theme::FS_BODY * self.zoom), crate::ui_theme::TEXT_2);
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.spacing_mut().interact_size.x = size.x - text.width();
+                param_value(ui, gpu, p, n, pd, name);
             }
-            graph::ParamKind::Enum(_) => param_value(ui, gpu, p, n, pd, name),
+            graph::ParamKind::Enum(_) | graph::ParamKind::Image => full(ui, &mut |ui| param_value(ui, gpu, p, n, pd, name)),
             graph::ParamKind::Stops => {
                 let (r, resp) = ui.allocate_exact_size(size, Sense::click());
                 if let Value::Stops(stops) = &v {
@@ -1418,7 +1700,7 @@ impl NodeEditor {
                         ui.painter().rect_filled(strip, 0.0, Color32::from(egui::Rgba::from_rgb(c[0], c[1], c[2])));
                     }
                 }
-                ui.painter().rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_gray(90)), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(r, crate::ui_theme::R_CONTROL, Stroke::new(1.0, crate::ui_theme::BORDER_STRONG), egui::StrokeKind::Inside);
                 if resp.on_hover_text("Click to edit the stops").clicked() {
                     self.param_popup = Some((n, name, r.left_bottom()));
                 }
@@ -1426,7 +1708,8 @@ impl NodeEditor {
             graph::ParamKind::Colors => {
                 let selected = if let Value::Colors(c) = &v { c.len() } else { 0 };
                 let total = if p.maps.id_names.is_empty() { p.mesh.materials.len() } else { p.maps.id_names.len() };
-                if ui.add_sized(size, egui::Button::new(format!("{selected} of {total} IDs"))).clicked() {
+                let button = egui::Button::new(format!("{selected} of {total} IDs")).fill(crate::ui_theme::BG_INPUT).min_size(size);
+                if ui.add(button).clicked() {
                     self.param_popup = Some((n, name, row.left_bottom()));
                 }
             }
@@ -1492,8 +1775,9 @@ impl NodeEditor {
         ops.into_iter().find(|(m, key, _)| k(*m, *key)).map(|(_, _, op)| op)
     }
 
+    /// The selected nodes the operations apply to: not the sink or layer groups.
     fn selection(&self) -> Vec<NodeId> {
-        self.selected.iter().copied().filter(|n| *n != SINK).collect()
+        self.selected.iter().copied().filter(|n| !is_virtual(*n)).collect()
     }
 
     fn apply(&mut self, ctx: &egui::Context, gpu: &Gpu, p: &mut Project, op: Op) {
@@ -1543,7 +1827,7 @@ impl NodeEditor {
                         g.collect_garbage();
                     });
                     self.extra.clear();
-                    self.selected.retain(|n| *n == SINK || p.graph.get(*n).is_some());
+                    self.selected.retain(|n| is_virtual(*n) || p.graph.get(*n).is_some());
                     self.primary = self.primary.filter(|n| p.graph.get(*n).is_some());
                 }
             }
@@ -1625,7 +1909,7 @@ impl NodeEditor {
     /// Ctrl+Shift+click: shows the node's first output in the viewport; clicking the same node
     /// again steps through its outputs, then turns the preview off. Empty space turns it off.
     fn cycle_preview(&mut self, gpu: &Gpu, p: &mut Project, node: Option<NodeId>) {
-        let next = node.filter(|n| *n != SINK).and_then(|n| {
+        let next = node.filter(|n| !is_virtual(*n)).and_then(|n| {
             let outs = outputs(&p.graph, n);
             let i = match &p.preview {
                 Some(l) if l.node == n => outs.iter().position(|(o, _)| *o == l.output).map_or(0, |i| i + 1),
@@ -1641,8 +1925,8 @@ impl NodeEditor {
         let layer = self.layer();
         let mut cut = Vec::new();
         for &n in all {
-            for (input, src, out) in links_into(&p.graph, layer, n) {
-                if !all.contains(&src) {
+            for (input, src, out) in shown_links(&p.graph, layer, n) {
+                if !all.contains(&src) || is_virtual(src) {
                     continue;
                 }
                 let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, src, &out), self.input_pos(&p.graph, origin, n, &input)) else {
@@ -1735,7 +2019,7 @@ impl NodeEditor {
     fn lazy_menu_ui(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
         let Some((at, a, b)) = self.lazy_menu else { return };
         let layer = self.layer();
-        if p.graph.get(a).is_none() || (b != SINK && p.graph.get(b).is_none()) {
+        if p.graph.get(a).is_none() || (b != SINK && p.graph.get(b).is_none()) || (is_virtual(b) && b != SINK) {
             self.lazy_menu = None;
             return;
         }
@@ -1820,11 +2104,12 @@ impl NodeEditor {
                 r.request_focus();
                 let q = menu.search.to_ascii_lowercase();
                 let mut first = None;
-                egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                        let mut category = "";
-                        for d in graph::defs() {
-                            if matches!(d.ty, "material_output") {
+                        let mut category = None;
+                        let defs = graph::Category::ALL.iter().flat_map(|c| graph::defs().iter().filter(move |d| d.category == *c));
+                        for d in defs {
+                            if d.category == graph::Category::Output {
                                 continue;
                             }
                             if !q.is_empty() && !d.title.to_ascii_lowercase().contains(&q) {
@@ -1839,9 +2124,9 @@ impl NodeEditor {
                                     continue;
                                 }
                             }
-                            if d.category != category {
-                                category = d.category;
-                                ui.label(egui::RichText::new(category).weak().small());
+                            if category != Some(d.category) {
+                                category = Some(d.category);
+                                category_label(ui, d.category);
                             }
                             first.get_or_insert(d.ty);
                             if ui.add(egui::Button::new(d.title).frame(false)).clicked() {
@@ -1869,7 +2154,7 @@ impl NodeEditor {
             let link = menu.link.clone();
             let id = p.edit(gpu, "Add node", |g| {
                 let id = g.add(ty);
-                g.node_mut(id).pos = [at.x, at.y - HEADER];
+                g.node_mut(id).pos = [at.x, at.y];
                 if let Some((from, lt)) = &link {
                     if let Some(name) = Self::input_for(g, layer, id, *lt) {
                         connect(g, layer, from, &SocketRef { node: id, name });
@@ -1890,30 +2175,47 @@ impl NodeEditor {
         }
     }
 
+    /// The sidebar, laid out like the Properties panel. See docs/reference/node-editor.md
+    /// "Properties sidebar".
     fn properties(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
-        if self.selected.len() > 1 {
-            ui.label(egui::RichText::new(format!("{} nodes selected", self.selected.len())).weak());
+        use crate::ui_theme as t;
+        use crate::ui_widgets as w;
+        ui.add_space(8.0);
+        let count = self.selection().len();
+        if count > 1 {
+            w::hint(ui, format!("{count} nodes selected"));
         }
-        let Some(n) = self.primary.filter(|n| *n != SINK && p.graph.get(*n).is_some()) else {
-            ui.label(egui::RichText::new("Select a node.").weak());
+        let Some(n) = self.primary.filter(|n| !is_virtual(*n) && p.graph.get(*n).is_some()) else {
+            w::hint(ui, "Select a node.");
             return;
         };
         let node = p.graph.node(n).clone();
         let def = node.def();
-        ui.heading(node.title());
-        let mut label = node.label.clone();
-        if ui.add(egui::TextEdit::singleline(&mut label).hint_text("Label")).lost_focus() && label != node.label {
-            p.edit(gpu, "Rename node", |g| g.node_mut(n).label = label);
-        }
-        let mut cached = node.cached;
-        let r = ui.add_enabled(!def.non_local, egui::Checkbox::new(&mut cached, "Cached"));
-        if r.changed() {
-            p.edit(gpu, "Cached", |g| g.node_mut(n).cached = cached);
-        }
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+            ui.painter().rect_filled(r, 2.0, header_color(&p.graph, n));
+            ui.label(egui::RichText::new(node.title()).font(t::body_strong()).color(t::TEXT));
+            w::hint(ui, def.category.name());
+        });
+        ui.add_space(4.0);
+        w::setting(ui, "Label", |ui| {
+            let mut label = node.label.clone();
+            let edit = egui::TextEdit::singleline(&mut label).hint_text(def.title).desired_width(f32::INFINITY).min_size(Vec2::new(0.0, t::H_CONTROL)).vertical_align(egui::Align::Center);
+            if ui.add(edit).lost_focus() && label != node.label {
+                p.edit(gpu, "Rename node", |g| g.node_mut(n).label = label);
+            }
+        });
+        w::setting(ui, "Cached", |ui| {
+            let mut cached = node.cached;
+            let r = ui.add_enabled(!def.non_local && crate::compile::cacheable(&node), w::Toggle(&mut cached));
+            if r.changed() {
+                p.edit(gpu, "Cached", |g| g.node_mut(n).cached = cached);
+            }
+        });
         if def.non_local {
-            ui.label(egui::RichText::new("Filters read neighboring texels and are always cached.").weak().small());
+            w::hint(ui, "Filters read neighboring texels and are always cached.");
         }
-        if crate::graph::GENERATORS.contains(&node.ty.as_str()) && ui.button("Ungroup").on_hover_text("Replace with its component nodes").clicked() {
+        if crate::graph::GENERATORS.contains(&node.ty.as_str()) && ui.add(w::secondary("Ungroup")).on_hover_text("Replace with its component nodes").clicked() {
             if let Some(out) = p.edit(gpu, "Ungroup", |g| ungroup(g, n)) {
                 self.selected = BTreeSet::from([out]);
                 self.primary = Some(out);
@@ -1922,14 +2224,15 @@ impl NodeEditor {
             return;
         }
         if !def.params.is_empty() {
-            ui.separator();
-            ui.label(egui::RichText::new("Parameters (edit them on the node; the pin exposes one on the layer)").weak().small());
-            for pd in &def.params {
-                ui.horizontal(|ui| {
-                    crate::ui_layers::expose_pin(ui, gpu, p, n, pd.name);
-                    ui.label(pretty(pd.name));
-                });
-            }
+            w::Section::new("Parameters").id_salt("node params").show(ui, |ui| {
+                w::hint(ui, "Edit them on the node; the pin exposes one on the layer.");
+                for pd in &def.params {
+                    ui.horizontal(|ui| {
+                        crate::ui_layers::expose_pin(ui, gpu, p, n, pd.name);
+                        ui.label(pretty(pd.name));
+                    });
+                }
+            });
         }
     }
 
@@ -2006,6 +2309,19 @@ fn value_text(v: &Value) -> String {
     }
 }
 
+/// An add menu category: a square of its header color and its name in small capitals.
+fn category_label(ui: &mut egui::Ui, c: graph::Category) {
+    use crate::ui_theme as t;
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let (r, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
+        let [red, green, blue] = c.color();
+        ui.painter().rect_filled(r, 2.0, Color32::from_rgb(red, green, blue));
+        ui.label(egui::RichText::new(c.name().to_uppercase()).font(t::section()).color(t::TEXT_3).extra_letter_spacing(0.6));
+    });
+}
+
 /// The ramp's linear color at `t`, interpolating between stops sorted by position.
 fn ramp_color(stops: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
     let Some(first) = stops.first() else { return [0.0; 3] };
@@ -2063,4 +2379,101 @@ fn draw_link(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f3
         Color32::TRANSPARENT,
         Stroke::new(2.0 * zoom, color),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_ids_encode_the_slot() {
+        let l = LayerRef { stack: 7, index: 3 };
+        let id = group_id(l).unwrap();
+        assert!(is_virtual(id) && id != SINK);
+        assert_eq!(group_of(id), Some(l));
+        assert_eq!(group_of(SINK), None);
+        assert_eq!(group_of(7), None);
+        // Outside the encoding (docs/reference/limits.md): shown ungrouped.
+        assert_eq!(group_id(LayerRef { stack: 1 << 19, index: 0 }), None);
+        assert_eq!(group_id(LayerRef { stack: 1, index: 4096 }), None);
+    }
+
+    #[test]
+    fn layers_are_shown_as_groups() {
+        let mut g = Graph::new();
+        let a = ops::add_fill_layer(&mut g, None);
+        let b = ops::add_paint_layer(&mut g, Some(a));
+        ops::add_mask(&mut g, a, false);
+        let mut shown = BTreeSet::new();
+        shown_from(&g, g.output_node().unwrap(), &mut shown);
+        let (ga, gb) = (group_id(a).unwrap(), group_id(b).unwrap());
+        let expected: BTreeSet<NodeId> = [g.output_node().unwrap(), g.root, ga, gb].into();
+        assert_eq!(shown, expected, "no layer content or mask nodes");
+        // The Stack's layer inputs are drawn from the groups' outputs.
+        let links = shown_links(&g, None, g.root);
+        assert!(links.contains(&(format!("slot{}", a.index), ga, "content".into())));
+        assert!(links.contains(&(format!("slot{}.mask", a.index), ga, "mask".into())));
+        let outs: Vec<String> = outputs(&g, ga).into_iter().map(|(o, _)| o).collect();
+        assert_eq!(outs, ["content", "mask"]);
+        assert_eq!(outputs(&g, gb).len(), 1, "no mask, no Mask output");
+        // Moving a group moves the slot's saved position.
+        set_pos(&mut g, ga, [-300.0, 40.0]);
+        assert_eq!(ops::slot(&g, a).unwrap().node_pos, [-300.0, 40.0]);
+    }
+
+    #[test]
+    fn input_values_take_the_input_rows() {
+        let mut g = Graph::new();
+        let m = g.add("math");
+        // Math: Out, Op, then A and B (with its value field): b_value isn't a row of its own.
+        assert_eq!(own_params(&g, m).iter().map(|p| p.name).collect::<Vec<_>>(), ["op"]);
+        assert_eq!(input_row(&g, m, "a"), Some(2));
+        assert_eq!(node_height(&g, m), HEADER + 4.0 * ROW + 6.0);
+        // A Vector value takes four rows until something is connected.
+        let vm = g.add("vector_math");
+        let unlinked = node_height(&g, vm);
+        let v = g.add("vector");
+        g.connect(v, "vector", vm, "b");
+        assert_eq!(unlinked - node_height(&g, vm), 3.0 * ROW);
+        // Vector parameters take four rows.
+        let map = g.add("mapping");
+        assert_eq!(param_rows(&g, map), 12);
+    }
+
+    #[test]
+    fn tab_over_the_canvas_opens_the_add_menu_instead_of_moving_focus() {
+        use egui::{Event, Key, Modifiers, RawInput};
+        let ctx = egui::Context::default();
+        let mut ed = NodeEditor { open: true, canvas_rect: Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0)), ..Default::default() };
+        let field = egui::Id::new("field");
+        let frame = |ed: &mut NodeEditor, events: Vec<Event>, k: f64| {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                time: Some(k * 0.05),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                ed.intercept_tab(ui.ctx());
+                // Two focusable controls, the first one focused.
+                let a = ui.interact(Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::splat(20.0)), field, Sense::click());
+                ui.interact(Rect::from_min_size(Pos2::new(30.0, 0.0), Vec2::splat(20.0)), field.with(1), Sense::click());
+                if k == 0.0 {
+                    a.request_focus();
+                }
+            });
+            out.textures_delta.clear();
+        };
+        let tab = Event::Key { key: Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        frame(&mut ed, vec![Event::PointerMoved(Pos2::new(50.0, 50.0))], 0.0);
+        frame(&mut ed, vec![tab.clone()], 1.0);
+        assert!(ed.tab_pressed);
+        frame(&mut ed, vec![], 2.0);
+        assert_eq!(ctx.memory(|m| m.focused()), None, "the focus doesn't move on to the next control");
+        // Away from the canvas, Tab is left to egui.
+        ed.tab_pressed = false;
+        frame(&mut ed, vec![Event::PointerMoved(Pos2::new(300.0, 150.0))], 3.0);
+        frame(&mut ed, vec![tab], 4.0);
+        assert!(!ed.tab_pressed);
+    }
 }

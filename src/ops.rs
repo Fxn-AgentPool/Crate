@@ -154,6 +154,10 @@ pub fn group(g: &mut Graph, layers: &[LayerRef]) -> Option<LayerRef> {
         moved.push(g.node_mut(stack).slots.remove(i));
     }
     moved.reverse();
+    // Their Node Editor positions were next to the old stack: placed anew.
+    for s in &mut moved {
+        s.node_pos = [0.0, 0.0];
+    }
     g.node_mut(group).slots = moved;
     let at = top + 1 - idx.len();
     let name = unique_name(g, stack, "Group");
@@ -186,6 +190,8 @@ pub fn duplicate(g: &mut Graph, l: LayerRef) -> Option<(LayerRef, Vec<(NodeId, N
         pairs.extend(map);
     }
     slot.name = unique_name(g, l.stack, &format!("{} copy", slot.name));
+    // Placed anew in the Node Editor rather than on top of the original.
+    slot.node_pos = [0.0, 0.0];
     let at = LayerRef { stack: l.stack, index: l.index + 1 };
     g.node_mut(l.stack).slots.insert(at.index, slot);
     Some((at, pairs))
@@ -210,7 +216,10 @@ fn move_to(g: &mut Graph, l: LayerRef, target: LayerRef, offset: usize) -> Layer
             return l;
         }
     }
-    let s = g.node_mut(l.stack).slots.remove(l.index);
+    let mut s = g.node_mut(l.stack).slots.remove(l.index);
+    if l.stack != target.stack {
+        s.node_pos = [0.0, 0.0];
+    }
     let mut index = target.index;
     if l.stack == target.stack && l.index < target.index {
         index -= 1;
@@ -222,7 +231,7 @@ fn move_to(g: &mut Graph, l: LayerRef, target: LayerRef, offset: usize) -> Layer
 
 fn new_mask_stack(g: &mut Graph, value: f32) -> NodeId {
     let ms = g.add("mask_stack");
-    let fill = g.add("constant");
+    let fill = g.add("value");
     g.set(fill, "value", Value::Float(value));
     g.node_mut(ms).mask_slots.push(MaskSlot {
         name: if value > 0.5 { "White".into() } else { "Black".into() },
@@ -289,7 +298,7 @@ pub fn add_mask_paint(g: &mut Graph, l: LayerRef) -> Selection {
 }
 
 pub fn add_mask_fill(g: &mut Graph, l: LayerRef) -> Selection {
-    let node = g.add("constant");
+    let node = g.add("value");
     push_mask_slot(g, l, "Fill", MaskSource::Node(node))
 }
 

@@ -195,8 +195,24 @@ fn image_at(layer: i32, uv: vec2f) -> vec4f {
 }
 
 fn image_uv(layer: i32, s: Surface, scale: f32, rotation: f32, offset: vec3f) -> vec4f {
-    let uv = rot2(vec2f(s.tile_uv.x, 1.0 - s.tile_uv.y) - 0.5, rotation) * scale + 0.5 + offset.xy;
-    return image_at(layer, uv);
+    return image_vec(layer, s.tile_uv, scale, rotation, offset);
+}
+
+// The Image node at a UV from its Vector input (V up, like tile_uv).
+fn image_vec(layer: i32, uv: vec2f, scale: f32, rotation: f32, offset: vec3f) -> vec4f {
+    let p = rot2(vec2f(uv.x, 1.0 - uv.y) - 0.5, rotation) * scale + 0.5 + offset.xy;
+    return image_at(layer, p);
+}
+
+// Rotation about X, then Y, then Z (degrees), as Blender's Euler XYZ.
+fn euler_xyz(deg: vec3f) -> mat3x3f {
+    let r = radians(deg);
+    let c = cos(r);
+    let s = sin(r);
+    let rx = mat3x3f(1.0, 0.0, 0.0, 0.0, c.x, s.x, 0.0, -s.x, c.x);
+    let ry = mat3x3f(c.y, 0.0, -s.y, 0.0, 1.0, 0.0, s.y, 0.0, c.y);
+    let rz = mat3x3f(c.z, s.z, 0.0, -s.z, c.z, 0.0, 0.0, 0.0, 1.0);
+    return rz * ry * rx;
 }
 
 // Object-space triplanar projection; scale is repeats per world unit.

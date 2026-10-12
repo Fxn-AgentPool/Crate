@@ -195,6 +195,8 @@ pub fn insert(gpu: &Gpu, p: &mut Project, path: &Path, above: Option<LayerRef>) 
         let name = s.name.clone();
         *s = slot;
         s.name = name;
+        // Where the layer's group sat in the project it was saved from means nothing here.
+        s.node_pos = [0.0, 0.0];
     }
     // Paint pages, for tiles this mesh also has.
     for name in names.iter().filter(|n| n.starts_with("paint/") && n.ends_with(".page")) {

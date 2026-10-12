@@ -296,7 +296,7 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
 fn mask_thumb(painter: &egui::Painter, p: &Project, mask: NodeId, r: Rect) {
     let Some(ms) = p.graph.get(mask) else { return };
     let base = ms.mask_slots.first().and_then(|s| match s.source {
-        MaskSource::Node(n) => p.graph.get(n).filter(|n| n.ty == "constant").map(|n| n.param("value").as_f32()),
+        MaskSource::Node(n) => p.graph.get(n).filter(|n| n.ty == "value").map(|n| n.param("value").as_f32()),
         _ => None,
     });
     let g = (base.unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
@@ -308,7 +308,7 @@ fn mask_thumb(painter: &egui::Painter, p: &Project, mask: NodeId, r: Rect) {
             MaskSource::Levels { .. } => Some(Icon::Levels),
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
                 Some("paint_mask") => Some(Icon::Brush),
-                Some("constant") => None,
+                Some("value") => None,
                 Some(_) => Some(Icon::Generator),
                 None => None,
             },
@@ -548,7 +548,7 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
             MaskSource::Levels { .. } => Icon::Levels,
             MaskSource::Node(n) => match p.graph.get(*n).map(|n| n.ty.as_str()) {
                 Some("paint_mask") => Icon::Brush,
-                Some("constant") | Some("image") => Icon::Fill,
+                Some("value") | Some("image") => Icon::Fill,
                 _ => Icon::Generator,
             },
         };
@@ -556,7 +556,7 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
         icons::paint(&painter, icon, icon_rect, t::TEXT_2);
         // Fill effects show their value as a swatch.
         if let MaskSource::Node(n) = &m.source {
-            if let Some(node) = p.graph.get(*n).filter(|n| n.ty == "constant") {
+            if let Some(node) = p.graph.get(*n).filter(|n| n.ty == "value") {
                 let g = (node.param("value").as_f32().clamp(0.0, 1.0) * 255.0) as u8;
                 let sw = Rect::from_center_size(icon_rect.center(), vec2(12.0, 12.0));
                 painter.rect_filled(sw, 2.0, Color32::from_gray(g));

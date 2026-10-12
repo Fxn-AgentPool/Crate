@@ -17,7 +17,68 @@ pub type NodeId = u32;
 pub enum SocketType {
     Float,
     Color,
+    /// Three numbers: a coordinate, direction or offset (UVs, positions).
+    Vector,
     Material,
+}
+
+/// Where a node is listed in the add menu, and its header color in the Node Editor.
+/// See docs/reference/nodes.md "Categories".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Category {
+    Input,
+    Texture,
+    Generator,
+    Color,
+    Vector,
+    Converter,
+    Filter,
+    Layer,
+    Output,
+}
+
+impl Category {
+    /// In add menu order.
+    pub const ALL: [Category; 9] = [
+        Category::Input,
+        Category::Texture,
+        Category::Generator,
+        Category::Color,
+        Category::Vector,
+        Category::Converter,
+        Category::Filter,
+        Category::Layer,
+        Category::Output,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Category::Input => "Input",
+            Category::Texture => "Texture",
+            Category::Generator => "Generator",
+            Category::Color => "Color",
+            Category::Vector => "Vector",
+            Category::Converter => "Converter",
+            Category::Filter => "Filter",
+            Category::Layer => "Layer",
+            Category::Output => "Output",
+        }
+    }
+
+    /// Header color, as sRGB.
+    pub fn color(self) -> [u8; 3] {
+        match self {
+            Category::Input => [0x83, 0x31, 0x4a],
+            Category::Texture => [0x79, 0x46, 0x1d],
+            Category::Generator => [0x1f, 0x70, 0x50],
+            Category::Color => [0x6c, 0x6c, 0x00],
+            Category::Vector => [0x3c, 0x3c, 0x83],
+            Category::Converter => [0x24, 0x62, 0x83],
+            Category::Filter => [0x6c, 0x3b, 0x75],
+            Category::Layer => [0x2d, 0x6a, 0x2d],
+            Category::Output => [0x4d, 0x00, 0x17],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,12 +151,30 @@ pub struct ParamDef {
 pub struct NodeDef {
     pub ty: &'static str,
     pub title: &'static str,
-    pub category: &'static str,
+    pub category: Category,
     pub inputs: &'static [(&'static str, SocketType)],
     pub outputs: &'static [(&'static str, SocketType)],
     pub params: Vec<ParamDef>,
     /// Filters read neighboring texels and are always cached.
     pub non_local: bool,
+}
+
+impl NodeDef {
+    /// The parameter an input uses while nothing is connected to it (Math's `b` reads
+    /// `b_value`). See docs/reference/nodes.md "Node catalog".
+    pub fn input_param(&self, input: &str) -> Option<&ParamDef> {
+        let name = match (self.ty, input) {
+            ("math" | "vector_math", "b") => "b_value",
+            ("combine_xyz", "x" | "y" | "z") => input,
+            _ => return None,
+        };
+        self.params.iter().find(|p| p.name == name)
+    }
+
+    /// Whether `param` is shown on an input's row rather than as a parameter of its own.
+    pub fn is_input_param(&self, param: &str) -> bool {
+        self.inputs.iter().any(|(i, _)| self.input_param(i).is_some_and(|p| p.name == param))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +268,9 @@ pub struct Slot {
     /// Expanded in the Layers panel (UI state).
     #[serde(default)]
     pub expanded: bool,
+    /// Position of the layer's group in the Node Editor; [0, 0] until it is first placed.
+    #[serde(default)]
+    pub node_pos: [f32; 2],
 }
 
 impl Slot {
@@ -206,6 +288,7 @@ impl Slot {
             }),
             smart_material: None,
             expanded: false,
+            node_pos: [0.0, 0.0],
         }
     }
 }
@@ -256,7 +339,7 @@ pub struct Node {
 
 impl Node {
     pub fn def(&self) -> &'static NodeDef {
-        def(&self.ty).unwrap_or_else(|| def("constant").unwrap())
+        def(&self.ty).unwrap_or_else(|| def("value").unwrap())
     }
 
     pub fn param(&self, name: &str) -> Value {
@@ -464,7 +547,7 @@ macro_rules! p {
     };
 }
 
-use SocketType::{Color as C, Float as F, Material as M};
+use SocketType::{Color as C, Float as F, Material as M, Vector as V};
 
 fn float(min: f32, max: f32) -> ParamKind {
     ParamKind::Float { min, max }
@@ -480,6 +563,10 @@ pub const MATH_OPS: &[&str] =
 pub const METRICS: &[&str] = &["Euclidean", "Manhattan"];
 pub const CELL_OUTPUTS: &[&str] = &["F1", "F2", "F2-F1"];
 pub const CURVATURE_SELECT: &[&str] = &["Convex", "Concave"];
+pub const VECTOR_OPS: &[&str] = &[
+    "Add", "Subtract", "Multiply", "Divide", "Scale", "Dot Product", "Cross Product", "Length", "Distance", "Normalize",
+    "Absolute", "Floor", "Fraction", "Minimum", "Maximum",
+];
 
 /// Per-channel parameters of a Fill node, named `<field>_<param>`.
 fn fill_params() -> Vec<ParamDef> {
@@ -537,19 +624,34 @@ pub fn fill_param_names(c: Channel) -> (&'static str, &'static str, &'static str
 }
 
 static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
+    use Category as K;
     use ParamKind::*;
+    type Sockets = &'static [(&'static str, SocketType)];
+    let def = |ty: &'static str, title: &'static str, category: Category, inputs: Sockets, outputs: Sockets, params: Vec<ParamDef>| NodeDef {
+        ty,
+        title,
+        category,
+        inputs,
+        outputs,
+        params,
+        non_local: false,
+    };
     vec![
-        // Sources
-        NodeDef { ty: "paint", title: "Paint", category: "Sources", inputs: &[], outputs: &[("out", M)], params: vec![], non_local: false },
-        NodeDef { ty: "paint_mask", title: "Paint Mask", category: "Sources", inputs: &[], outputs: &[("out", F)], params: vec![], non_local: false },
-        NodeDef {
-            ty: "constant", title: "Constant", category: "Sources", inputs: &[], outputs: &[("float", F), ("color", C)],
-            params: vec![p!("value", float(0.0, 1.0), Value::Float(1.0)), p!("color", Color, Value::Vec3([0.5; 3]))],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "image", title: "Image", category: "Sources", inputs: &[], outputs: &[("color", C), ("alpha", F)],
-            params: vec![
+        // Input
+        def("value", "Value", K::Input, &[], &[("value", F)], vec![p!("value", float(0.0, 1.0), Value::Float(1.0))]),
+        def("color", "Color", K::Input, &[], &[("color", C)], vec![p!("color", Color, Value::Vec3([0.5; 3]))]),
+        def("vector", "Vector", K::Input, &[], &[("vector", V)], vec![p!("vector", Vec3, Value::Vec3([0.0; 3]))]),
+        def("uv", "UV", K::Input, &[], &[("uv", V)], vec![]),
+        def("geometry", "Geometry", K::Input, &[], &[("position", V), ("generated", V), ("normal", V)], vec![]),
+        def("mesh_map", "Mesh Map", K::Input, &[], &[("float", F), ("color", C)], vec![p!("map", Enum(MAP_NAMES), Value::Text("AO".into()))]),
+        def(
+            "id_select", "ID Select", K::Input, &[], &[("out", F)],
+            vec![p!("colors", Colors, Value::Colors(vec![])), p!("tolerance", float(0.0, 1.0), Value::Float(0.1))],
+        ),
+        // Texture
+        def(
+            "image", "Image", K::Texture, &[("vector", V)], &[("color", C), ("alpha", F)],
+            vec![
                 p!("image", Image, Value::Text(String::new())),
                 p!("srgb", Bool, Value::Bool(true)),
                 p!("projection", Enum(PROJECTIONS), Value::Text("UV".into())),
@@ -558,17 +660,10 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
                 p!("offset", Vec3, Value::Vec3([0.0; 3])),
                 p!("triplanar_blend", float(0.0, 1.0), Value::Float(0.25)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "mesh_map", title: "Mesh Map", category: "Sources", inputs: &[], outputs: &[("float", F), ("color", C)],
-            params: vec![p!("map", Enum(MAP_NAMES), Value::Text("AO".into()))],
-            non_local: false,
-        },
-        // Procedural
-        NodeDef {
-            ty: "noise", title: "Noise", category: "Procedural", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "noise", "Noise", K::Texture, &[("vector", V)], &[("out", F)],
+            vec![
                 p!("type", Enum(NOISE_TYPES), Value::Text("Perlin".into())),
                 p!("scale", float(0.01, 1000.0), Value::Float(4.0)),
                 p!("octaves", Int { min: 1, max: 10 }, Value::Float(5.0)),
@@ -576,158 +671,174 @@ static DEFS: std::sync::LazyLock<Vec<NodeDef>> = std::sync::LazyLock::new(|| {
                 p!("gain", float(0.0, 1.0), Value::Float(0.5)),
                 p!("seed", Int { min: 0, max: 9999 }, Value::Float(0.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "cellular", title: "Cellular", category: "Procedural", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "cellular", "Cellular", K::Texture, &[("vector", V)], &[("out", F)],
+            vec![
                 p!("scale", float(0.01, 1000.0), Value::Float(4.0)),
                 p!("jitter", float(0.0, 1.0), Value::Float(1.0)),
                 p!("metric", Enum(METRICS), Value::Text("Euclidean".into())),
                 p!("output", Enum(CELL_OUTPUTS), Value::Text("F1".into())),
                 p!("seed", Int { min: 0, max: 9999 }, Value::Float(0.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "gradient", title: "Gradient", category: "Procedural", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "gradient", "Gradient", K::Texture, &[("vector", V)], &[("out", F)],
+            vec![
                 p!("axis", Enum(AXES), Value::Text("Y".into())),
                 p!("custom_axis", Vec3, Value::Vec3([0.0, 1.0, 0.0])),
                 p!("start", float(-1.0, 2.0), Value::Float(0.0)),
                 p!("end", float(-1.0, 2.0), Value::Float(1.0)),
                 p!("space", Enum(SPACES), Value::Text("Object".into())),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "id_select", title: "ID Select", category: "Procedural", inputs: &[], outputs: &[("out", F)],
-            params: vec![p!("colors", Colors, Value::Colors(vec![])), p!("tolerance", float(0.0, 1.0), Value::Float(0.1))],
-            non_local: false,
-        },
-        // Generators
-        NodeDef {
-            ty: "edge_wear", title: "Edge Wear", category: "Generators", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        // Generator
+        def(
+            "edge_wear", "Edge Wear", K::Generator, &[], &[("out", F)],
+            vec![
                 p!("amount", float(0.0, 1.0), Value::Float(0.2)),
                 p!("sharpness", float(0.0, 1.0), Value::Float(0.6)),
                 p!("noise_scale", float(0.1, 200.0), Value::Float(30.0)),
                 p!("noise_amount", float(0.0, 1.0), Value::Float(0.7)),
                 p!("seed", Int { min: 0, max: 9999 }, Value::Float(0.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "dirt", title: "Dirt", category: "Generators", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "dirt", "Dirt", K::Generator, &[], &[("out", F)],
+            vec![
                 p!("amount", float(0.0, 1.0), Value::Float(0.5)),
                 p!("contrast", float(0.0, 1.0), Value::Float(0.5)),
                 p!("noise_scale", float(0.1, 200.0), Value::Float(8.0)),
                 p!("seed", Int { min: 0, max: 9999 }, Value::Float(0.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "curvature_mask", title: "Curvature Mask", category: "Generators", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "curvature_mask", "Curvature Mask", K::Generator, &[], &[("out", F)],
+            vec![
                 p!("select", Enum(CURVATURE_SELECT), Value::Text("Convex".into())),
                 p!("threshold", float(0.0, 1.0), Value::Float(0.1)),
                 p!("softness", float(0.0, 1.0), Value::Float(0.2)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "position_gradient", title: "Position Gradient", category: "Generators", inputs: &[], outputs: &[("out", F)],
-            params: vec![
+        ),
+        def(
+            "position_gradient", "Position Gradient", K::Generator, &[], &[("out", F)],
+            vec![
                 p!("axis", Enum(&["X", "Y", "Z"]), Value::Text("Y".into())),
                 p!("falloff", float(0.0, 1.0), Value::Float(0.5)),
                 p!("noise_amount", float(0.0, 1.0), Value::Float(0.2)),
             ],
-            non_local: false,
-        },
-        // Adjust
-        NodeDef {
-            ty: "levels", title: "Levels", category: "Adjust", inputs: &[("in", C)], outputs: &[("out", C), ("float", F)],
-            params: vec![
+        ),
+        // Color
+        def(
+            "levels", "Levels", K::Color, &[("in", C)], &[("out", C), ("float", F)],
+            vec![
                 p!("in_black", float(0.0, 1.0), Value::Float(0.0)),
                 p!("in_white", float(0.0, 1.0), Value::Float(1.0)),
                 p!("gamma", float(0.01, 10.0), Value::Float(1.0)),
                 p!("out_black", float(0.0, 1.0), Value::Float(0.0)),
                 p!("out_white", float(0.0, 1.0), Value::Float(1.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "ramp", title: "Ramp", category: "Adjust", inputs: &[("in", F)], outputs: &[("out", C)],
-            params: vec![p!("stops", Stops, Value::Stops(vec![(0.0, [0.0; 3]), (1.0, [1.0; 3])]))],
-            non_local: false,
-        },
-        NodeDef { ty: "invert", title: "Invert", category: "Adjust", inputs: &[("in", C)], outputs: &[("out", C), ("float", F)], params: vec![], non_local: false },
-        NodeDef {
-            ty: "clamp", title: "Clamp", category: "Adjust", inputs: &[("in", C)], outputs: &[("out", C), ("float", F)],
-            params: vec![p!("min", float(-10.0, 10.0), Value::Float(0.0)), p!("max", float(-10.0, 10.0), Value::Float(1.0))],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "hsv_adjust", title: "HSV Adjust", category: "Adjust", inputs: &[("in", C)], outputs: &[("out", C)],
-            params: vec![
+        ),
+        def("invert", "Invert", K::Color, &[("in", C)], &[("out", C), ("float", F)], vec![]),
+        def(
+            "hsv_adjust", "HSV Adjust", K::Color, &[("in", C)], &[("out", C)],
+            vec![
                 p!("hue", float(-0.5, 0.5), Value::Float(0.0)),
                 p!("saturation", float(0.0, 2.0), Value::Float(1.0)),
                 p!("value", float(0.0, 2.0), Value::Float(1.0)),
             ],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "math", title: "Math", category: "Adjust", inputs: &[("a", F), ("b", F)], outputs: &[("out", F)],
-            params: vec![
-                p!("op", Enum(MATH_OPS), Value::Text("Multiply".into())),
-                p!("b_value", float(-10.0, 10.0), Value::Float(1.0)),
-            ],
-            non_local: false,
-        },
-        // Combine
-        NodeDef {
-            ty: "merge", title: "Merge", category: "Combine", inputs: &[("a", C), ("b", C), ("mask", F)], outputs: &[("out", C), ("float", F)],
-            params: vec![
+        ),
+        def(
+            "merge", "Merge", K::Color, &[("a", C), ("b", C), ("mask", F)], &[("out", C), ("float", F)],
+            vec![
                 p!("mode", Enum(&["Normal", "Multiply", "Screen", "Overlay", "Add", "Subtract", "Lighten", "Darken", "Color Dodge", "Color Burn"]), Value::Text("Normal".into())),
                 p!("opacity", float(0.0, 1.0), Value::Float(1.0)),
             ],
-            non_local: false,
-        },
+        ),
+        // Vector
+        def(
+            "uv_transform", "UV Transform", K::Vector, &[("vector", V)], &[("vector", V)],
+            vec![
+                p!("tile_u", float(0.0, 1000.0), Value::Float(1.0)),
+                p!("tile_v", float(0.0, 1000.0), Value::Float(1.0)),
+                p!("rotation", float(-360.0, 360.0), Value::Float(0.0)),
+                p!("offset_u", float(-1000.0, 1000.0), Value::Float(0.0)),
+                p!("offset_v", float(-1000.0, 1000.0), Value::Float(0.0)),
+            ],
+        ),
+        def(
+            "mapping", "Mapping", K::Vector, &[("vector", V)], &[("vector", V)],
+            vec![
+                p!("location", Vec3, Value::Vec3([0.0; 3])),
+                p!("rotation", Vec3, Value::Vec3([0.0; 3])),
+                p!("scale", Vec3, Value::Vec3([1.0; 3])),
+            ],
+        ),
+        def(
+            "vector_math", "Vector Math", K::Vector, &[("a", V), ("b", V)], &[("vector", V), ("value", F)],
+            vec![
+                p!("op", Enum(VECTOR_OPS), Value::Text("Add".into())),
+                p!("scale", float(-1000.0, 1000.0), Value::Float(1.0)),
+                p!("b_value", Vec3, Value::Vec3([0.0; 3])),
+            ],
+        ),
+        // Converter
+        def(
+            "math", "Math", K::Converter, &[("a", F), ("b", F)], &[("out", F)],
+            vec![p!("op", Enum(MATH_OPS), Value::Text("Multiply".into())), p!("b_value", float(-10.0, 10.0), Value::Float(1.0))],
+        ),
+        def(
+            "clamp", "Clamp", K::Converter, &[("in", C)], &[("out", C), ("float", F)],
+            vec![p!("min", float(-10.0, 10.0), Value::Float(0.0)), p!("max", float(-10.0, 10.0), Value::Float(1.0))],
+        ),
+        def(
+            "ramp", "Ramp", K::Converter, &[("in", F)], &[("out", C)],
+            vec![p!("stops", Stops, Value::Stops(vec![(0.0, [0.0; 3]), (1.0, [1.0; 3])]))],
+        ),
+        def(
+            "combine_xyz", "Combine XYZ", K::Converter, &[("x", F), ("y", F), ("z", F)], &[("vector", V)],
+            vec![
+                p!("x", float(-1000.0, 1000.0), Value::Float(0.0)),
+                p!("y", float(-1000.0, 1000.0), Value::Float(0.0)),
+                p!("z", float(-1000.0, 1000.0), Value::Float(0.0)),
+            ],
+        ),
+        def("separate_xyz", "Separate XYZ", K::Converter, &[("vector", V)], &[("x", F), ("y", F), ("z", F)], vec![]),
+        def(
+            "material_combine", "Material Combine", K::Converter,
+            &[("base_color", C), ("roughness", F), ("metallic", F), ("height", F), ("normal", C), ("emissive", C), ("opacity", F)],
+            &[("out", M)],
+            vec![],
+        ),
+        def(
+            "material_split", "Material Split", K::Converter, &[("in", M)],
+            &[("base_color", C), ("roughness", F), ("metallic", F), ("height", F), ("normal", C), ("emissive", C), ("opacity", F)],
+            vec![],
+        ),
+        // Filter
         NodeDef {
-            ty: "material_combine", title: "Material Combine", category: "Combine",
-            inputs: &[("base_color", C), ("roughness", F), ("metallic", F), ("height", F), ("normal", C), ("emissive", C), ("opacity", F)],
-            outputs: &[("out", M)],
-            params: vec![],
-            non_local: false,
-        },
-        NodeDef {
-            ty: "material_split", title: "Material Split", category: "Combine", inputs: &[("in", M)],
-            outputs: &[("base_color", C), ("roughness", F), ("metallic", F), ("height", F), ("normal", C), ("emissive", C), ("opacity", F)],
-            params: vec![],
-            non_local: false,
-        },
-        NodeDef { ty: "fill", title: "Fill", category: "Combine", inputs: &[], outputs: &[("out", M)], params: fill_params(), non_local: false },
-        NodeDef { ty: "stack", title: "Stack", category: "Combine", inputs: &[], outputs: &[("out", M)], params: vec![], non_local: false },
-        NodeDef { ty: "mask_stack", title: "Mask Stack", category: "Combine", inputs: &[], outputs: &[("out", F)], params: vec![], non_local: false },
-        // Filters
-        NodeDef {
-            ty: "blur", title: "Blur", category: "Filters", inputs: &[("in", C)], outputs: &[("out", C), ("float", F)],
+            ty: "blur", title: "Blur", category: K::Filter, inputs: &[("in", C)], outputs: &[("out", C), ("float", F)],
             params: vec![p!("radius", float(0.0, 64.0), Value::Float(4.0))],
             non_local: true,
         },
         NodeDef {
-            ty: "dilate", title: "Dilate", category: "Filters", inputs: &[("in", F)], outputs: &[("out", F)],
+            ty: "dilate", title: "Dilate", category: K::Filter, inputs: &[("in", F)], outputs: &[("out", F)],
             params: vec![p!("radius", float(0.0, 64.0), Value::Float(2.0))],
             non_local: true,
         },
         NodeDef {
-            ty: "height_to_normal", title: "Height to Normal", category: "Filters", inputs: &[("in", F)], outputs: &[("out", C)],
+            ty: "height_to_normal", title: "Height to Normal", category: K::Filter, inputs: &[("in", F)], outputs: &[("out", C)],
             params: vec![p!("strength", float(0.0, 10.0), Value::Float(1.0))],
             non_local: true,
         },
+        // Layer
+        def("paint", "Paint", K::Layer, &[], &[("out", M)], vec![]),
+        def("paint_mask", "Paint Mask", K::Layer, &[], &[("out", F)], vec![]),
+        def("fill", "Fill", K::Layer, &[], &[("out", M)], fill_params()),
+        def("stack", "Stack", K::Layer, &[], &[("out", M)], vec![]),
+        def("mask_stack", "Mask Stack", K::Layer, &[], &[("out", F)], vec![]),
         // Output
-        NodeDef { ty: "material_output", title: "Material Output", category: "Output", inputs: &[("in", M)], outputs: &[], params: vec![], non_local: false },
+        def("material_output", "Material Output", K::Output, &[("in", M)], &[], vec![]),
     ]
 });
 

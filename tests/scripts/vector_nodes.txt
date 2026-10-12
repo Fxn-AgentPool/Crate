@@ -1,0 +1,76 @@
+# Vector and UV nodes against known answers: each case previews a value of 0.18 (linear),
+# unlit under a black environment with the Standard view, which reads as 118 (sRGB).
+# See docs/reference/nodes.md "Vector" and "Converter".
+new assets/crate.glb 1024
+size 96x96
+environment tests/data/black.hdr
+exposure 0.0
+view-transform standard
+# Reference: a Value node.
+node ref value
+node-set ref value=0.18
+preview ref
+render target/tests/vector_nodes/a_ref.png
+expect-color target/tests/vector_nodes/a_ref.png 118,118,118 2
+# Vector Math Scale: (0.09, 0.09, 0.09) x 2.
+node v vector
+node-set v vector=0.09,0.09,0.09
+node scaled vector_math
+node-set scaled op=scale scale=2
+link v.vector scaled.a
+preview scaled.vector
+render target/tests/vector_nodes/b_scale.png
+expect-color target/tests/vector_nodes/b_scale.png 118,118,118 2
+# UV Transform with zero tiling is the tile's center plus the offset: 0.5 - 0.32.
+node uv uv
+node tr uv_transform
+node-set tr tile_u=0 tile_v=0 offset_u=-0.32
+link uv.uv tr.vector
+node sep separate_xyz
+link tr.vector sep.vector
+preview sep.x
+render target/tests/vector_nodes/c_uv_transform.png
+expect-color target/tests/vector_nodes/c_uv_transform.png 118,118,118 2
+# Mapping: (0.18, 0, 0) rotated 90 degrees about Z is (0, 0.18, 0).
+node m mapping
+node-set m rotation=0,0,90
+node mv vector
+node-set mv vector=0.18,0,0
+link mv.vector m.vector
+node msep separate_xyz
+link m.vector msep.vector
+preview msep.y
+render target/tests/vector_nodes/d_mapping.png
+expect-color target/tests/vector_nodes/d_mapping.png 118,118,118 2
+# Combine XYZ previewed as a color: (0.18, 0.5, 0.9) reads as (118, 188, 243).
+node c combine_xyz
+node-set c x=0.18 y=0.5 z=0.9
+preview c.vector
+render target/tests/vector_nodes/e_combine.png
+expect-color target/tests/vector_nodes/e_combine.png 118,188,243 2
+# Vector to Float is the average: (0.1, 0.2, 0.24) into Math Add 0.
+node avg vector
+node-set avg vector=0.1,0.2,0.24
+node add math
+node-set add op=add b_value=0
+link avg.vector add.a
+preview add.out
+render target/tests/vector_nodes/f_average.png
+expect-color target/tests/vector_nodes/f_average.png 118,118,118 2
+# Noise at the Generated position is the same as Noise with nothing connected.
+camera 35 22 1.3
+node n1 noise
+preview n1
+render target/tests/vector_nodes/g_noise.png
+node geo geometry
+node n2 noise
+link geo.generated n2.vector
+preview n2
+render target/tests/vector_nodes/h_noise_generated.png
+expect-same target/tests/vector_nodes/g_noise.png target/tests/vector_nodes/h_noise_generated.png
+# ...and different at the UV.
+node n3 noise
+link uv.uv n3.vector
+preview n3
+render target/tests/vector_nodes/i_noise_uv.png
+expect-different target/tests/vector_nodes/g_noise.png target/tests/vector_nodes/i_noise_uv.png
