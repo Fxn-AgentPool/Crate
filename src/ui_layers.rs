@@ -422,7 +422,8 @@ fn mask_layer_properties(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: Layer
             if n.ty == "paint_mask" {
                 ui.label(RichText::new("Paint with the Paint tool (B).").weak());
             }
-            for def in &n.def().params {
+            // Settings that apply, and value inputs nothing is connected to.
+            for def in n.def().params.iter().filter(|d| n.shows(d) && !n.inputs.contains_key(d.name)) {
                 param_widget(ui, gpu, p, node, def, def.name);
             }
         }
@@ -460,7 +461,7 @@ fn number_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, def
             let mut x = v.as_f32();
             let field = Field::new(&mut x, min..=max).label(label);
             // Wide ranges are limits rather than scales: no fill, a fixed step.
-            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002) as f64) };
+            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(drag_speed(min, max)) };
             let r = ui.add(field);
             track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x)));
         }
@@ -490,6 +491,12 @@ pub fn expose_pin(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, n
 }
 
 /// Value editor for one parameter.
+/// A number field's drag speed per point: a 500th of its range, or 0.01 for very wide ranges.
+/// See docs/reference/node-editor.md "Settings and values".
+pub fn drag_speed(min: f32, max: f32) -> f64 {
+    if max - min > 2000.0 { 0.01 } else { ((max - min) * 0.002) as f64 }
+}
+
 pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, def: &ParamDef, id: &str) {
     let v = p.graph.node(node).param(def.name);
     let name = def.name;
@@ -497,7 +504,7 @@ pub fn param_value(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, node: NodeId, 
         ParamKind::Float { min, max } => {
             let mut x = v.as_f32();
             let field = Field::new(&mut x, min..=max);
-            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002) as f64) };
+            let field = if max - min <= 2.0 { field } else { field.no_fill().speed(drag_speed(min, max)) };
             let r = ui.add(field);
             track(p, gpu, &r, "Edit parameter", |g| g.set(node, name, Value::Float(x)));
         }

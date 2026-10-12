@@ -4,8 +4,9 @@
 new assets/crate.glb 1024
 size 96x96
 environment tests/data/black.hdr
-node c color
-preview c.color
+node c vector
+node-set c type=color
+preview c.vector
 node-set c color=0.18,0.18,0.18
 exposure 0.0
 view-transform standard

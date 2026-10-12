@@ -102,6 +102,15 @@ struct Connection {
 struct GraphFile {
     nodes: Vec<NodeFile>,
     connections: Vec<Connection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    frames: Vec<FrameFile>,
+}
+
+/// A Node Editor frame; nodes by string id.
+#[derive(Serialize, Deserialize)]
+struct FrameFile {
+    label: String,
+    nodes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -185,11 +194,12 @@ fn graph_to_file(g: &Graph) -> GraphFile {
             }
         })
         .collect();
-    GraphFile { nodes, connections }
+    let frames = g.frames.iter().map(|f| FrameFile { label: f.label.clone(), nodes: f.nodes.iter().map(|n| id_str(*n)).collect() }).collect();
+    GraphFile { nodes, connections, frames }
 }
 
 fn graph_from_file(f: GraphFile, root: &str) -> Result<Graph> {
-    let mut g = Graph { nodes: BTreeMap::new(), next_id: 1, root: parse_id(root)? };
+    let mut g = Graph { nodes: BTreeMap::new(), next_id: 1, root: parse_id(root)?, frames: Vec::new() };
     for nf in f.nodes {
         let id = parse_id(&nf.id)?;
         if crate::graph::def(&nf.ty).is_none() {
@@ -222,6 +232,11 @@ fn graph_from_file(f: GraphFile, root: &str) -> Result<Graph> {
             n.inputs.insert(input.to_string(), Link { node: from, output: out.to_string() });
         }
     }
+    for f in f.frames {
+        let nodes = f.nodes.iter().map(|n| parse_id(n)).collect::<Result<_>>()?;
+        g.frames.push(crate::graph::Frame { label: f.label, nodes });
+    }
+    g.prune_frames();
     if g.get(g.root).is_none() || g.output_node().is_none() {
         bail!("the graph has no root stack or material output");
     }
@@ -579,4 +594,25 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
 /// Adds the `.crate` extension if missing.
 pub fn with_extension(path: PathBuf) -> PathBuf {
     if path.extension().is_some_and(|e| e == "crate") { path } else { path.with_extension("crate") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_round_trip() {
+        let mut g = Graph::new();
+        let (a, b) = (g.add("noise"), g.add("reroute"));
+        g.frames.push(crate::graph::Frame { label: "Rust".into(), nodes: [a, b].into() });
+        let root = id_str(g.root);
+        let file = graph_to_file(&g);
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(json.contains(r#""frames":[{"label":"Rust","nodes":["n"#), "{json}");
+        let back = graph_from_file(serde_json::from_str(&json).unwrap(), &root).unwrap();
+        assert_eq!(back.frames, g.frames);
+        // No frames: no key.
+        g.frames.clear();
+        assert!(!serde_json::to_string(&graph_to_file(&g)).unwrap().contains("frames"));
+    }
 }

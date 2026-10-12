@@ -166,7 +166,7 @@ inputs fed by a group can't be picked up: change layers in the Layers panel, or 
 | Left-drag node | Moves the selected nodes. |
 | Left-drag on empty space | Box select. With `Shift`, adds to the selection. |
 | Left-click empty space | Clears the selection. |
-| Left-drag from an output | New link. Release on an input to connect, on a node to connect to its first fitting input, or on empty space to open the add menu with only nodes that can take the link; the new node is connected. |
+| Left-drag from an output | New link. Release on an input to connect, on a node to connect to its first fitting input (inputs without a value of their own first, then exact type matches, then free inputs), or on empty space to open the add menu with only nodes that can take the link; the new node is connected. |
 | Left-drag from a connected input | Picks up the link from its input end. |
 | Right-drag, `Alt` + left-drag, middle-drag | Pan. |
 | Wheel | Zoom about the pointer. |
@@ -179,7 +179,7 @@ inputs fed by a group can't be picked up: change layers in the Layers panel, or 
 | `Shift` + right-drag | Adds [reroutes](#reroutes) on the links the stroke crosses. |
 | Drop a mesh map from the Library | Adds a **Mesh Map** node set to that map. |
 
-Lazy connect ranks pairs by exact type match first, then by free inputs. It refuses connections
+Lazy connect ranks pairs by inputs without a value of their own first (so Noise goes into Levels' **In**, not **In black**), then by exact type match, then by free inputs. It refuses connections
 that would create a cycle; the target node's outline is green when a connection is possible and
 red when not.
 

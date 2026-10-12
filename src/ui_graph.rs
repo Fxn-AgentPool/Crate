@@ -10,7 +10,7 @@
 //!
 //! Every layer of a Stack is drawn as one virtual "layer group" node (an id with GROUP_BIT set,
 //! encoding the slot) instead of the nodes behind it. See docs/reference/node-editor.md
-//! "Layer groups".
+//! "Layer groups". Frames (Graph::frames) are selected by ids with FRAME_BIT set; see "Frames".
 
 use std::collections::BTreeSet;
 
@@ -27,7 +27,13 @@ use wrangler::{Edge, MergeOp};
 const SINK: NodeId = u32::MAX;
 /// Layer group ids: this bit, the Stack's id in bits 12..31 and the slot index in bits 0..12.
 const GROUP_BIT: NodeId = 1 << 31;
+/// Frame ids: this bit and the frame's index in Graph::frames.
+const FRAME_BIT: NodeId = 1 << 30;
 const NODE_W: f32 = 200.0;
+/// A Reroute's pill (docs/reference/node-editor.md "Reroutes").
+const REROUTE: Vec2 = Vec2::new(32.0, 18.0);
+/// Space around a frame's nodes.
+const FRAME_PAD: f32 = 16.0;
 /// Below this zoom, parameters are shown as text and can't be edited.
 const EDIT_ZOOM: f32 = 0.5;
 /// Header and row height: a control (ui_theme::H_CONTROL) and a gap.
@@ -47,6 +53,8 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Alt+right-drag", "Lazy connect"),
     ("Shift+Alt+right-drag", "Lazy connect with a menu"),
     ("Ctrl+right-drag", "Cut links"),
+    ("Shift+right-drag", "Add reroutes on the links crossed"),
+    ("F, Alt+P", "Frame selected nodes, take them out of frames"),
     ("Right-click a node", "Node menu"),
     ("Delete", "Delete selected"),
     ("Ctrl+X", "Dissolve selected"),
@@ -83,6 +91,8 @@ enum Drag {
     Box { start: Pos2, additive: bool },
     /// Ctrl + right drag: cuts the links the stroke crosses.
     Cut { points: Vec<Pos2> },
+    /// Shift + right drag: puts reroutes on the links the stroke crosses.
+    Reroute { points: Vec<Pos2> },
     /// Alt + right drag from one node to another: connects them (with Shift: choose sockets).
     Lazy { from: NodeId, menu: bool },
 }
@@ -104,6 +114,8 @@ enum Op {
     LinkToSelected,
     SelectAll,
     DeselectAll,
+    Frame,
+    Unframe,
 }
 
 /// What the editor shows.
@@ -205,9 +217,31 @@ fn group_of(id: NodeId) -> Option<LayerRef> {
     (id != SINK && id & GROUP_BIT != 0).then_some(LayerRef { stack: (id & !GROUP_BIT) >> 12, index: (id & 0xfff) as usize })
 }
 
-/// The sink and layer groups: drawn like nodes, but not nodes of the graph.
+/// The sink, layer groups and frames: drawn and selected, but not nodes of the graph.
 fn is_virtual(id: NodeId) -> bool {
-    id == SINK || id & GROUP_BIT != 0
+    id == SINK || id & (GROUP_BIT | FRAME_BIT) != 0
+}
+
+fn frame_of(id: NodeId) -> Option<usize> {
+    (id != SINK && id & GROUP_BIT == 0 && id & FRAME_BIT != 0).then_some((id & !FRAME_BIT) as usize)
+}
+
+fn frame_id(index: usize) -> NodeId {
+    FRAME_BIT | index as NodeId
+}
+
+fn is_reroute(g: &Graph, id: NodeId) -> bool {
+    !is_virtual(id) && g.get(id).is_some_and(|n| n.ty == "reroute")
+}
+
+/// Whether input `to` of `node` (of type `to_ty`) takes a link of type `from`: a Reroute takes
+/// any type.
+fn accepts(g: &Graph, node: NodeId, from: SocketType, to_ty: SocketType) -> bool {
+    compatible(from, to_ty) || is_reroute(g, node)
+}
+
+fn node_width(g: &Graph, id: NodeId) -> f32 {
+    if is_reroute(g, id) { REROUTE.x } else { NODE_W }
 }
 
 /// A layer group's slot, if the layer still exists.
@@ -227,7 +261,11 @@ fn inputs(g: &Graph, id: NodeId) -> Vec<(String, String, SocketType)> {
         return vec![];
     }
     let n = g.node(id);
-    let mut v: Vec<_> = n.def().inputs.iter().map(|(name, t)| (name.to_string(), pretty(name), *t)).collect();
+    if n.ty == "reroute" {
+        let t = g.output_type(&graph::Link { node: id, output: "out".into() }).unwrap_or(SocketType::Float);
+        return vec![("in".into(), String::new(), t)];
+    }
+    let mut v: Vec<_> = n.def().input_sockets().into_iter().map(|(name, t)| (name.to_string(), pretty(name), t)).collect();
     for (i, s) in n.slots.iter().enumerate() {
         v.push((format!("slot{i}"), s.name.clone(), SocketType::Material));
         v.push((format!("slot{i}.mask"), format!("{} mask", s.name), SocketType::Float));
@@ -261,7 +299,9 @@ fn outputs(g: &Graph, id: NodeId) -> Vec<(String, SocketType)> {
         }
         return v;
     }
-    g.node(id).def().outputs.iter().map(|(n, t)| (n.to_string(), *t)).collect()
+    // Through Graph::output_type, for the types that follow a node's inputs or settings.
+    let ty = |o: &str| g.output_type(&graph::Link { node: id, output: o.to_string() });
+    g.node(id).def().outputs.iter().map(|(n, t)| (n.to_string(), ty(n).unwrap_or(*t))).collect()
 }
 
 fn pretty(s: &str) -> String {
@@ -282,8 +322,8 @@ fn own_params(g: &Graph, id: NodeId) -> Vec<&'static graph::ParamDef> {
     if is_virtual(id) {
         return vec![];
     }
-    let def = g.node(id).def();
-    def.params.iter().filter(|p| !def.is_input_param(p.name)).collect()
+    let n = g.node(id);
+    n.def().params.iter().filter(|p| !p.socket && n.shows(p)).collect()
 }
 
 /// The parameter whose field an input shows while unconnected.
@@ -293,6 +333,14 @@ fn input_value(g: &Graph, id: NodeId, input: &str) -> Option<&'static graph::Par
     }
     let n = g.node(id);
     n.def().input_param(input).filter(|_| !n.inputs.contains_key(input))
+}
+
+/// The value an input has of its own, connected or not (None for link-only inputs).
+fn input_value_def(g: &Graph, id: NodeId, input: &str) -> Option<&'static graph::ParamDef> {
+    if is_virtual(id) {
+        return None;
+    }
+    g.node(id).def().input_param(input)
 }
 
 /// Rows an input takes: its value's rows while unconnected, otherwise one.
@@ -317,11 +365,14 @@ fn input_row(g: &Graph, id: NodeId, input: &str) -> Option<usize> {
 }
 
 fn is_collapsed(g: &Graph, id: NodeId) -> bool {
-    !is_virtual(id) && g.node(id).collapsed
+    !is_virtual(id) && g.node(id).collapsed && g.node(id).ty != "reroute"
 }
 
 /// Height in canvas units: the header, then the rows of outputs, parameters and inputs.
 fn node_height(g: &Graph, id: NodeId) -> f32 {
+    if is_reroute(g, id) {
+        return REROUTE.y;
+    }
     if is_collapsed(g, id) {
         return HEADER;
     }
@@ -478,7 +529,7 @@ fn connect(g: &mut Graph, layer: Option<LayerRef>, from: &SocketRef, to: &Socket
         Some((_, _, t)) => t,
         None => return false,
     };
-    if !compatible(from_ty, to_ty) {
+    if !accepts(g, to.node, from_ty, to_ty) {
         return false;
     }
     let would_cycle = |g: &Graph, target: NodeId| target == from.node || g.depends_on(from.node, target);
@@ -597,11 +648,11 @@ pub fn ungroup(g: &mut Graph, id: NodeId) -> Option<NodeId> {
             let na = f("noise_amount");
             let scale = place(g, "math", -170.0, 140.0);
             g.set(scale, "op", Value::Text("Multiply".into()));
-            g.set(scale, "b_value", Value::Float(2.0 * na));
+            g.set(scale, "b", Value::Float(2.0 * na));
             g.connect(nlev, "float", scale, "a");
             let offset = place(g, "math", 0.0, 140.0);
             g.set(offset, "op", Value::Text("Add".into()));
-            g.set(offset, "b_value", Value::Float(1.0 - na));
+            g.set(offset, "b", Value::Float(1.0 - na));
             g.connect(scale, "out", offset, "a");
             let mul = place(g, "math", 170.0, 0.0);
             g.set(mul, "op", Value::Text("Multiply".into()));
@@ -815,7 +866,7 @@ impl NodeEditor {
             let pos = self.node_pos(g, n);
             let h = node_height(g, n);
             lo = lo.min(Vec2::new(pos[0], pos[1]));
-            hi = hi.max(Vec2::new(pos[0] + NODE_W, pos[1] + h));
+            hi = hi.max(Vec2::new(pos[0] + node_width(g, n), pos[1] + h));
         }
         let size = (hi - lo).max(Vec2::splat(1.0));
         self.zoom = ((rect.width() - 40.0) / size.x).min((rect.height() - 40.0) / size.y).clamp(0.3, 1.0);
@@ -1005,7 +1056,7 @@ impl NodeEditor {
     }
 
     fn node_rect(&self, g: &Graph, origin: Pos2, id: NodeId) -> Rect {
-        Rect::from_min_size(self.to_screen(origin, self.node_pos(g, id)), Vec2::new(NODE_W, node_height(g, id)) * self.zoom)
+        Rect::from_min_size(self.to_screen(origin, self.node_pos(g, id)), Vec2::new(node_width(g, id), node_height(g, id)) * self.zoom)
     }
 
     /// Where links attach to an input. On a collapsed node every input attaches to the middle of
@@ -1013,7 +1064,7 @@ impl NodeEditor {
     fn input_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
         let r = self.node_rect(g, origin, id);
         let row = input_row(g, id, name)?;
-        if is_collapsed(g, id) {
+        if is_collapsed(g, id) || is_reroute(g, id) {
             return Some(r.left_center());
         }
         Some(Pos2::new(r.left(), r.top() + (HEADER + ROW * (row as f32 + 0.5)) * self.zoom))
@@ -1022,7 +1073,7 @@ impl NodeEditor {
     fn output_pos(&self, g: &Graph, origin: Pos2, id: NodeId, name: &str) -> Option<Pos2> {
         let r = self.node_rect(g, origin, id);
         let i = outputs(g, id).iter().position(|(n, _)| n == name)?;
-        if is_collapsed(g, id) {
+        if is_collapsed(g, id) || is_reroute(g, id) {
             return Some(r.right_center());
         }
         Some(Pos2::new(r.right(), r.top() + (HEADER + ROW * (i as f32 + 0.5)) * self.zoom))
@@ -1051,8 +1102,9 @@ impl NodeEditor {
 
     /// The socket under a screen point: (socket, is output). Collapsed nodes have none.
     fn socket_at(&self, g: &Graph, origin: Pos2, nodes: &[NodeId], pt: Pos2) -> Option<(SocketRef, bool)> {
-        let r = 10.0 * self.zoom.max(0.6);
         for &n in nodes.iter().rev().filter(|n| !is_collapsed(g, **n)) {
+            // A reroute's sockets are its ends; its middle moves it.
+            let r = if is_reroute(g, n) { 9.0 * self.zoom } else { 10.0 * self.zoom.max(0.6) };
             for (name, _) in outputs(g, n) {
                 if self.output_pos(g, origin, n, &name).is_some_and(|q| q.distance(pt) < r) {
                     return Some((SocketRef { node: n, name }, true));
@@ -1071,16 +1123,23 @@ impl NodeEditor {
         nodes.iter().rev().copied().find(|n| self.node_rect(g, origin, *n).contains(pt))
     }
 
-    /// First input of `node` that accepts `ty`, preferring an exact type match and free inputs.
+    /// First input of `node` that accepts `ty`, preferring inputs without a value of their own,
+    /// then an exact type match, then free inputs.
     fn input_for(g: &Graph, layer: Option<LayerRef>, node: NodeId, ty: SocketType) -> Option<String> {
         let linked: Vec<String> = links_into(g, layer, node).into_iter().map(|(i, _, _)| i).collect();
         let ins = inputs(g, node);
-        let pick = |exact: bool, free: bool| {
+        let pick = |plain: bool, exact: bool, free: bool| {
             ins.iter()
-                .find(|(n, _, t)| (if exact { *t == ty } else { compatible(ty, *t) }) && (!free || !linked.contains(n)))
+                .find(|(n, _, t)| {
+                    (!plain || input_value_def(g, node, n).is_none())
+                        && (if exact { *t == ty } else { accepts(g, node, ty, *t) })
+                        && (!free || !linked.contains(n))
+                })
                 .map(|(n, _, _)| n.clone())
         };
-        pick(true, true).or_else(|| pick(false, true)).or_else(|| pick(true, false)).or_else(|| pick(false, false))
+        [true, false].into_iter().find_map(|plain| {
+            pick(plain, true, true).or_else(|| pick(plain, false, true)).or_else(|| pick(plain, true, false)).or_else(|| pick(plain, false, false))
+        })
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project) {
@@ -1136,7 +1195,7 @@ impl NodeEditor {
             self.zoom = z;
         }
         // Pan: right drag or middle drag (Alt + left drag is handled as a drag mode below).
-        let rmb_tool = matches!(self.drag, Some(Drag::Cut { .. } | Drag::Lazy { .. }));
+        let rmb_tool = matches!(self.drag, Some(Drag::Cut { .. } | Drag::Lazy { .. } | Drag::Reroute { .. }));
         if (resp.dragged_by(egui::PointerButton::Secondary) && !rmb_tool) || (middle && resp.dragged()) {
             self.pan += delta / self.zoom;
         }
@@ -1144,6 +1203,19 @@ impl NodeEditor {
         let all = self.all_nodes(&p.graph);
         if all.is_empty() {
             painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Empty graph: press Tab to add a node", egui::FontId::proportional(13.0), crate::ui_theme::TEXT_3);
+        }
+
+        // Frames, behind everything else.
+        let frames = self.frame_rects(&p.graph, origin, &all);
+        for (i, fr) in &frames {
+            let selected = self.selected.contains(&frame_id(*i));
+            painter.rect_filled(*fr, 8.0, Color32::from_white_alpha(9));
+            let stroke = if selected { Stroke::new(1.5, crate::ui_theme::ACCENT) } else { Stroke::new(1.0, Color32::from_white_alpha(22)) };
+            painter.rect_stroke(*fr, 8.0, stroke, egui::StrokeKind::Inside);
+            let label = &p.graph.frames[*i].label;
+            let at = fr.left_top() + Vec2::new(10.0, HEADER * 0.5) * self.zoom;
+            let clip = Rect::from_min_size(fr.min, Vec2::new(fr.width(), HEADER * self.zoom)).intersect(rect);
+            painter.with_clip_rect(clip).text(at, egui::Align2::LEFT_CENTER, label, egui::FontId::new(12.0 * self.zoom, egui::FontFamily::Name(crate::ui_theme::MEDIUM.into())), crate::ui_theme::TEXT_2);
         }
 
         // Links.
@@ -1171,6 +1243,17 @@ impl NodeEditor {
             let r = rects[k];
             let collapsed = is_collapsed(&p.graph, n);
             let selected = self.selected.contains(&n);
+            if is_reroute(&p.graph, n) {
+                let ty = outputs(&p.graph, n).first().map_or(SocketType::Float, |(_, t)| *t);
+                painter.rect_filled(r, r.height() * 0.5, crate::ui_theme::BG_PANEL);
+                let outline = if selected { Stroke::new(1.5, crate::ui_theme::ACCENT) } else { Stroke::new(1.0, crate::ui_theme::BORDER_STRONG) };
+                painter.rect_stroke(r, r.height() * 0.5, outline, egui::StrokeKind::Inside);
+                // Takes any type, so it's never dimmed while a link is dragged.
+                let c = type_color(ty);
+                painter.circle_filled(r.left_center(), 5.0 * self.zoom, c);
+                painter.circle_filled(r.right_center(), 5.0 * self.zoom, c);
+                continue;
+            }
             let (title, cached) = if n == SINK {
                 (format!("Layer: {}", layer.and_then(|l| ops::slot(&p.graph, l)).map(|s| s.name.as_str()).unwrap_or("")), false)
             } else if is_virtual(n) {
@@ -1250,7 +1333,7 @@ impl NodeEditor {
             for (name, label, ty) in inputs(&p.graph, n) {
                 let pos = self.input_pos(&p.graph, origin, n, &name).unwrap();
                 // While dragging a link, dim inputs that can't accept it.
-                let ok = link_ty.is_none_or(|lt| compatible(lt, ty));
+                let ok = link_ty.is_none_or(|lt| accepts(&p.graph, n, lt, ty));
                 let c = if ok { type_color(ty) } else { type_color(ty).gamma_multiply(0.25) };
                 painter.circle_filled(pos, 5.0 * self.zoom, c);
                 // An unconnected input with a number value shows its name inside the field.
@@ -1281,6 +1364,8 @@ impl NodeEditor {
                     }
                 } else if ctrl {
                     self.drag = Some(Drag::Cut { points: vec![ptr] });
+                } else if shift {
+                    self.drag = Some(Drag::Reroute { points: vec![ptr] });
                 }
             }
         }
@@ -1300,7 +1385,8 @@ impl NodeEditor {
         if pressed && resp.hovered() && self.drag.is_none() && !menus_open {
             if let Some(ptr) = pointer {
                 let top = self.node_at(&p.graph, origin, &all, ptr).filter(|n| *n != SINK);
-                if let Some(n) = top.filter(|n| !is_virtual(*n) && self.arrow_rect(&p.graph, origin, *n).contains(ptr)) {
+                let arrow = |n: NodeId| !is_virtual(n) && !is_reroute(&p.graph, n) && self.arrow_rect(&p.graph, origin, n).contains(ptr);
+                if let Some(n) = top.filter(|n| arrow(*n)) {
                     pressed = false;
                     p.checkpoint("Collapse nodes");
                     let node = p.graph.node_mut(n);
@@ -1356,6 +1442,18 @@ impl NodeEditor {
                     self.primary = Some(n);
                     self.drag = Some(Drag::Nodes);
                     self.moved = false;
+                } else if let Some((i, _)) = frames.iter().rev().find(|(_, fr)| fr.contains(ptr)) {
+                    let f = frame_id(*i);
+                    if shift {
+                        if !self.selected.remove(&f) {
+                            self.selected.insert(f);
+                        }
+                    } else if !self.selected.contains(&f) {
+                        self.selected = BTreeSet::from([f]);
+                    }
+                    self.primary = Some(f);
+                    self.drag = Some(Drag::Nodes);
+                    self.moved = false;
                 } else {
                     if !shift {
                         self.selected.clear();
@@ -1376,7 +1474,13 @@ impl NodeEditor {
                             self.moved = true;
                         }
                         let d = delta / self.zoom;
-                        for n in self.selected.iter().copied().filter(|n| *n != SINK) {
+                        let mut moving: BTreeSet<NodeId> = self.selected.iter().copied().filter(|n| *n != SINK && frame_of(*n).is_none()).collect();
+                        for i in self.selected.iter().filter_map(|n| frame_of(*n)) {
+                            if let Some(f) = p.graph.frames.get(i) {
+                                moving.extend(f.nodes.iter().copied());
+                            }
+                        }
+                        for n in moving {
                             let q = self.node_pos(&p.graph, n);
                             set_pos(&mut p.graph, n, [q[0] + d.x, q[1] + d.y]);
                         }
@@ -1403,6 +1507,14 @@ impl NodeEditor {
                     }
                     painter.extend(egui::Shape::dashed_line(points, Stroke::new(1.5, crate::ui_theme::ERROR), 6.0, 4.0));
                 }
+                Drag::Reroute { points } => {
+                    if let (Some(ptr), Some(Drag::Reroute { points })) = (pointer, &mut self.drag) {
+                        if points.last().is_none_or(|l| l.distance(ptr) > 3.0) {
+                            points.push(ptr);
+                        }
+                    }
+                    painter.extend(egui::Shape::dashed_line(points, Stroke::new(1.5, crate::ui_theme::ACCENT), 6.0, 4.0));
+                }
                 Drag::Lazy { from, .. } => {
                     if let Some(ptr) = pointer {
                         let a = self.node_rect(&p.graph, origin, *from).right_center();
@@ -1417,7 +1529,7 @@ impl NodeEditor {
                 }
             }
             let released = match &drag {
-                Drag::Cut { .. } | Drag::Lazy { .. } => !secondary_down,
+                Drag::Cut { .. } | Drag::Lazy { .. } | Drag::Reroute { .. } => !secondary_down,
                 _ => !primary_down,
             };
             if released {
@@ -1436,9 +1548,15 @@ impl NodeEditor {
                                     self.primary = Some(n);
                                 }
                             }
+                            for (i, fr) in &frames {
+                                if b.contains_rect(*fr) {
+                                    self.selected.insert(frame_id(*i));
+                                }
+                            }
                         }
                     }
                     Drag::Cut { points } => self.cut_links(gpu, p, origin, &all, &points),
+                    Drag::Reroute { points } => self.add_reroutes(gpu, p, origin, &all, &points),
                     Drag::Lazy { from, menu } => {
                         if let Some(ptr) = pointer {
                             if let Some(b) = self.node_at(&p.graph, origin, &all, ptr).filter(|b| *b != from) {
@@ -1489,6 +1607,7 @@ impl NodeEditor {
             self.add_menu = Some(AddMenu { at, search: String::new(), link: None });
         }
         if keys && del {
+            self.delete_frames(p);
             let root = p.graph.root;
             let doomed: Vec<NodeId> = self
                 .selected
@@ -1551,7 +1670,7 @@ impl NodeEditor {
                 self.primary = Some(id);
             }
         }
-        if resp.secondary_clicked() && !menus_open && !ctrl && !alt {
+        if resp.secondary_clicked() && !menus_open && !ctrl && !alt && !shift {
             let ptr = pointer.unwrap_or(rect.center());
             match self.node_at(&p.graph, origin, &all, ptr) {
                 Some(n) if is_virtual(n) => {}
@@ -1666,7 +1785,7 @@ impl NodeEditor {
             graph::ParamKind::Float { min, max } => {
                 let mut x = v.as_f32();
                 let field = Field::new(&mut x, min..=max).label(label).width(size.x);
-                let field = if max - min <= 2.0 { field } else { field.no_fill().speed(((max - min) * 0.002).max(0.001) as f64) };
+                let field = if max - min <= 2.0 { field } else { field.no_fill().speed(crate::ui_layers::drag_speed(min, max)) };
                 let r = ui.add(field);
                 track(p, gpu, &r, "Edit parameter", |g| g.set(n, name, Value::Float(x)));
             }
@@ -1769,6 +1888,8 @@ impl NodeEditor {
             (M::NONE, Key::Backspace, Op::Reset),
             (M::SHIFT, Key::C, Op::CopySettings),
             (M::NONE, Key::K, Op::LinkToSelected),
+            (M::NONE, Key::F, Op::Frame),
+            (M::ALT, Key::P, Op::Unframe),
             (M::NONE, Key::A, Op::SelectAll),
             (M::ALT, Key::A, Op::DeselectAll),
         ];
@@ -1807,6 +1928,7 @@ impl NodeEditor {
                 }
             }
             Op::Dissolve => {
+                self.delete_frames(p);
                 let root = p.graph.root;
                 let doomed: Vec<NodeId> =
                     sel.into_iter().filter(|n| *n != root && p.graph.node(*n).ty != "material_output").collect();
@@ -1853,6 +1975,7 @@ impl NodeEditor {
                 }
             }
             Op::ToggleCollapse => {
+                let sel: Vec<NodeId> = sel.into_iter().filter(|n| !is_reroute(&p.graph, *n)).collect();
                 if !sel.is_empty() {
                     let all_collapsed = sel.iter().all(|n| p.graph.node(*n).collapsed);
                     p.checkpoint(if all_collapsed { "Expand nodes" } else { "Collapse nodes" });
@@ -1898,6 +2021,38 @@ impl NodeEditor {
             }
             Op::SelectAll => {
                 self.selected = self.all_nodes(&p.graph).into_iter().collect();
+                let shown: BTreeSet<NodeId> = self.selected.clone();
+                for (i, f) in p.graph.frames.iter().enumerate() {
+                    if f.nodes.iter().any(|n| shown.contains(n)) {
+                        self.selected.insert(frame_id(i));
+                    }
+                }
+            }
+            Op::Frame => {
+                let nodes: BTreeSet<NodeId> = sel.iter().copied().filter(|n| p.graph.get(*n).is_some()).collect();
+                if !nodes.is_empty() {
+                    p.checkpoint("Frame nodes");
+                    for f in &mut p.graph.frames {
+                        f.nodes.retain(|n| !nodes.contains(n));
+                    }
+                    p.graph.frames.retain(|f| !f.nodes.is_empty());
+                    p.graph.frames.push(graph::Frame { label: "Frame".into(), nodes });
+                    let f = frame_id(p.graph.frames.len() - 1);
+                    self.selected = BTreeSet::from([f]);
+                    self.primary = Some(f);
+                }
+            }
+            Op::Unframe => {
+                if p.graph.frames.iter().any(|f| sel.iter().any(|n| f.nodes.contains(n))) {
+                    p.checkpoint("Remove from frame");
+                    for f in &mut p.graph.frames {
+                        f.nodes.retain(|n| !sel.contains(n));
+                    }
+                    p.graph.frames.retain(|f| !f.nodes.is_empty());
+                    // Frame indices changed.
+                    self.selected.retain(|n| frame_of(*n).is_none());
+                    self.primary = self.primary.filter(|n| frame_of(*n).is_none());
+                }
             }
             Op::DeselectAll => {
                 self.selected.clear();
@@ -1918,6 +2073,87 @@ impl NodeEditor {
             outs.get(i).map(|(o, _)| graph::Link { node: n, output: o.clone() })
         });
         p.set_preview(gpu, next);
+    }
+
+    /// The frames shown (those with a node shown) and their screen rectangles: around their
+    /// shown nodes, with FRAME_PAD around and a header for the label.
+    fn frame_rects(&self, g: &Graph, origin: Pos2, shown: &[NodeId]) -> Vec<(usize, Rect)> {
+        let mut out = Vec::new();
+        for (i, f) in g.frames.iter().enumerate() {
+            let r = f.nodes.iter().filter(|n| shown.contains(n)).map(|n| self.node_rect(g, origin, *n)).reduce(|a, b| a.union(b));
+            if let Some(r) = r {
+                let pad = FRAME_PAD * self.zoom;
+                out.push((i, Rect::from_min_max(r.min - Vec2::new(pad, pad + HEADER * self.zoom), r.max + Vec2::splat(pad))));
+            }
+        }
+        out
+    }
+
+    /// Deletes the selected frames (not their nodes).
+    fn delete_frames(&mut self, p: &mut Project) {
+        let doomed: BTreeSet<usize> = self.selected.iter().filter_map(|n| frame_of(*n)).filter(|i| *i < p.graph.frames.len()).collect();
+        if doomed.is_empty() {
+            return;
+        }
+        p.checkpoint("Delete frames");
+        let mut i = 0;
+        p.graph.frames.retain(|_| {
+            i += 1;
+            !doomed.contains(&(i - 1))
+        });
+        self.selected.retain(|n| frame_of(*n).is_none());
+        self.primary = self.primary.filter(|n| frame_of(*n).is_none());
+    }
+
+    /// Puts reroutes on the links crossed by a Shift+right-drag stroke: one per output, at the
+    /// average of its links' crossings. Only links into a node's own inputs are rerouted.
+    fn add_reroutes(&mut self, gpu: &Gpu, p: &mut Project, origin: Pos2, all: &[NodeId], stroke: &[Pos2]) {
+        let layer = self.layer();
+        // (source, output) -> (crossings, targets)
+        type Crossings = (Vec<Pos2>, Vec<(NodeId, String)>);
+        let mut found: std::collections::BTreeMap<(NodeId, String), Crossings> = Default::default();
+        for &n in all {
+            if is_virtual(n) {
+                continue;
+            }
+            for (input, src, out) in links_into(&p.graph, layer, n) {
+                // A node's own inputs only: not Stack layers or Mask Stack effects.
+                if !p.graph.node(n).inputs.contains_key(&input) || !all.contains(&src) {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (self.output_pos(&p.graph, origin, src, &out), self.input_pos(&p.graph, origin, n, &input)) else {
+                    continue;
+                };
+                let curve = link_points(a, b, self.zoom);
+                let hit = curve.windows(2).find_map(|c| stroke.windows(2).find_map(|s| segment_intersection(c[0], c[1], s[0], s[1])));
+                if let Some(at) = hit {
+                    let e = found.entry((src, out)).or_default();
+                    e.0.push(at);
+                    e.1.push((n, input));
+                }
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        let places: Vec<_> = found
+            .into_iter()
+            .map(|(from, (hits, targets))| {
+                let mean = hits.iter().fold(Vec2::ZERO, |s, q| s + q.to_vec2()) / hits.len() as f32;
+                let c = self.to_canvas(origin, mean.to_pos2());
+                (from, [c.x - REROUTE.x * 0.5, c.y - REROUTE.y * 0.5], targets)
+            })
+            .collect();
+        p.edit(gpu, "Add reroutes", |g| {
+            for ((src, out), pos, targets) in places {
+                let r = g.add("reroute");
+                g.node_mut(r).pos = pos;
+                g.connect(src, &out, r, "in");
+                for (n, input) in targets {
+                    g.connect(r, "out", n, &input);
+                }
+            }
+        });
     }
 
     /// Removes the links crossed by a Ctrl+right-drag stroke.
@@ -2107,17 +2343,18 @@ impl NodeEditor {
                 egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                         let mut category = None;
-                        let defs = graph::Category::ALL.iter().flat_map(|c| graph::defs().iter().filter(move |d| d.category == *c));
-                        for d in defs {
+                        for e in add_entries() {
+                            let d = graph::def(e.ty).expect("node type");
                             if d.category == graph::Category::Output {
                                 continue;
                             }
-                            if !q.is_empty() && !d.title.to_ascii_lowercase().contains(&q) {
+                            if !q.is_empty() && !e.title.to_ascii_lowercase().contains(&q) {
                                 continue;
                             }
                             // With a link, only offer nodes that can take it.
                             if let Some(lt) = link_ty {
-                                let accepts = d.inputs.iter().any(|(_, t)| compatible(lt, *t))
+                                let accepts = d.input_sockets().iter().any(|(_, t)| compatible(lt, *t))
+                                    || d.ty == "reroute"
                                     || (d.ty == "stack" && lt == SocketType::Material)
                                     || (d.ty == "mask_stack" && compatible(lt, SocketType::Float));
                                 if !accepts {
@@ -2128,9 +2365,9 @@ impl NodeEditor {
                                 category = Some(d.category);
                                 category_label(ui, d.category);
                             }
-                            first.get_or_insert(d.ty);
-                            if ui.add(egui::Button::new(d.title).frame(false)).clicked() {
-                                chosen = Some(d.ty);
+                            first.get_or_insert(e);
+                            if ui.add(egui::Button::new(e.title).frame(false)).clicked() {
+                                chosen = Some(e);
                             }
                         }
                     });
@@ -2148,12 +2385,15 @@ impl NodeEditor {
         if outside {
             keep = false;
         }
-        if let Some(ty) = chosen {
+        if let Some(entry) = chosen {
             let layer = self.layer();
             let at = menu.at;
             let link = menu.link.clone();
             let id = p.edit(gpu, "Add node", |g| {
-                let id = g.add(ty);
+                let id = g.add(entry.ty);
+                if let Some((k, v)) = entry.set {
+                    g.set(id, k, Value::Text(v.into()));
+                }
                 g.node_mut(id).pos = [at.x, at.y];
                 if let Some((from, lt)) = &link {
                     if let Some(name) = Self::input_for(g, layer, id, *lt) {
@@ -2181,6 +2421,20 @@ impl NodeEditor {
         use crate::ui_theme as t;
         use crate::ui_widgets as w;
         ui.add_space(8.0);
+        if let Some(i) = self.primary.and_then(frame_of).filter(|i| *i < p.graph.frames.len()) {
+            ui.label(egui::RichText::new("Frame").font(t::body_strong()).color(t::TEXT));
+            ui.add_space(4.0);
+            w::setting(ui, "Label", |ui| {
+                let old = p.graph.frames[i].label.clone();
+                let mut label = old.clone();
+                let edit = egui::TextEdit::singleline(&mut label).desired_width(f32::INFINITY).min_size(Vec2::new(0.0, t::H_CONTROL)).vertical_align(egui::Align::Center);
+                if ui.add(edit).lost_focus() && label != old {
+                    p.checkpoint("Rename frame");
+                    p.graph.frames[i].label = label;
+                }
+            });
+            return;
+        }
         let count = self.selection().len();
         if count > 1 {
             w::hint(ui, format!("{count} nodes selected"));
@@ -2226,7 +2480,7 @@ impl NodeEditor {
         if !def.params.is_empty() {
             w::Section::new("Parameters").id_salt("node params").show(ui, |ui| {
                 w::hint(ui, "Edit them on the node; the pin exposes one on the layer.");
-                for pd in &def.params {
+                for pd in def.params.iter().filter(|pd| node.shows(pd)) {
                     ui.horizontal(|ui| {
                         crate::ui_layers::expose_pin(ui, gpu, p, n, pd.name);
                         ui.label(pretty(pd.name));
@@ -2309,6 +2563,31 @@ fn value_text(v: &Value) -> String {
     }
 }
 
+/// An add menu item: a node type, optionally with a choice set (Factor, Color).
+#[derive(Clone, Copy)]
+struct AddEntry {
+    title: &'static str,
+    ty: &'static str,
+    set: Option<(&'static str, &'static str)>,
+}
+
+/// The add menu's items in category order: every node type, plus Factor and Color after the
+/// constants. See docs/reference/node-editor.md "Add menu".
+fn add_entries() -> Vec<AddEntry> {
+    let mut v = Vec::new();
+    for c in graph::Category::ALL {
+        for d in graph::defs().iter().filter(|d| d.category == c) {
+            v.push(AddEntry { title: d.title, ty: d.ty, set: None });
+            match d.ty {
+                "value" => v.push(AddEntry { title: "Factor", ty: "value", set: Some(("type", "Factor")) }),
+                "vector" => v.push(AddEntry { title: "Color", ty: "vector", set: Some(("type", "Color")) }),
+                _ => {}
+            }
+        }
+    }
+    v
+}
+
 /// An add menu category: a square of its header color and its name in small capitals.
 fn category_label(ui: &mut egui::Ui, c: graph::Category) {
     use crate::ui_theme as t;
@@ -2356,6 +2635,19 @@ fn link_points(a: Pos2, b: Pos2, zoom: f32) -> Vec<Pos2> {
             v.to_pos2()
         })
         .collect()
+}
+
+/// Where segments p1-p2 and q1-q2 cross, if they do.
+fn segment_intersection(p1: Pos2, p2: Pos2, q1: Pos2, q2: Pos2) -> Option<Pos2> {
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    let (r, s) = (p2 - p1, q2 - q1);
+    let d = cross(r, s);
+    if d.abs() < 1e-6 {
+        return None;
+    }
+    let t = cross(q1 - p1, s) / d;
+    let u = cross(q1 - p1, r) / d;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| p1 + r * t)
 }
 
 /// Whether segments p1-p2 and q1-q2 intersect.
@@ -2435,9 +2727,50 @@ mod tests {
         let v = g.add("vector");
         g.connect(v, "vector", vm, "b");
         assert_eq!(unlinked - node_height(&g, vm), 3.0 * ROW);
-        // Vector parameters take four rows.
+        // Mapping's Vector value inputs take four rows each, below its own Vector input.
         let map = g.add("mapping");
-        assert_eq!(param_rows(&g, map), 12);
+        assert_eq!(param_rows(&g, map), 0);
+        assert_eq!(node_height(&g, map), HEADER + 14.0 * ROW + 6.0);
+        // Settings that depend on a choice are shown only while it has that value.
+        let val = g.add("value");
+        assert_eq!(own_params(&g, val).iter().map(|p| p.name).collect::<Vec<_>>(), ["type", "value"]);
+        g.set(val, "type", Value::Text("Factor".into()));
+        assert_eq!(own_params(&g, val).iter().map(|p| p.name).collect::<Vec<_>>(), ["type", "factor"]);
+        assert_eq!(g.node(val).title(), "Factor");
+    }
+
+    #[test]
+    fn reroutes_take_any_type_and_pass_it_on() {
+        let mut g = Graph::new();
+        let r = g.add("reroute");
+        let out = |g: &Graph| outputs(g, r)[0].1;
+        assert_eq!(out(&g), SocketType::Float, "unconnected");
+        let fill = g.add("fill");
+        assert!(accepts(&g, r, SocketType::Material, inputs(&g, r)[0].2));
+        assert!(connect(&mut g, None, &SocketRef { node: fill, name: "out".into() }, &SocketRef { node: r, name: "in".into() }));
+        assert_eq!(out(&g), SocketType::Material);
+        let r2 = g.add("reroute");
+        g.connect(r, "out", r2, "in");
+        assert_eq!(outputs(&g, r2)[0].1, SocketType::Material, "through a chain");
+        let c = g.add("vector");
+        g.set(c, "type", Value::Text("Color".into()));
+        assert_eq!(outputs(&g, c)[0].1, SocketType::Color);
+        assert_eq!(segment_intersection(Pos2::new(0.0, 0.0), Pos2::new(10.0, 10.0), Pos2::new(0.0, 10.0), Pos2::new(10.0, 0.0)), Some(Pos2::new(5.0, 5.0)));
+        assert_eq!(segment_intersection(Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(0.0, 1.0), Pos2::new(1.0, 1.0)), None);
+    }
+
+    #[test]
+    fn frames_lose_deleted_nodes() {
+        let mut g = Graph::new();
+        let (a, b) = (g.add("noise"), g.add("levels"));
+        g.frames.push(graph::Frame { label: "Frame".into(), nodes: [a, b].into() });
+        g.remove(a);
+        assert_eq!(g.frames[0].nodes, BTreeSet::from([b]));
+        g.remove(b);
+        assert!(g.frames.is_empty(), "empty frames are dropped");
+        let f = frame_id(3);
+        assert!(is_virtual(f) && frame_of(f) == Some(3) && group_of(f).is_none());
+        assert_eq!(frame_of(group_id(LayerRef { stack: 9, index: 1 }).unwrap()), None);
     }
 
     #[test]

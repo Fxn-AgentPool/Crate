@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{NEW_LAYER, NODE_W, SINK, SocketRef, compatible, connect, inputs, links_into, node_height, outputs};
+use super::{NEW_LAYER, NODE_W, SINK, SocketRef, accepts, compatible, connect, inputs, links_into, node_height, node_width, outputs};
 use crate::graph::{self, Graph, MaskSource, Node, NodeId, SocketType, Value};
 use crate::ops::LayerRef;
 
@@ -107,8 +107,9 @@ pub fn consumers(g: &Graph, layer: Option<LayerRef>, src: NodeId) -> Vec<(NodeId
     v
 }
 
-/// The (output, input) pairs that could connect `a` to `b`, best first: exact type matches
-/// before conversions, free inputs before linked ones.
+/// The (output, input) pairs that could connect `a` to `b`, best first: inputs without a value
+/// of their own before value inputs, exact type matches before conversions, free inputs before
+/// linked ones.
 pub fn link_options(g: &Graph, layer: Option<LayerRef>, a: NodeId, b: NodeId) -> Vec<(String, String)> {
     if a == b || b != SINK && g.depends_on(a, b) {
         return Vec::new();
@@ -117,8 +118,9 @@ pub fn link_options(g: &Graph, layer: Option<LayerRef>, a: NodeId, b: NodeId) ->
     let mut opts = Vec::new();
     for (out, ot) in outputs(g, a) {
         for (input, _, it) in inputs(g, b) {
-            if compatible(ot, it) {
-                let score = (ot != it) as u8 * 2 + linked.contains(&input) as u8;
+            if accepts(g, b, ot, it) {
+                let value = super::input_value_def(g, b, &input).is_some() as u8;
+                let score = value * 4 + (ot != it) as u8 * 2 + linked.contains(&input) as u8;
                 opts.push((score, out.clone(), input));
             }
         }
@@ -342,16 +344,16 @@ pub fn align_edges(g: &mut Graph, nodes: &[NodeId], edge: Edge) {
         Edge::Top => nodes.iter().map(|n| pos(g, *n)[1]).fold(f32::MAX, f32::min),
         Edge::Left => nodes.iter().map(|n| pos(g, *n)[0]).fold(f32::MAX, f32::min),
         Edge::Bottom => nodes.iter().map(|n| pos(g, *n)[1] + height(g, *n)).fold(f32::MIN, f32::max),
-        Edge::Right => nodes.iter().map(|n| pos(g, *n)[0] + NODE_W).fold(f32::MIN, f32::max),
+        Edge::Right => nodes.iter().map(|n| pos(g, *n)[0] + node_width(g, *n)).fold(f32::MIN, f32::max),
     };
     for n in nodes {
-        let h = height(g, n);
+        let (h, w) = (height(g, n), node_width(g, n));
         let p = &mut g.node_mut(n).pos;
         match edge {
             Edge::Top => p[1] = target,
             Edge::Left => p[0] = target,
             Edge::Bottom => p[1] = target - h,
-            Edge::Right => p[0] = target - NODE_W,
+            Edge::Right => p[0] = target - w,
         }
     }
 }

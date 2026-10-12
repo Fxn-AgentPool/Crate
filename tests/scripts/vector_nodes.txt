@@ -1,5 +1,6 @@
-# Vector and UV nodes against known answers: each case previews a value of 0.18 (linear),
-# unlit under a black environment with the Standard view, which reads as 118 (sRGB).
+# Vector and UV nodes, typed constants, value inputs and reroutes against known answers: each
+# case previews a value of 0.18 (linear), unlit under a black environment with the Standard view,
+# which reads as 118 (sRGB).
 # See docs/reference/nodes.md "Vector" and "Converter".
 new assets/crate.glb 1024
 size 96x96
@@ -52,7 +53,7 @@ expect-color target/tests/vector_nodes/e_combine.png 118,188,243 2
 node avg vector
 node-set avg vector=0.1,0.2,0.24
 node add math
-node-set add op=add b_value=0
+node-set add op=add b=0
 link avg.vector add.a
 preview add.out
 render target/tests/vector_nodes/f_average.png
@@ -74,3 +75,48 @@ link uv.uv n3.vector
 preview n3
 render target/tests/vector_nodes/i_noise_uv.png
 expect-different target/tests/vector_nodes/g_noise.png target/tests/vector_nodes/i_noise_uv.png
+# Value of type Float above 1, into Math's B value input: 0.09 x 2.
+node two value
+node-set two value=2
+node half value
+node-set half value=0.09
+node mul math
+node-set mul op=multiply b=5
+link half.value mul.a
+link two.value mul.b
+preview mul.out
+render target/tests/vector_nodes/j_linked_value.png
+expect-color target/tests/vector_nodes/j_linked_value.png 118,118,118 2
+# A Factor reads its factor, not its value.
+node fac value
+node-set fac type=factor factor=0.18 value=0.9
+preview fac
+render target/tests/vector_nodes/k_factor.png
+expect-color target/tests/vector_nodes/k_factor.png 118,118,118 2
+# Through two reroutes, unchanged; a reroute passes colors too.
+node r1 reroute
+node r2 reroute
+link ref.value r1.in
+link r1.out r2.in
+preview r2.out
+render target/tests/vector_nodes/l_reroute.png
+expect-color target/tests/vector_nodes/l_reroute.png 118,118,118 2
+node col vector
+node-set col type=color color=0.18,0.5,0.9
+node r3 reroute
+link col.vector r3.in
+preview r3.out
+render target/tests/vector_nodes/m_reroute_color.png
+expect-color target/tests/vector_nodes/m_reroute_color.png 118,188,243 2
+# Noise with its Scale from a Value equals Noise with the same scale set.
+node ns noise
+node-set ns scale=9
+preview ns
+render target/tests/vector_nodes/n_noise_scale.png
+node nine value
+node-set nine value=9
+node nl noise
+link nine.value nl.scale
+preview nl
+render target/tests/vector_nodes/o_noise_linked_scale.png
+expect-same target/tests/vector_nodes/n_noise_scale.png target/tests/vector_nodes/o_noise_linked_scale.png

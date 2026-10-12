@@ -232,7 +232,8 @@ fn move_to(g: &mut Graph, l: LayerRef, target: LayerRef, offset: usize) -> Layer
 fn new_mask_stack(g: &mut Graph, value: f32) -> NodeId {
     let ms = g.add("mask_stack");
     let fill = g.add("value");
-    g.set(fill, "value", Value::Float(value));
+    g.set(fill, "type", Value::Text("Factor".into()));
+    g.set(fill, "factor", Value::Float(value));
     g.node_mut(ms).mask_slots.push(MaskSlot {
         name: if value > 0.5 { "White".into() } else { "Black".into() },
         visible: true,
@@ -299,6 +300,7 @@ pub fn add_mask_paint(g: &mut Graph, l: LayerRef) -> Selection {
 
 pub fn add_mask_fill(g: &mut Graph, l: LayerRef) -> Selection {
     let node = g.add("value");
+    g.set(node, "type", Value::Text("Factor".into()));
     push_mask_slot(g, l, "Fill", MaskSource::Node(node))
 }
 

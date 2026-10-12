@@ -296,7 +296,7 @@ fn content_thumb(painter: &egui::Painter, p: &Project, kind: LayerKind, content:
 fn mask_thumb(painter: &egui::Painter, p: &Project, mask: NodeId, r: Rect) {
     let Some(ms) = p.graph.get(mask) else { return };
     let base = ms.mask_slots.first().and_then(|s| match s.source {
-        MaskSource::Node(n) => p.graph.get(n).filter(|n| n.ty == "value").map(|n| n.param("value").as_f32()),
+        MaskSource::Node(n) => p.graph.get(n).filter(|n| n.ty == "value").map(|n| n.value()),
         _ => None,
     });
     let g = (base.unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
@@ -557,7 +557,7 @@ fn effect_rows(ui: &mut egui::Ui, gpu: &Gpu, p: &mut Project, l: LayerRef, mask:
         // Fill effects show their value as a swatch.
         if let MaskSource::Node(n) = &m.source {
             if let Some(node) = p.graph.get(*n).filter(|n| n.ty == "value") {
-                let g = (node.param("value").as_f32().clamp(0.0, 1.0) * 255.0) as u8;
+                let g = (node.value().clamp(0.0, 1.0) * 255.0) as u8;
                 let sw = Rect::from_center_size(icon_rect.center(), vec2(12.0, 12.0));
                 painter.rect_filled(sw, 2.0, Color32::from_gray(g));
                 painter.rect_stroke(sw, 2.0, Stroke::new(1.0, Color32::from_gray(110)), StrokeKind::Outside);

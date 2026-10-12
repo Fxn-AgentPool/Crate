@@ -145,6 +145,9 @@ struct Ctx<'a> {
     cache: &'a dyn Fn(NodeId) -> Option<CacheRef>,
     /// Node evaluated for its own cache: never read from the cache.
     exclude: Option<NodeId>,
+    /// Connected value inputs of the node being emitted: their expressions replace the
+    /// parameter in `p`. See docs/reference/nodes.md "Inputs and settings".
+    linked: HashMap<(NodeId, &'static str), String>,
 }
 
 /// Where a cached node's result lives.
@@ -236,7 +239,7 @@ pub fn cacheable(n: &Node) -> bool {
     let count = |t| outs.iter().filter(|(_, x)| *x == t).count();
     !outs.is_empty()
         && count(SocketType::Vector) == 0
-        && !matches!(n.ty.as_str(), "material_output" | "paint" | "paint_mask")
+        && !matches!(n.ty.as_str(), "material_output" | "paint" | "paint_mask" | "reroute")
         && ((count(SocketType::Material) == 1 && outs.len() == 1)
             || (count(SocketType::Color) <= 1 && count(SocketType::Float) <= 1 && count(SocketType::Material) == 0))
 }
@@ -281,6 +284,7 @@ impl<'a> Ctx<'a> {
             paint_slot: env.paint_slot,
             cache: env.cache,
             exclude,
+            linked: HashMap::new(),
         }
     }
 
@@ -291,9 +295,14 @@ impl<'a> Ctx<'a> {
         code
     }
 
+    /// A parameter's value: the link into it if it's a connected value input, otherwise its
+    /// place in the parameter buffer.
     fn p(&self, n: &Node, name: &str) -> String {
         let def = n.def().params.iter().find(|p| p.name == name);
         let Some(def) = def else { return "0.0".into() };
+        if let Some(e) = self.linked.get(&(n.id, def.name)) {
+            return e.clone();
+        }
         let off = self.l.node_param[&(n.id, def.name)];
         match def.kind {
             ParamKind::Color | ParamKind::Vec3 => format!("params[{off}].xyz"),
@@ -347,6 +356,17 @@ impl<'a> Ctx<'a> {
                 return;
             }
         }
+        for pd in n.def().params.iter().filter(|p| p.socket) {
+            match n.inputs.get(pd.name).cloned() {
+                Some(link) => {
+                    let e = self.input_expr(f, &link, pd.socket_type());
+                    self.linked.insert((id, pd.name), e);
+                }
+                None => {
+                    self.linked.remove(&(id, pd.name));
+                }
+            }
+        }
         let o = |out: &str| var(id, out);
         let mut lines: Vec<String> = Vec::new();
         match n.ty.as_str() {
@@ -358,9 +378,19 @@ impl<'a> Ctx<'a> {
                 Some(slot) => lines.push(format!("let {} = paint_mask_sample({slot}u, s).x;", o("out"))),
                 None => lines.push(format!("let {} = 0.0;", o("out"))),
             },
-            "value" => lines.push(format!("let {} = {};", o("value"), self.p(n, "value"))),
-            "color" => lines.push(format!("let {} = {};", o("color"), self.p(n, "color"))),
-            "vector" => lines.push(format!("let {} = {};", o("vector"), self.p(n, "vector"))),
+            "value" => {
+                let v = if n.param("type").as_str() == "Factor" { self.p(n, "factor") } else { self.p(n, "value") };
+                lines.push(format!("let {} = {v};", o("value")));
+            }
+            "vector" => {
+                let v = if n.param("type").as_str() == "Color" { self.p(n, "color") } else { self.p(n, "vector") };
+                lines.push(format!("let {} = {v};", o("vector")));
+            }
+            "reroute" => {
+                let t = g.output_type(&Link { node: id, output: "out".into() }).unwrap_or(SocketType::Float);
+                let v = self.input(f, n, "in", t, default_for(t));
+                lines.push(format!("let {} = {v};", o("out")));
+            }
             "uv" => lines.push(format!("let {} = vec3f(s.tile_uv, 0.0);", o("uv"))),
             "geometry" => {
                 lines.push(format!("let {} = s.pos;", o("position")));
@@ -559,8 +589,7 @@ impl<'a> Ctx<'a> {
             }
             "math" => {
                 let a = self.input(f, n, "a", SocketType::Float, "0.0");
-                let bdef = self.p(n, "b_value");
-                let b = self.input(f, n, "b", SocketType::Float, &bdef);
+                let b = self.p(n, "b");
                 let expr = match n.param("op").as_str() {
                     "Add" => format!("{a} + {b}"),
                     "Subtract" => format!("{a} - {b}"),
@@ -599,8 +628,7 @@ impl<'a> Ctx<'a> {
             }
             "vector_math" => {
                 let a = self.input(f, n, "a", SocketType::Vector, "vec3f(0.0)");
-                let bdef = self.p(n, "b_value");
-                let b = self.input(f, n, "b", SocketType::Vector, &bdef);
+                let b = self.p(n, "b");
                 let r = o("vm");
                 lines.push(format!("let {r}_a = {a};"));
                 lines.push(format!("let {r}_b = {b};"));
@@ -627,10 +655,7 @@ impl<'a> Ctx<'a> {
                 lines.push(format!("let {} = {value};", o("value")));
             }
             "combine_xyz" => {
-                let [x, y, z] = ["x", "y", "z"].map(|c| {
-                    let d = self.p(n, c);
-                    self.input(f, n, c, SocketType::Float, &d)
-                });
+                let [x, y, z] = ["x", "y", "z"].map(|c| self.p(n, c));
                 lines.push(format!("let {} = vec3f({x}, {y}, {z});", o("vector")));
             }
             "separate_xyz" => {
@@ -887,6 +912,17 @@ mod tests {
         let c = code(&g, &link);
         assert!(c.contains(&format!("let n{uv}_uv = vec3f(s.tile_uv, 0.0);")));
         assert!(c.contains(&format!("image_vec(i32(params[")) && c.contains(&format!("(n{uv}_uv).xy")), "{c}");
+    }
+
+    #[test]
+    fn connected_value_inputs_replace_their_parameter() {
+        let mut g = Graph::new();
+        let noise = g.add("noise");
+        let link = Link { node: noise, output: "out".into() };
+        assert!(code(&g, &link).contains("fbm(s.pos_norm * params["));
+        let v = g.add("value");
+        g.connect(v, "value", noise, "scale");
+        assert!(code(&g, &link).contains(&format!("fbm(s.pos_norm * n{v}_value,")));
     }
 
     #[test]

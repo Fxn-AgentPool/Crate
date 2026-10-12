@@ -260,8 +260,9 @@ def test_script():
         "new assets/crate.glb 1024",
         "size 96x96",
         "environment tests/data/black.hdr",
-        "node c color",
-        "preview c.color",
+        "node c vector",
+        "node-set c type=color",
+        "preview c.vector",
     ]
     for i, (color, ev) in enumerate(CASES):
         lines.append(f"node-set c color={color[0]},{color[1]},{color[2]}")
