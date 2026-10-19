@@ -190,6 +190,9 @@ impl Session {
                 let mesh = mesh::import(&path, &settings)?;
                 for d in &mesh.diagnostics {
                     say!("  [{:?}] {}: {}", d.severity, d.code, d.message);
+                    for line in &d.details {
+                        say!("      {line}");
+                    }
                 }
                 if mesh.has_errors() {
                     bail!("import aborted");
@@ -755,6 +758,9 @@ impl Session {
                 report(|r| r.transfer = Some(t));
                 for d in &p.mesh.diagnostics {
                     say!("  [{:?}] {}: {}", d.severity, d.code, d.message);
+                    for line in &d.details {
+                        say!("      {line}");
+                    }
                     if d.severity >= crate::mesh::Severity::Warning {
                         let msg = format!("{}: {}", d.code, d.message);
                         report(|r| r.warnings.push(msg));

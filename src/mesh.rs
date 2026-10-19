@@ -1,7 +1,7 @@
 //! Mesh import (glTF 2.0, OBJ), UDIM tile detection and import diagnostics.
 //! See docs/reference/mesh-and-udims.md.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -66,6 +66,28 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub severity: Severity,
     pub message: String,
+    /// Where the problem is: one line per part (or pair of parts), at most `MAX_DETAILS`.
+    pub details: Vec<String>,
+}
+
+const MAX_DETAILS: usize = 20;
+
+/// Caps detail lines at `MAX_DETAILS`, summarizing the rest.
+fn cap_details(mut lines: Vec<String>) -> Vec<String> {
+    if lines.len() > MAX_DETAILS {
+        let more = lines.len() - (MAX_DETAILS - 1);
+        lines.truncate(MAX_DETAILS - 1);
+        lines.push(format!("… and {more} more"));
+    }
+    lines
+}
+
+/// Names of the listed parts, or nothing when every part is listed (the summary says it all).
+fn part_details(groups: &[String], parts: &[u32]) -> Vec<String> {
+    if parts.len() == groups.len() {
+        return Vec::new();
+    }
+    cap_details(parts.iter().map(|&g| groups[g as usize].clone()).collect())
 }
 
 pub struct Mesh {
@@ -125,11 +147,23 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
     }
 
     let mut diagnostics = Vec::new();
-    if !raw.has_uvs {
+    let has_uvs = raw.no_uvs.is_empty();
+    let has_tangents = raw.no_tangents.is_empty();
+    if !has_uvs {
+        let message = if raw.no_uvs.len() == raw.groups.len() {
+            "The mesh has no UVs. Import is aborted.".into()
+        } else {
+            format!(
+                "{} of {} part(s) have no UVs. Import is aborted.",
+                raw.no_uvs.len(),
+                raw.groups.len()
+            )
+        };
         diagnostics.push(Diagnostic {
             code: "UV_MISSING",
             severity: Severity::Error,
-            message: "The mesh has no UVs. Import is aborted.".into(),
+            message,
+            details: part_details(&raw.groups, &raw.no_uvs),
         });
     }
 
@@ -152,16 +186,26 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
         compute_normals(&mut raw.vertices, &raw.indices);
     }
 
-    let regenerate = settings.compute_tangents == TangentMode::Always || !raw.has_tangents;
-    if raw.has_uvs && regenerate {
+    let regenerate = settings.compute_tangents == TangentMode::Always || !has_tangents;
+    if has_uvs && regenerate {
         let (v, i) = generate_tangents(&raw.vertices, &raw.indices);
         raw.vertices = v;
         raw.indices = i;
-        if !raw.has_tangents {
+        if !has_tangents {
+            let message = if raw.no_tangents.len() == raw.groups.len() {
+                "Tangents were not present and were generated (MikkTSpace).".into()
+            } else {
+                format!(
+                    "Tangents were missing on {} of {} part(s) and were generated for the whole mesh (MikkTSpace).",
+                    raw.no_tangents.len(),
+                    raw.groups.len()
+                )
+            };
             diagnostics.push(Diagnostic {
                 code: "TANGENTS_GENERATED",
                 severity: Severity::Info,
-                message: "Tangents were not present and were generated (MikkTSpace).".into(),
+                message,
+                details: part_details(&raw.groups, &raw.no_tangents),
             });
         }
     }
@@ -177,8 +221,8 @@ pub fn import(path: &Path, settings: &ImportSettings) -> Result<Mesh> {
     }
 
     let mut tiles = Vec::new();
-    if raw.has_uvs {
-        tiles = check_uvs(&raw.vertices, &raw.indices, &mut diagnostics);
+    if has_uvs {
+        tiles = check_uvs(&raw.vertices, &raw.indices, &raw.groups, &mut diagnostics);
     }
 
     Ok(Mesh {
@@ -199,9 +243,16 @@ struct RawMesh {
     indices: Vec<u32>,
     materials: Vec<String>,
     groups: Vec<String>,
-    has_uvs: bool,
+    /// Parts (indices into `groups`) with at least one primitive missing UVs / tangents.
+    no_uvs: Vec<u32>,
     has_normals: bool,
-    has_tangents: bool,
+    no_tangents: Vec<u32>,
+}
+
+fn mark(parts: &mut Vec<u32>, group: u32) {
+    if !parts.contains(&group) {
+        parts.push(group);
+    }
 }
 
 fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
@@ -221,9 +272,9 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
         indices: Vec::new(),
         materials: Vec::new(),
         groups: Vec::new(),
-        has_uvs: true,
+        no_uvs: Vec::new(),
         has_normals: true,
-        has_tangents: true,
+        no_tangents: Vec::new(),
     };
     let mut any_primitive = false;
 
@@ -259,8 +310,12 @@ fn load_gltf(path: &Path, uv_set: u32) -> Result<RawMesh> {
             let uvs: Option<Vec<[f32; 2]>> =
                 reader.read_tex_coords(uv_set).map(|t| t.into_f32().collect());
             out.has_normals &= normals.is_some();
-            out.has_tangents &= tangents.is_some();
-            out.has_uvs &= uvs.is_some();
+            if tangents.is_none() {
+                mark(&mut out.no_tangents, group);
+            }
+            if uvs.is_none() {
+                mark(&mut out.no_uvs, group);
+            }
             let material = match prim.material().index() {
                 Some(i) => i as u32,
                 None => {
@@ -338,14 +393,13 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
         indices: Vec::new(),
         materials: Vec::new(),
         groups: Vec::new(),
-        has_uvs: true,
+        no_uvs: Vec::new(),
         has_normals: true,
-        has_tangents: false,
+        no_tangents: Vec::new(),
     };
     let mut default_material = None;
     for model in &models {
         let m = &model.mesh;
-        out.has_uvs &= !m.texcoords.is_empty();
         out.has_normals &= !m.normals.is_empty();
         let material = match m.material_id {
             Some(i) if i < names.len() => i as u32,
@@ -355,6 +409,11 @@ fn load_obj(path: &Path) -> Result<RawMesh> {
             }),
         };
         let group = group_index(&mut out.groups, model.name.clone());
+        // OBJ has no tangents.
+        mark(&mut out.no_tangents, group);
+        if m.texcoords.is_empty() {
+            mark(&mut out.no_uvs, group);
+        }
         let base = out.vertices.len() as u32;
         for i in 0..m.positions.len() / 3 {
             out.vertices.push(Vertex {
@@ -474,68 +533,124 @@ fn generate_tangents(vertices: &[Vertex], indices: &[u32]) -> (Vec<Vertex>, Vec<
     (out_v, out_i)
 }
 
-/// Determines the tiles in use and reports UV_OUT_OF_RANGE, UV_CROSSES_TILE and UV_OVERLAP.
-fn check_uvs(vertices: &[Vertex], indices: &[u32], diags: &mut Vec<Diagnostic>) -> Vec<u32> {
+/// Determines the tiles in use and reports UV_OUT_OF_RANGE, UV_CROSSES_TILE and UV_OVERLAP,
+/// with the parts each concerns.
+fn check_uvs(vertices: &[Vertex], indices: &[u32], groups: &[String], diags: &mut Vec<Diagnostic>) -> Vec<u32> {
     const EPS: f32 = 1e-5;
-    let mut out_of_range = 0usize;
-    let mut crossing = 0usize;
-    let mut tiles = std::collections::BTreeSet::new();
+    // Per part: triangle count and UV bounds of the offending triangles.
+    let mut out_of_range: BTreeMap<u32, (usize, Vec2, Vec2)> = BTreeMap::new();
+    // Per part: triangle count and the tiles they span.
+    let mut crossing: BTreeMap<u32, (usize, BTreeSet<u32>)> = BTreeMap::new();
+    let mut tiles = BTreeSet::new();
     for tri in indices.as_chunks::<3>().0 {
+        let group = vertices[tri[0] as usize].group;
         let uv = [0, 1, 2].map(|k| Vec2::from(vertices[tri[k] as usize].uv));
         let min = uv[0].min(uv[1]).min(uv[2]);
         let max = uv[0].max(uv[1]).max(uv[2]);
         if min.x < -EPS || min.y < -EPS || max.x > 10.0 + EPS || max.y > 10.0 + EPS {
-            out_of_range += 1;
+            let e = out_of_range.entry(group).or_insert((0, min, max));
+            e.0 += 1;
+            e.1 = e.1.min(min);
+            e.2 = e.2.max(max);
             continue;
         }
         let lo = (min + EPS).floor();
         let hi = (max - EPS).floor().max(lo);
-        if lo != hi {
-            crossing += 1;
-        }
+        let mut spanned = BTreeSet::new();
         for ty in lo.y as i32..=hi.y as i32 {
             for tx in lo.x as i32..=hi.x as i32 {
                 if (0..10).contains(&tx) && (0..10).contains(&ty) {
-                    tiles.insert(1001 + tx as u32 + 10 * ty as u32);
+                    spanned.insert(1001 + tx as u32 + 10 * ty as u32);
                 }
             }
         }
+        if lo != hi {
+            let e = crossing.entry(group).or_default();
+            e.0 += 1;
+            e.1.extend(&spanned);
+        }
+        tiles.extend(spanned);
     }
-    if out_of_range > 0 {
+    if !out_of_range.is_empty() {
+        let total: usize = out_of_range.values().map(|e| e.0).sum();
+        let details = out_of_range
+            .iter()
+            .map(|(&g, (n, min, max))| {
+                format!(
+                    "{}: {n} triangle(s), UVs u {:.3} … {:.3}, v {:.3} … {:.3}",
+                    groups[g as usize], min.x, max.x, min.y, max.y
+                )
+            })
+            .collect();
         diags.push(Diagnostic {
             code: "UV_OUT_OF_RANGE",
             severity: Severity::Error,
             message: format!(
-                "{out_of_range} triangle(s) have UVs that are negative or beyond u = 10 / v = 10."
+                "{total} triangle(s) have UVs that are negative or beyond u = 10 / v = 10."
             ),
+            details: cap_details(details),
         });
     }
-    if crossing > 0 {
+    if !crossing.is_empty() {
+        let total: usize = crossing.values().map(|e| e.0).sum();
+        let details = crossing
+            .iter()
+            .map(|(&g, (n, t))| format!("{}: {n} triangle(s) across tiles {}", groups[g as usize], tile_list(t)))
+            .collect();
         diags.push(Diagnostic {
             code: "UV_CROSSES_TILE",
             severity: Severity::Warning,
-            message: format!("{crossing} triangle(s) span more than one UDIM tile."),
+            message: format!("{total} triangle(s) span more than one UDIM tile."),
+            details: cap_details(details),
         });
     }
-    let overlapping = overlap_texels(vertices, indices);
-    if overlapping.0 > 0 && overlapping.0 * 1000 > overlapping.1 {
+    let overlap = overlap_texels(vertices, indices);
+    let over: usize = overlap.pairs.values().map(|e| e.0).sum();
+    if over > 0 && over * 1000 > overlap.covered {
+        let pct = |n: usize| 100.0 * n as f64 / overlap.covered.max(1) as f64;
+        let mut pairs: Vec<_> = overlap.pairs.iter().collect();
+        pairs.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        let details = pairs
+            .into_iter()
+            .map(|(&(a, b), (n, t))| {
+                let who = if a == b {
+                    format!("{} with itself", groups[a as usize])
+                } else {
+                    format!("{} and {}", groups[a as usize], groups[b as usize])
+                };
+                format!("{who}: {:.1} % of covered area, in tile(s) {}", pct(*n), tile_list(t))
+            })
+            .collect();
         diags.push(Diagnostic {
             code: "UV_OVERLAP",
             severity: Severity::Warning,
             message: format!(
                 "Triangles share UV space ({:.1} % of covered area). Painting one also paints the other.",
-                100.0 * overlapping.0 as f64 / overlapping.1.max(1) as f64
+                pct(over)
             ),
+            details: cap_details(details),
         });
     }
     tiles.into_iter().collect()
 }
 
-/// Coarse UV-space rasterization. Returns (overlapping cells, covered cells).
-fn overlap_texels(vertices: &[Vertex], indices: &[u32]) -> (usize, usize) {
+fn tile_list(tiles: &BTreeSet<u32>) -> String {
+    tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+}
+
+struct Overlap {
+    /// Overlapping cells and their tiles per pair of parts (`(a, a)` for a part overlapping itself).
+    pairs: BTreeMap<(u32, u32), (usize, BTreeSet<u32>)>,
+    covered: usize,
+}
+
+/// Coarse UV-space rasterization (256 cells per tile side).
+fn overlap_texels(vertices: &[Vertex], indices: &[u32]) -> Overlap {
     const RES: f32 = 256.0;
-    let mut cells: HashMap<(i32, i32), u8> = HashMap::new();
+    // Per cell: triangle count, the first part to cover it, and the first other part.
+    let mut cells: HashMap<(i32, i32), (u8, u32, Option<u32>)> = HashMap::new();
     for tri in indices.as_chunks::<3>().0 {
+        let group = vertices[tri[0] as usize].group;
         let p = [0, 1, 2].map(|k| Vec2::from(vertices[tri[k] as usize].uv) * RES);
         let den = (p[1].y - p[2].y) * (p[0].x - p[2].x) + (p[2].x - p[1].x) * (p[0].y - p[2].y);
         if den.abs() < 1e-9 {
@@ -553,14 +668,28 @@ fn overlap_texels(vertices: &[Vertex], indices: &[u32]) -> (usize, usize) {
                 let b = ((p[2].y - p[0].y) * (c.x - p[2].x) + (p[0].x - p[2].x) * (c.y - p[2].y)) / den;
                 let g = 1.0 - a - b;
                 if a > 1e-4 && b > 1e-4 && g > 1e-4 {
-                    let e = cells.entry((x, y)).or_insert(0);
-                    *e = e.saturating_add(1);
+                    let e = cells.entry((x, y)).or_insert((0, group, None));
+                    e.0 = e.0.saturating_add(1);
+                    if group != e.1 && e.2.is_none() {
+                        e.2 = Some(group);
+                    }
                 }
             }
         }
     }
-    let over = cells.values().filter(|&&c| c > 1).count();
-    (over, cells.len())
+    let mut pairs: BTreeMap<(u32, u32), (usize, BTreeSet<u32>)> = BTreeMap::new();
+    for (&(x, y), &(n, a, b)) in &cells {
+        if n > 1 {
+            let b = b.unwrap_or(a);
+            let e = pairs.entry((a.min(b), a.max(b))).or_default();
+            e.0 += 1;
+            let (tx, ty) = (x.div_euclid(RES as i32), y.div_euclid(RES as i32));
+            if (0..10).contains(&tx) && (0..10).contains(&ty) {
+                e.1.insert(1001 + tx as u32 + 10 * ty as u32);
+            }
+        }
+    }
+    Overlap { pairs, covered: cells.len() }
 }
 
 /// Unique triangle edges, for wireframe display.

@@ -1610,7 +1610,12 @@ impl CrateApp {
                             };
                             ui.colored_label(color, format!("{:?}", d.severity));
                             ui.monospace(d.code);
-                            ui.label(&d.message);
+                            ui.vertical(|ui| {
+                                ui.label(&d.message);
+                                for line in &d.details {
+                                    ui.label(egui::RichText::new(line).small().weak());
+                                }
+                            });
                             ui.end_row();
                         }
                     });
