@@ -42,6 +42,16 @@ udim = 1001 + floor(u) + 10 * floor(v)
 | `UV_OVERLAP` | Warning | Two or more triangles share UV space. Painting one also paints the other. |
 | `TANGENTS_GENERATED` | Info | Tangents were not present and were generated. |
 
+Each diagnostic lists where the problem is, by part (glTF node or mesh name, OBJ object name),
+up to 20 lines:
+
+| Code | Detail per line |
+|---|---|
+| `UV_MISSING`, `TANGENTS_GENERATED` | The parts that lack them; nothing when every part does. |
+| `UV_OUT_OF_RANGE` | Part, triangle count, and the UV range of its offending triangles. |
+| `UV_CROSSES_TILE` | Part, triangle count, and the tiles its crossing triangles span. |
+| `UV_OVERLAP` | The two parts that share UV space (or one part with itself), their share of the covered area, and the tiles. |
+
 ## Reimport
 
 **File → Reimport Mesh** replaces the mesh while keeping layers and paint.
